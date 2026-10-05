@@ -29,10 +29,9 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      # Installs exactly what rust-toolchain.toml pins (rustup no longer auto-installs).
       - name: Install Rust
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: wasm32-unknown-unknown
+        run: rustup toolchain install
 
       # .cargo/config.toml links host build scripts with clang + mold.
       - name: Install mold
