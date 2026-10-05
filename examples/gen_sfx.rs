@@ -38,13 +38,6 @@ fn main() {
             s.lpf_freq = 0.25;
             s
         }),
-        ("ping", {
-            let mut s = Sample::blip(Some(2));
-            s.wave_type = WaveType::Sine;
-            s.base_freq = 0.55;
-            s.env_decay = 0.35;
-            s
-        }),
     ];
 
     for (name, sample) in sounds {

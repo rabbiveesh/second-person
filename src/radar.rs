@@ -12,11 +12,9 @@ use bevy::{
     prelude::*,
     window::PrimaryWindow,
 };
-use bevy_kira_audio::prelude::*;
 
 use crate::{
     arena::ARENA_HALF,
-    audio::Sfx,
     combat::Gunshot,
     round::{GameState, RoundEntity},
 };
@@ -145,8 +143,6 @@ fn sonar_sweep(
     mode: Res<RadarMode>,
     mut timer: Local<Option<Timer>>,
     assets: Res<RadarAssets>,
-    sfx: Res<Sfx>,
-    audio: Res<Audio>,
     mut materials: ResMut<Assets<StandardMaterial>>,
     contacts: Query<(&GlobalTransform, &RadarContact)>,
 ) {
@@ -154,7 +150,6 @@ fn sonar_sweep(
     if *mode != RadarMode::Sonar || !timer.tick(time.delta()).just_finished() {
         return;
     }
-    audio.play(sfx.ping.clone()).with_volume(-14.0);
     for (t, contact) in &contacts {
         spawn_contact(&mut commands, &assets, &mut materials, t.translation(), contact.0);
     }

@@ -19,7 +19,6 @@ pub struct Sfx {
     target_hit: Handle<AudioSource>,
     return_fire: Handle<AudioSource>,
     step: Handle<AudioSource>,
-    pub ping: Handle<AudioSource>,
 }
 
 /// One-shot emitter entity, despawned once its sound has surely finished.
@@ -40,7 +39,6 @@ fn load(mut commands: Commands, assets: Res<AssetServer>) {
         target_hit: assets.load("sfx/target_hit.wav"),
         return_fire: assets.load("sfx/return_fire.wav"),
         step: assets.load("sfx/step.wav"),
-        ping: assets.load("sfx/ping.wav"),
     });
 }
 
