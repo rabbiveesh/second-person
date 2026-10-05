@@ -25,7 +25,8 @@ pub enum ShooterAction {
     Fire,
 }
 
-#[derive(Component)]
+#[derive(Component, Reflect)]
+#[reflect(Component)]
 pub struct Shooter {
     pub hp: f32,
 }

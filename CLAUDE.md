@@ -9,8 +9,21 @@ controlling the **shooter** hunting him. A corner radar shows the whole arena.
 - Versions are pinned to **Bevy 0.19.1**. Model knowledge of Bevy APIs is often stale, so before
   using an API, grep the crate source/examples in `~/.cargo/registry/src/*/<crate>-<ver>/`.
   Read the crate's RELEASES/CHANGELOG when a pattern doesn't compile.
-- Loop: `cargo build` (no warnings), then `cargo run` and check logs for panics/`WARN`.
-  Screenshot the window with `import -window $(xdotool search --name "Second Person Shooter")`.
+- **Never use xdotool or anything that grabs the user's screen/focus/keyboard.** The user works on this
+  machine. Avoid long CPU-heavy builds (e.g. `trunk build --release`) without asking; CI does those.
+
+## Dev loop
+1. `cargo build` with no warnings.
+2. `cargo test`: headless gameplay tests in `tests/gameplay.rs`. They run the real `gameplay` plugins on
+   `MinimalPlugins` with a fixed 60 Hz clock. Call `app.finish(); app.cleanup();` before
+   `update()` (avian inits resources in `finish`). Prefer adding a test over eyeballing.
+3. To see or drive the real game: `scripts/headless-run`. This uses Xvfb with software Vulkan (lavapipe), so no window
+   appears. Then `scripts/brp` talks to BRP on :15702 (feature `brp`, on in `dev`):
+   - `scripts/brp world.query '{"data":{"components":["second_person::target::Suspicion"]},"filter":{}}'`
+   - `scripts/brp brp_extras/send_keys '{"keys":["Space"],"duration_ms":60}'`
+   - `scripts/brp brp_extras/screenshot '{"path":"<scratchpad>/shot.png"}'`
+   Gameplay components derive `Reflect` + `#[reflect(Component)]` (auto-registered) so they're queryable.
+   `.mcp.json` also registers `bevy_brp_mcp` for MCP-native access.
 
 ## Stack (and why)
 | Crate | Role |
@@ -19,17 +32,24 @@ controlling the **shooter** hunting him. A corner radar shows the whole arena.
 | avian3d 0.7 | physics, collision events, raycasts (line of sight) |
 | leafwing-input-manager 0.21 | input → actions. 0.21 has **no resource ActionState**; put global inputs on an entity |
 | bevior_tree 0.11 (`default-features = false`, serde feature needs typetag impls) | target AI behaviour tree. Picked over big-brain, which is stuck on Bevy 0.15; vendor big-brain if bevior_tree hurts |
-| bevy_egui 0.40 + bevy-inspector-egui 0.37 | HUD + F1 world inspector (inspector pins egui 0.40) |
+| bevy_egui 0.40 + bevy-inspector-egui 0.37 | HUD + F1 world inspector (inspector pins egui 0.40; `inspector` feature) |
+| bevy_firework 0.10 | CPU particles (WebGL-safe; bevy_hanabi needs compute, i.e. WebGPU only) |
+| bevy_kira_audio 0.26 (`wav`) | spatial audio. Bevy built with `default-features = false, features = ["3d","ui"]` to drop bevy_audio |
+| sfxr + hound (dev-deps) | procedural SFX generation |
+| bevy_brp_extras 0.22 | BRP + screenshots/key input for agents (`brp` feature) |
 | rand 0.9 | randomness |
 
-Dev builds: `dev` feature = `bevy/dynamic_linking`; mold via `.cargo/config.toml`; deps at opt-level 3.
+Dev builds: `dev` feature = `bevy/dynamic_linking` + `inspector`; mold via `.cargo/config.toml`; deps at opt-level 3.
+Web/Pages: `trunk build --release` uses the `wasm-release` profile, which uses **fat LTO on purpose**.
+Deploys are slower (~6 min warm vs ~3 for thin), but the download is ~3MB smaller, and the dev loop never uses that profile.
 System deps (Ubuntu): `libudev-dev`, `libasound2-dev`, `libwayland-dev`, `libxkbcommon-dev`.
 
 Considered alternatives: Godot+gdext (editor, but FFI borrow friction and scenes in .tscn),
 Fyrox (small ecosystem), macroquad/three-d (too thin, would mean rolling our own).
 
 ## Shape (`src/`)
-- `main.rs`: plugin wiring, `Layer` physics layers (World/Shooter/Target/Bullet).
+- `lib.rs`: `gameplay` (headless simulation) vs `presentation` (HUD/radar/fx/audio) plugin groups; `Layer` physics layers.
+- `main.rs`: window, egui, and feature-gated dev tools (`inspector`: F1; `brp`).
 - `round.rs`: `GameState` (Playing/Won/Lost). Per-round entities get `RoundEntity` and are
   despawned on `OnEnter(Playing)` before the `SpawnRound` set. Physics pauses outside Playing.
   `MetaAction` (R restart, M toggle target walking). `TargetMobile` resource.
@@ -43,8 +63,18 @@ Fyrox (small ecosystem), macroquad/three-d (too thin, would mean rolling our own
 - `shooter.rs`: dynamic capsule, rotation locked, tank controls (arrows), relative to its own facing.
 - `combat.rs`: bullets (CCD, collision events), hearing (shots and near misses raise `Alert` +
   suspicion), target hitscan return fire while engaged, win/lose check.
-- `radar.rs`: ortho top-down camera in a bottom-right viewport. Sees render layers 0+1; blips and
-  the view cone live on `RADAR_LAYER` (1) only, so the main camera never sees them.
+- `radar.rs`: ortho top-down camera in a bottom-right viewport (layers 0+1). `RadarMode` is the difficulty knob
+  (Tab cycles; init'd in `round` so it exists headless):
+  - Full: live `LiveBlip`s, heading arrow and view cone.
+  - Sonar (default): a sweep every 2s spawns fading contacts at each `RadarContact`, and gunshots ping too.
+  - Off: no radar.
+  Shooter and bullets render on layer 0 only, so the radar can't see them except through blips and contacts.
+- `fx.rs`: bevy_firework particle bursts (muzzle, impacts, hits), a muzzle point light (lights up the area
+  around the shooter even when he's off-screen), and return-fire tracers.
+- `audio.rs`: bevy_kira_audio spatial one-shots. The listener is the target's head (`MainCamera`). SFX come from
+  `cargo run --example gen_sfx` (sfxr, fixed seeds) and are written to `assets/sfx/`.
+- Combat emits messages (`Gunshot`, `BulletImpact`, `TargetHit`, `ShooterHit`, shooter `Footstep`); fx, audio
+  and radar subscribe to them. Add new feedback by subscribing, not by calling across modules.
 - `hud.rs`: egui on a dedicated `Camera2d` overlay (`PrimaryEguiContext`; auto-context disabled
   because game cameras respawn each round). Bars, activity, flashes, radar frame, end banner.
 

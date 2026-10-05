@@ -37,6 +37,8 @@ pub struct SpawnRound;
 pub fn plugin(app: &mut App) {
     app.init_state::<GameState>()
         .init_resource::<TargetMobile>()
+        // Difficulty setting; lives here (not in radar) so headless gameplay has it too.
+        .init_resource::<RadarMode>()
         .add_plugins(InputManagerPlugin::<MetaAction>::default())
         .add_systems(Startup, |mut commands: Commands| {
             // leafwing 0.21: action state lives on an entity, not a resource.

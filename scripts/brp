@@ -1,0 +1,11 @@
+#!/usr/bin/env bash
+# Minimal BRP client: scripts/brp <method> [json-params]
+#   scripts/brp world.query '{"data":{"components":["second_person::target::Suspicion"]},"filter":{}}'
+#   scripts/brp brp_extras/send_keys '{"keys":["Space"],"duration_ms":50}'
+#   scripts/brp brp_extras/screenshot '{"path":"/tmp/shot.png"}'
+set -euo pipefail
+method=$1; params=${2:-null}
+curl -s -X POST "http://127.0.0.1:${BRP_PORT:-15702}" \
+  -H 'content-type: application/json' \
+  -d "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"$method\",\"params\":$params}"
+echo

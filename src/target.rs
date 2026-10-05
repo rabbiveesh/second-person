@@ -33,7 +33,8 @@ const VIEW_RANGE: f32 = 40.0;
 const VIEW_HALF_ANGLE: f32 = 0.6; // ~34°, a bit narrower than the camera so "seen" means clearly on screen
 const WALK_SPEED: f32 = 2.2;
 
-#[derive(Component)]
+#[derive(Component, Reflect)]
+#[reflect(Component)]
 pub struct Target {
     pub hp: u32,
 }
@@ -47,14 +48,16 @@ pub struct TargetHead;
 pub struct MainCamera;
 
 /// Where the target wants to look (world space) and how fast he turns.
-#[derive(Component)]
+#[derive(Component, Reflect)]
+#[reflect(Component)]
 pub struct LookGoal {
     pub point: Vec3,
     pub turn_speed: f32,
 }
 
 /// Something got his attention: look toward `at` until the timer runs out.
-#[derive(Component)]
+#[derive(Component, Reflect)]
+#[reflect(Component)]
 pub struct Alert {
     pub at: Vec3,
     pub timer: Timer,
@@ -70,7 +73,8 @@ impl Alert {
 }
 
 /// How sure he is someone's out there. At 1.0 he engages, and keeps engaging until it drains to 0.
-#[derive(Component, Default)]
+#[derive(Component, Reflect, Default)]
+#[reflect(Component)]
 pub struct Suspicion {
     pub level: f32,
     pub sees_shooter: bool,
@@ -87,7 +91,8 @@ impl Suspicion {
 }
 
 /// What the behaviour tree is currently doing (inserted while each task runs).
-#[derive(Component, Clone, Copy, PartialEq, Eq, Debug)]
+#[derive(Component, Reflect, Clone, Copy, PartialEq, Eq, Debug)]
+#[reflect(Component)]
 pub enum Activity {
     Scanning,
     Wandering,
@@ -101,7 +106,8 @@ struct ScanPlan {
     dwell: Timer,
 }
 
-#[derive(Component)]
+#[derive(Component, Reflect)]
+#[reflect(Component)]
 pub struct WanderTo(pub Vec3);
 
 pub fn plugin(app: &mut App) {

@@ -8,17 +8,23 @@ avian3d = "0.7"
 bevior_tree = { version = "0.11", default-features = false }
 # bevy_audio is off: bevy_kira_audio replaces it.
 bevy = { version = "0.19.1", default-features = false, features = ["3d", "ui"] }
-bevy-inspector-egui = "0.37"
 bevy_egui = "0.40"
+bevy-inspector-egui = { version = "0.37", optional = true }
 bevy_firework = "0.10"
 bevy_kira_audio = { version = "0.26", default-features = false, features = ["wav"] }
 leafwing-input-manager = "0.21"
 rand = "0.9"
+bevy_brp_extras = { version = "0.22", optional = true }
 
 [features]
 default = ["dev"]
 # Fast iteration: dynamically link bevy. Disable for release builds (`--no-default-features`).
-dev = ["bevy/dynamic_linking"]
+dev = ["bevy/dynamic_linking", "inspector", "brp"]
+# F1 world inspector. Off in release/web builds unless asked for.
+inspector = ["dep:bevy-inspector-egui"]
+# Bevy Remote Protocol on :15702 (+ extras: screenshots, key input) so tools/agents can
+# inspect and drive the running game. Pair with `bevy_brp_mcp` (see .mcp.json).
+brp = ["dep:bevy_brp_extras", "bevy/png"]
 
 # Optimise deps even in dev; our own crate stays fast to compile.
 [profile.dev]
@@ -40,6 +46,9 @@ sfxr = "0.1"
 [profile.wasm-release]
 inherits = "release"
 opt-level = "s"
+# Decision (2026-10-05): fat LTO, deliberately. Measured warm rebuilds: thin 160s / 15.2MB gz
+# vs fat 354s / 12.3MB gz. Only Pages deploys pay the extra ~3 min; the dev loop (dev profile)
+# never uses this profile, so we take the smaller download.
 lto = "fat"
 codegen-units = 1
 strip = "debuginfo"
