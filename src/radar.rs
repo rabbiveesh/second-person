@@ -22,6 +22,8 @@ use crate::{
 };
 
 pub const RADAR_LAYER: usize = 1;
+/// For things both cameras should see (the arena). Actors stay on layer 0 only, so the
+/// radar can never see them directly — only via blips/contacts.
 pub const WORLD_AND_RADAR: &[usize] = &[0, RADAR_LAYER];
 
 /// Fraction of the window's shorter side that the radar occupies.
@@ -110,7 +112,14 @@ fn spawn_radar(mut commands: Commands, mut meshes: ResMut<Assets<Mesh>>) {
         }),
         // North (-Z) is up on the radar.
         Transform::from_xyz(0.0, 60.0, 0.0).looking_at(Vec3::ZERO, Vec3::NEG_Z),
-        RenderLayers::from_layers(WORLD_AND_RADAR),
+        RenderLayers::layer(RADAR_LAYER),
+        // Lit by its own flat ambient instead of a light on the radar layer: shadows would
+        // leak the actors onto the map, and WebGL2 allows only one directional light in
+        // total (a second one silently drops the sun from the main view).
+        AmbientLight {
+            brightness: 3_500.0,
+            ..default()
+        },
     ));
 }
 

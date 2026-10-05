@@ -9,6 +9,7 @@ pub mod audio;
 pub mod combat;
 pub mod fx;
 pub mod hud;
+pub mod nav;
 pub mod radar;
 pub mod round;
 pub mod shooter;
@@ -36,6 +37,7 @@ pub fn gameplay(app: &mut App) {
     .add_plugins((
         round::plugin,
         arena::plugin,
+        nav::plugin,
         target::plugin,
         shooter::plugin,
         combat::plugin,

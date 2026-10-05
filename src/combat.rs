@@ -131,6 +131,7 @@ fn fire(
     let (target_e, target_t, mut suspicion) = target.into_inner();
     if target_t.translation.distance(t.translation) < HEARING_RANGE {
         suspicion.bump(0.25);
+        suspicion.last_known = Some(t.translation);
         commands.entity(target_e).insert(Alert::new(t.translation, 3.0));
     }
 }
@@ -162,6 +163,7 @@ fn bullet_hits(
         if let Ok((_, mut target, target_t, mut suspicion)) = targets.get_mut(other) {
             target.hp = target.hp.saturating_sub(1);
             suspicion.bump(0.6);
+            suspicion.last_known = Some(bullet.origin);
             commands.entity(other).insert(Alert::new(bullet.origin, 3.0));
             hits.write(TargetHit { at: target_t.translation });
         } else {
@@ -170,6 +172,7 @@ fn bullet_hits(
             for (target_e, _, target_t, mut suspicion) in &mut targets {
                 if target_t.translation.distance(bullet_t.translation) < NEAR_MISS_RANGE {
                     suspicion.bump(0.3);
+                    suspicion.last_known = Some(bullet.origin);
                     commands.entity(target_e).insert(Alert::new(bullet.origin, 2.5));
                 }
             }

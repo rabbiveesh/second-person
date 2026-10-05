@@ -5,7 +5,14 @@
 #   scripts/brp brp_extras/screenshot '{"path":"/tmp/shot.png"}'
 set -euo pipefail
 method=$1; params=${2:-null}
-curl -s -X POST "http://127.0.0.1:${BRP_PORT:-15702}" \
+port=${BRP_PORT:-15799}
+if [[ $port == 15702 && ${BRP_ALLOW_USER_GAME:-} != 1 ]]; then
+  echo "refusing: 15702 is the user's own game (set BRP_ALLOW_USER_GAME=1 only if they asked)" >&2
+  exit 1
+fi
+# Defaults to the headless/agent instance (scripts/headless-run). The user's own
+# `cargo run` listens on 15702: never point this at it unless they ask.
+curl -s -X POST "http://127.0.0.1:$port" \
   -H 'content-type: application/json' \
   -d "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"$method\",\"params\":$params}"
 echo
