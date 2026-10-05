@@ -7,7 +7,10 @@ use avian3d::prelude::*;
 use bevy::{ecs::system::SystemParam, prelude::*};
 use vleue_navigator::prelude::*;
 
-use crate::arena::ARENA_HALF;
+use crate::{
+    arena::{self, Layout},
+    round::{GameState, SpawnRound},
+};
 
 /// Marks colliders the navmesh should route around.
 #[derive(Component, Default)]
@@ -39,27 +42,28 @@ pub fn plugin(app: &mut App) {
         VleueNavigatorPlugin,
         NavmeshUpdaterPlugin::<Collider, NavObstacle>::default(),
     ))
-    .add_systems(Startup, spawn_navmesh)
+    .add_systems(OnEnter(GameState::Playing), fit_navmesh.in_set(SpawnRound).after(arena::spawn_arena))
     .add_systems(Update, (clear_routes, plan_routes).chain());
 }
 
-fn spawn_navmesh(mut commands: Commands) {
-    let h = ARENA_HALF - 0.5;
+/// Walkable area = the round's floor outline. Changed settings trigger a rebuild. The first
+/// round starts before `Startup`, so the navmesh is spawned here too.
+fn fit_navmesh(mut commands: Commands, layout: Res<Layout>, mut navmesh: Query<&mut NavMeshSettings>) {
+    let fixed = Triangulation::from_outer_edges(&layout.outline);
+    if let Ok(mut settings) = navmesh.single_mut() {
+        settings.fixed = fixed;
+        return;
+    }
     commands.spawn((
         Name::new("Navmesh"),
         ManagedNavMesh::single(),
         NavMeshSettings {
-            fixed: Triangulation::from_outer_edges(&[
-                Vec2::new(-h, -h),
-                Vec2::new(h, -h),
-                Vec2::new(h, h),
-                Vec2::new(-h, h),
-            ]),
+            fixed,
             agent_radius: 0.6,
             simplify: 0.01,
             ..default()
         },
-        // The arena is static: build synchronously whenever obstacles change (i.e. once).
+        // The arena is static within a round: build synchronously whenever it changes.
         NavMeshUpdateMode::Direct,
         NavMeshUpdateModeBlocking,
         // Navmesh lives in its local XY plane; lay it on the ground (XZ).

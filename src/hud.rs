@@ -4,6 +4,7 @@ use bevy::prelude::*;
 use bevy_egui::{EguiContexts, EguiPrimaryContextPass, PrimaryEguiContext, egui};
 
 use crate::{
+    arena::Layout,
     combat::{ShooterHit, TargetHit},
     radar::{RadarMode, RadarRect},
     round::{GameState, TargetMobile},
@@ -61,6 +62,7 @@ fn draw_hud(
     state: Res<State<GameState>>,
     mobile: Res<TargetMobile>,
     radar_mode: Res<RadarMode>,
+    layout: Res<Layout>,
     flashes: Res<Flashes>,
     radar: Res<RadarRect>,
     shooter: Option<Single<&Shooter>>,
@@ -120,9 +122,10 @@ fn draw_hud(
         .show(ctx, |ui| {
             ui.label(
                 egui::RichText::new(format!(
-                    "Up/Down move   Left/Right turn   Space fire   M target walks: {}   Tab radar: {:?}   F1 inspector",
+                    "Up/Down move   Left/Right turn   Space fire   M target walks: {}   Tab radar: {:?}   L arena: {}   F1 inspector",
                     if mobile.0 { "on" } else { "off" },
-                    *radar_mode
+                    *radar_mode,
+                    layout.name,
                 ))
                 .color(egui::Color32::WHITE)
                 .background_color(egui::Color32::from_black_alpha(140)),

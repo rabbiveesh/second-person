@@ -41,6 +41,7 @@ controlling the **shooter** hunting him. A corner radar shows the whole arena.
 | sfxr + hound (dev-deps) | procedural SFX generation |
 | bevy_brp_extras 0.22 | BRP + screenshots/key input for agents (`brp` feature) |
 | rand 0.9 | randomness |
+| earcut 0.4 | triangulates arena floor polygons (already in the tree via vleue_navigator) |
 | vleue_navigator 0.16 (`avian3d`) | navmesh pathfinding (polyanya), built from avian colliders, WASM-safe |
 
 Dev builds: `dev` feature = `bevy/dynamic_linking` + `inspector`; mold via `.cargo/config.toml`; deps at opt-level 3.
@@ -57,7 +58,11 @@ Fyrox (small ecosystem), macroquad/three-d (too thin, would mean rolling our own
 - `round.rs`: `GameState` (Playing/Won/Lost). Per-round entities get `RoundEntity` and are
   despawned on `OnEnter(Playing)` before the `SpawnRound` set. Physics pauses outside Playing.
   `MetaAction` (R restart, M toggle target walking). `TargetMobile` resource.
-- `arena.rs`: static ground, walls, crates and pillars (hand-placed, reproducible).
+- `arena.rs`: `Layout` resource (floor outline polygon + axis-aligned cover `Block`s), respawned every round
+  (`RoundEntity`). `ArenaMode` picks it: `Classic` (the original hand-placed arena, default), `Random` (new
+  `Layout::random(seed)` each round: yard, hall, L, cross, octagon or notch, rotated, with scattered cover), or
+  `Seed(n)`. L cycles Classic/Random and restarts. Generated cover keeps `COVER_GAP` from walls and other cover so the
+  free space stays connected, and keeps the origin (the target's spawn) open. The floor mesh is triangulated with `earcut`.
 - `target.rs`: target entity → Head (pitch) → `MainCamera`. Behaviour tree:
   `Selector[engaged→(TakeCover, Fight), alerted→Investigate, mobile→Wander, Scan]`.
   Engaged means he runs to cover (`arena::find_cover`, no shooting while running), then fights from it: hide, then
@@ -67,16 +72,17 @@ Fyrox (small ecosystem), macroquad/three-d (too thin, would mean rolling our own
   do the work. Use the shared `ARRIVE` constant for every arrival check, because mismatched thresholds deadlock tasks. Lower branches **fail** when a higher-priority condition appears (that's preemption).
   `Suspicion` fills while the shooter is in the view cone with line of sight; at 1.0 he's engaged.
   The engine supports a moving target: the camera is parented to him, and walking is just velocity on a kinematic body.
-- `nav.rs`: vleue_navigator navmesh, built synchronously from `NavObstacle` colliders (the arena blocks).
+- `nav.rs`: vleue_navigator navmesh, built synchronously from `NavObstacle` colliders (the arena blocks) inside the
+  layout's outline (`fit_navmesh` updates it each round).
   `MoveTo { dest, speed, strafe }` is planned into a `Route` and followed by `target::walk`. With `strafe` he moves
   without turning, so he can watch a threat while side-stepping.
-- `arena.rs` also has the pure geometry helpers `is_clear`, `los_blocked` (top-down; all cover is taller than eyes)
-  and `find_cover`. They're unit-testable without an app.
+- `Layout` also has the pure geometry helpers `is_clear`, `los_blocked` (top-down, cover and walls; all cover is taller
+  than eyes), `find_cover` and `random_point`. They're unit-testable without an app; read the layout via `Res<Layout>`.
 - `shooter.rs`: random start via `random_start` (clear of cover, ≥12m from the target).
 - `shooter.rs`: dynamic capsule, rotation locked, tank controls (arrows), relative to its own facing.
 - `combat.rs`: bullets (CCD, collision events), hearing (shots and near misses raise `Alert` +
   suspicion), target hitscan return fire while engaged, win/lose check.
-- `radar.rs`: ortho top-down camera in a bottom-right viewport (layers 0+1). `RadarMode` is the difficulty knob
+- `radar.rs`: ortho top-down camera in a bottom-right viewport (layers 0+1), reframed to the layout's bounds. `RadarMode` is the difficulty knob
   (Tab cycles; init'd in `round` so it exists headless):
   - Full: live `LiveBlip`s, heading arrow and view cone.
   - Sonar (default): a sweep every 2s spawns fading contacts at each `RadarContact`, and gunshots ping too.

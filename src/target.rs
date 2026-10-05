@@ -21,7 +21,7 @@ use rand::Rng;
 
 use crate::{
     Layer,
-    arena::{self, ARENA_HALF, Cover},
+    arena::{Cover, Layout},
     nav::{MoveTo, Route},
     radar::{LiveBlip, RADAR_LAYER, RadarContact},
     round::{GameState, RoundEntity, SpawnRound, TargetMobile},
@@ -313,11 +313,16 @@ fn take_cover_listeners() -> Listeners {
     l
 }
 
-fn plan_cover(In(e): In<Entity>, mut commands: Commands, q: Query<(&Transform, &Suspicion)>) {
+fn plan_cover(
+    In(e): In<Entity>,
+    mut commands: Commands,
+    layout: Res<Layout>,
+    q: Query<(&Transform, &Suspicion)>,
+) {
     let Ok((t, s)) = q.get(e) else { return };
     let here = t.translation.xz();
     let threat = s.last_known.map_or(here + t.forward().xz() * 10.0, |p| p.xz());
-    let cover = arena::find_cover(here, threat).unwrap_or(Cover { spot: here, peek: here });
+    let cover = layout.find_cover(here, threat).unwrap_or(Cover { spot: here, peek: here });
     commands.entity(e).insert((
         CoverPlan(cover),
         MoveTo {
@@ -480,10 +485,10 @@ fn wander_listeners() -> Listeners {
     let mut l = insert_while_running(Activity::Wandering);
     l.push((
         TaskEvent::Enter,
-        listener(|In(e): In<Entity>, mut commands: Commands| {
-            let mut rng = rand::rng();
-            let r = ARENA_HALF - 4.0;
-            let dest = Vec3::new(rng.random_range(-r..r), BODY_CENTER, rng.random_range(-r..r));
+        listener(|In(e): In<Entity>, mut commands: Commands, layout: Res<Layout>, q: Query<&Transform>| {
+            let here = q.get(e).map_or(Vec2::ZERO, |t| t.translation.xz());
+            let spot = layout.random_point(&mut rand::rng(), 1.5, |_| true).unwrap_or(here);
+            let dest = spot.extend(BODY_CENTER).xzy();
             commands.entity(e).insert(MoveTo {
                 dest,
                 speed: WALK_SPEED,

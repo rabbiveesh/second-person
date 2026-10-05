@@ -9,7 +9,7 @@ use rand::Rng;
 
 use crate::{
     Layer,
-    arena::{self, ARENA_HALF},
+    arena::Layout,
     radar::{LiveBlip, RADAR_LAYER, RadarContact},
     round::{GameState, RoundEntity, SpawnRound},
 };
@@ -53,6 +53,7 @@ pub fn plugin(app: &mut App) {
 
 fn spawn_shooter(
     mut commands: Commands,
+    layout: Res<Layout>,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
 ) {
@@ -78,7 +79,7 @@ fn spawn_shooter(
         LockedAxes::ROTATION_LOCKED,
         Friction::ZERO.with_combine_rule(CoefficientCombine::Min),
         CollisionLayers::new(Layer::Shooter, [Layer::World, Layer::Target]),
-        random_start(&mut rand::rng()),
+        random_start(&mut rand::rng(), &layout),
         Mesh3d(meshes.add(Capsule3d::new(0.35, 1.0))),
         MeshMaterial3d(materials.add(Color::srgb(0.95, 0.5, 0.1))),
         RadarContact(Color::srgb(0.2, 1.0, 0.3)),
@@ -120,15 +121,15 @@ fn spawn_shooter(
 }
 
 /// A random start: clear of cover, away from the target, facing anywhere.
-pub fn random_start(rng: &mut impl Rng) -> Transform {
-    let r = ARENA_HALF - 2.0;
-    loop {
-        let p = Vec2::new(rng.random_range(-r..r), rng.random_range(-r..r));
-        if p.length() >= MIN_START_DISTANCE && arena::is_clear(p, RADIUS + 0.3) {
-            return Transform::from_xyz(p.x, 0.9, p.y)
-                .with_rotation(Quat::from_rotation_y(rng.random_range(0.0..TAU)));
-        }
-    }
+pub fn random_start(rng: &mut impl Rng, layout: &Layout) -> Transform {
+    // Room to turn and fire without the bullet hitting a wall straight away.
+    let clear = RADIUS + 1.2;
+    let p = layout
+        .random_point(rng, clear, |p| p.length() >= MIN_START_DISTANCE)
+        // A cramped arena: anywhere clear will do.
+        .or_else(|| layout.random_point(rng, clear, |_| true))
+        .unwrap_or(Vec2::new(0.0, MIN_START_DISTANCE));
+    Transform::from_xyz(p.x, 0.9, p.y).with_rotation(Quat::from_rotation_y(rng.random_range(0.0..TAU)))
 }
 
 /// Tank controls, relative to the shooter's own facing.
