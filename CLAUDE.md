@@ -82,8 +82,10 @@ Fyrox (small ecosystem), macroquad/three-d (too thin, would mean rolling our own
   - Sonar (default): a sweep every 2s spawns fading contacts at each `RadarContact`, and gunshots ping too.
   - Off: no radar.
   Shooter and bullets render on layer 0 only, so the radar can't see them except through blips and contacts.
-  The radar has its own **shadowless** light. Any shadow-casting light on the radar layer leaks actors' shadows
-  onto it (a test guards this).
+  The radar is lit by a per-camera `AmbientLight`, not a light of its own. Any shadow-casting light on the radar
+  layer leaks the actors' shadows onto it, and **WebGL2 allows one `DirectionalLight` in total** (the sun). Tests guard both.
+  bevy_firework is vendored (`vendor/bevy_firework`, `[patch.crates-io]`) with a fix so particles work under MSAA on
+  WebGL2 (it bound a multisampled dummy depth texture, which WebGL2 can't create). Drop the patch once upstream fixes it.
 - `fx.rs`: bevy_firework particle bursts (muzzle, impacts, hits), a muzzle point light (lights up the area
   around the shooter even when he's off-screen), and return-fire tracers.
 - `audio.rs`: bevy_kira_audio spatial one-shots. The listener is the target's head (`MainCamera`). SFX come from

@@ -308,3 +308,25 @@ fn no_shadow_casting_light_reaches_the_radar() {
         }
     }
 }
+
+/// Gameplay + radar, startup only: radar's Update systems need audio, which tests don't have.
+fn radar_startup_app() -> App {
+    let mut app = App::new();
+    app.add_plugins((MinimalPlugins, StatesPlugin, InputPlugin, AssetPlugin::default(), TransformPlugin))
+        .add_plugins((bevy::mesh::MeshPlugin, bevy::window::WindowPlugin::default()))
+        .init_asset::<StandardMaterial>()
+        .add_plugins((second_person::gameplay, second_person::radar::plugin));
+    app.finish();
+    app.cleanup();
+    app.world_mut().run_schedule(Startup);
+    app
+}
+
+#[test]
+fn at_most_one_directional_light_with_presentation() {
+    // WebGL2 caps directional lights at 1 *globally*; a second one (e.g. a radar-only light)
+    // silently drops the sun and leaves the main view black on the web.
+    let mut app = radar_startup_app();
+    let n = app.world_mut().query::<&DirectionalLight>().iter(app.world()).count();
+    assert_eq!(n, 1, "WebGL2 supports one directional light");
+}

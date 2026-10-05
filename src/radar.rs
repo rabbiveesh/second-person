@@ -91,17 +91,6 @@ pub fn plugin(app: &mut App) {
 }
 
 fn spawn_radar(mut commands: Commands, mut meshes: ResMut<Assets<Mesh>>) {
-    // The radar's own light: no shadows, so nothing off-layer (shooter, bullets) leaks onto it.
-    commands.spawn((
-        Name::new("Radar light"),
-        DirectionalLight {
-            illuminance: 12_000.0,
-            shadow_maps_enabled: false,
-            ..default()
-        },
-        Transform::from_xyz(20.0, 40.0, 10.0).looking_at(Vec3::ZERO, Vec3::Y),
-        RenderLayers::layer(RADAR_LAYER),
-    ));
     commands.insert_resource(RadarAssets {
         contact: meshes.add(Sphere::new(0.9)),
         ring: meshes.add(Annulus::new(0.95, 1.0)),
@@ -124,6 +113,13 @@ fn spawn_radar(mut commands: Commands, mut meshes: ResMut<Assets<Mesh>>) {
         // North (-Z) is up on the radar.
         Transform::from_xyz(0.0, 60.0, 0.0).looking_at(Vec3::ZERO, Vec3::NEG_Z),
         RenderLayers::layer(RADAR_LAYER),
+        // Lit by its own flat ambient instead of a light on the radar layer: shadows would
+        // leak the actors onto the map, and WebGL2 allows only one directional light in
+        // total (a second one silently drops the sun from the main view).
+        AmbientLight {
+            brightness: 3_500.0,
+            ..default()
+        },
     ));
 }
 

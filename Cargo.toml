@@ -39,6 +39,12 @@ opt-level = 3
 getrandom_03 = { package = "getrandom", version = "0.3", features = ["wasm_js"] }
 getrandom_04 = { package = "getrandom", version = "0.4", features = ["wasm_js"] }
 
+# bevy_firework 0.10.0 + a fix so particles work with MSAA on WebGL2: without a depth prepass
+# it bound a multisampled dummy depth texture, which WebGL2 can't create (panicked on the
+# first particle burst). Upstream PR: https://github.com/mbrea-c/bevy_firework/pull/59 (drop when released).
+[patch.crates-io]
+bevy_firework = { path = "vendor/bevy_firework" }
+
 [dev-dependencies]
 hound = "3.5.1"
 sfxr = "0.1"

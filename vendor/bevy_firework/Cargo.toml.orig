@@ -1,0 +1,59 @@
+[package]
+name = "bevy_firework"
+version = "0.10.0"
+edition = "2024"
+readme = "README.md"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/mbrea-c/bevy_firework"
+description = "CPU-driven, batch-rendered particle system for the Bevy game engine"
+keywords = ["bevy", "gamedev", "particles", "graphics"]
+
+[dependencies]
+bevy = { version = "0.19", default-features = false, features = [
+    "bevy_render",
+    "bevy_core_pipeline",
+    "bevy_pbr",
+    "tonemapping_luts",
+    "bevy_winit",
+    "x11",
+    "zstd_rust",
+] }
+bytemuck = "1.14.3"
+rand = "0.9.3"
+bevy_utilitarian = "0.10"
+serde = { version = "1.0", features = ["derive"] }
+avian3d = { version = "0.7", features = ["serialize"], optional = true }
+
+[dev-dependencies]
+bevy = { version = "0.19", default-features = false, features = [
+    "bevy_text",
+    "bevy_ui",
+    "default_font",
+    "png",
+    "bevy_post_process",
+    "bevy_ui_render",
+] }
+
+[features]
+default = ["physics_avian"]
+physics_avian = ["dep:avian3d"]
+
+[[example]]
+name = "one_shot"
+required-features = ["physics_avian"]
+
+[[example]]
+name = "collision"
+required-features = ["physics_avian"]
+
+[[example]]
+name = "textures"
+required-features = ["physics_avian"]
+
+[[example]]
+name = "stress_test"
+required-features = ["physics_avian"]
+
+[[example]]
+name = "stress_test_collision"
+required-features = ["physics_avian"]
