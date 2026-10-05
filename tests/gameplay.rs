@@ -176,6 +176,8 @@ fn the_shooter_falls_over_when_killed() {
     let shooter = single::<Shooter>(&mut app);
     let floor = app.world().get::<Transform>(shooter).unwrap().translation.y - 0.85;
     app.world_mut().get_mut::<Shooter>(shooter).unwrap().hp = 0.0;
+    // check_outcome queues the state change; it applies on the next frame.
+    app.update();
     app.update();
     assert_eq!(*app.world().resource::<State<GameState>>().get(), GameState::Lost);
     step(&mut app, 1.5);
