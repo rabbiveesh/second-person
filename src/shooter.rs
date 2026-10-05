@@ -1,18 +1,23 @@
 //! The shooter: the body you control, seen (mostly) through the target's eyes.
 
-use std::f32::consts::FRAC_PI_2;
+use std::f32::consts::TAU;
 
 use avian3d::prelude::*;
 use bevy::{camera::visibility::RenderLayers, prelude::*};
 use leafwing_input_manager::prelude::*;
+use rand::Rng;
 
 use crate::{
     Layer,
+    arena::{self, ARENA_HALF},
     radar::{LiveBlip, RADAR_LAYER, RadarContact},
     round::{GameState, RoundEntity, SpawnRound},
 };
 
 pub const SHOOTER_MAX_HP: f32 = 100.0;
+/// Minimum start distance from the target (who starts at the origin).
+pub const MIN_START_DISTANCE: f32 = 12.0;
+const RADIUS: f32 = 0.35;
 const MOVE_SPEED: f32 = 5.0;
 const TURN_SPEED: f32 = 2.4;
 
@@ -69,12 +74,11 @@ fn spawn_shooter(
             (ShooterAction::Fire, KeyCode::Space),
         ]),
         RigidBody::Dynamic,
-        Collider::capsule(0.35, 1.0),
+        Collider::capsule(RADIUS, 1.0),
         LockedAxes::ROTATION_LOCKED,
         Friction::ZERO.with_combine_rule(CoefficientCombine::Min),
         CollisionLayers::new(Layer::Shooter, [Layer::World, Layer::Target]),
-        // Start on screen but just outside his attention cone, facing across his view.
-        Transform::from_xyz(-12.5, 0.9, -13.5).with_rotation(Quat::from_rotation_y(-FRAC_PI_2)),
+        random_start(&mut rand::rng()),
         Mesh3d(meshes.add(Capsule3d::new(0.35, 1.0))),
         MeshMaterial3d(materials.add(Color::srgb(0.95, 0.5, 0.1))),
         RadarContact(Color::srgb(0.2, 1.0, 0.3)),
@@ -113,6 +117,18 @@ fn spawn_shooter(
             ),
         ],
     ));
+}
+
+/// A random start: clear of cover, away from the target, facing anywhere.
+pub fn random_start(rng: &mut impl Rng) -> Transform {
+    let r = ARENA_HALF - 2.0;
+    loop {
+        let p = Vec2::new(rng.random_range(-r..r), rng.random_range(-r..r));
+        if p.length() >= MIN_START_DISTANCE && arena::is_clear(p, RADIUS + 0.3) {
+            return Transform::from_xyz(p.x, 0.9, p.y)
+                .with_rotation(Quat::from_rotation_y(rng.random_range(0.0..TAU)));
+        }
+    }
 }
 
 /// Tank controls, relative to the shooter's own facing.

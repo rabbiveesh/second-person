@@ -15,6 +15,7 @@ bevy_kira_audio = { version = "0.26", default-features = false, features = ["wav
 leafwing-input-manager = "0.21"
 rand = "0.9"
 bevy_brp_extras = { version = "0.22", optional = true }
+vleue_navigator = { version = "0.16", default-features = false, features = ["avian3d"] }
 
 [features]
 default = ["dev"]

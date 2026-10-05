@@ -103,6 +103,7 @@ fn draw_hud(
                         Some(Activity::Scanning) => "looking around",
                         Some(Activity::Wandering) => "wandering",
                         Some(Activity::Investigating) => "investigating a noise",
+                        Some(Activity::TakingCover) => "RUNNING FOR COVER",
                         Some(Activity::Engaging) => "SHOOTING AT YOU",
                         None => "…",
                     };

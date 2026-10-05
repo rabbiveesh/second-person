@@ -17,8 +17,11 @@ controlling the **shooter** hunting him. A corner radar shows the whole arena.
 2. `cargo test`: headless gameplay tests in `tests/gameplay.rs`. They run the real `gameplay` plugins on
    `MinimalPlugins` with a fixed 60 Hz clock. Call `app.finish(); app.cleanup();` before
    `update()` (avian inits resources in `finish`). Prefer adding a test over eyeballing.
+   For AI bugs, trace state per frame in a test (see `TRACE=1 cargo test ... -- --nocapture` in
+   `engaged_target_eventually...`) rather than guessing.
 3. To see or drive the real game: `scripts/headless-run`. This uses Xvfb with software Vulkan (lavapipe), so no window
-   appears. Then `scripts/brp` talks to BRP on :15702 (feature `brp`, on in `dev`):
+   appears. Then `scripts/brp` talks to that instance's BRP on **:15799** (feature `brp`, on in `dev`).
+   The user's own `cargo run` uses :15702. **Never send BRP to 15702** unless the user asks, because that's their live game.
    - `scripts/brp world.query '{"data":{"components":["second_person::target::Suspicion"]},"filter":{}}'`
    - `scripts/brp brp_extras/send_keys '{"keys":["Space"],"duration_ms":60}'`
    - `scripts/brp brp_extras/screenshot '{"path":"<scratchpad>/shot.png"}'`
@@ -38,6 +41,7 @@ controlling the **shooter** hunting him. A corner radar shows the whole arena.
 | sfxr + hound (dev-deps) | procedural SFX generation |
 | bevy_brp_extras 0.22 | BRP + screenshots/key input for agents (`brp` feature) |
 | rand 0.9 | randomness |
+| vleue_navigator 0.16 (`avian3d`) | navmesh pathfinding (polyanya), built from avian colliders, WASM-safe |
 
 Dev builds: `dev` feature = `bevy/dynamic_linking` + `inspector`; mold via `.cargo/config.toml`; deps at opt-level 3.
 Web/Pages: `trunk build --release` uses the `wasm-release` profile, which uses **fat LTO on purpose**.
@@ -55,11 +59,20 @@ Fyrox (small ecosystem), macroquad/three-d (too thin, would mean rolling our own
   `MetaAction` (R restart, M toggle target walking). `TargetMobile` resource.
 - `arena.rs`: static ground, walls, crates and pillars (hand-placed, reproducible).
 - `target.rs`: target entity → Head (pitch) → `MainCamera`. Behaviour tree:
-  `Selector[engaged→Engage, alerted→Investigate, mobile→Wander, Scan]`.
-  Tasks only set intent (`LookGoal`, `WanderTo`, `Activity`). Systems `perceive` → `gaze` → `walk`
-  do the work. Lower branches **fail** when a higher-priority condition appears (that's preemption).
+  `Selector[engaged→(TakeCover, Fight), alerted→Investigate, mobile→Wander, Scan]`.
+  Engaged means he runs to cover (`arena::find_cover`, no shooting while running), then fights from it: hide, then
+  strafe out to a peek spot (shooting if he sees you), then duck back. Getting hit makes him re-plan cover.
+  `Suspicion.last_known` is where he last saw or heard you (no omniscience).
+  Tasks only set intent (`LookGoal`, `MoveTo`, `Activity`). Systems `perceive` → `gaze` → `walk`
+  do the work. Use the shared `ARRIVE` constant for every arrival check, because mismatched thresholds deadlock tasks. Lower branches **fail** when a higher-priority condition appears (that's preemption).
   `Suspicion` fills while the shooter is in the view cone with line of sight; at 1.0 he's engaged.
   The engine supports a moving target: the camera is parented to him, and walking is just velocity on a kinematic body.
+- `nav.rs`: vleue_navigator navmesh, built synchronously from `NavObstacle` colliders (the arena blocks).
+  `MoveTo { dest, speed, strafe }` is planned into a `Route` and followed by `target::walk`. With `strafe` he moves
+  without turning, so he can watch a threat while side-stepping.
+- `arena.rs` also has the pure geometry helpers `is_clear`, `los_blocked` (top-down; all cover is taller than eyes)
+  and `find_cover`. They're unit-testable without an app.
+- `shooter.rs`: random start via `random_start` (clear of cover, ≥12m from the target).
 - `shooter.rs`: dynamic capsule, rotation locked, tank controls (arrows), relative to its own facing.
 - `combat.rs`: bullets (CCD, collision events), hearing (shots and near misses raise `Alert` +
   suspicion), target hitscan return fire while engaged, win/lose check.

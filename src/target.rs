@@ -1,9 +1,12 @@
 //! The target: owns the main camera (his eyes), perceives the shooter, and is
 //! driven by a behaviour tree (bevior_tree).
 //!
-//! Tree tasks are thin: they set intent components (`LookGoal`, `WanderTo`,
-//! `Activity`), and plain systems turn intent into motion. Higher-priority
-//! branches preempt lower ones by making the running task *fail*.
+//! Tree tasks are thin: they set intent components (`LookGoal`, `MoveTo`,
+//! `Activity`), and plain systems turn intent into motion (`nav` routes, `walk` follows).
+//! Higher-priority branches preempt lower ones by making the running task *fail*.
+//!
+//! Once engaged he breaks line of sight: runs to cover (no shooting while running), then
+//! fights from it, peeking out to shoot and ducking back. Getting hit makes him relocate.
 
 use std::f32::consts::PI;
 
@@ -18,7 +21,8 @@ use rand::Rng;
 
 use crate::{
     Layer,
-    arena::ARENA_HALF,
+    arena::{self, ARENA_HALF, Cover},
+    nav::{MoveTo, Route},
     radar::{LiveBlip, RADAR_LAYER, RadarContact},
     round::{GameState, RoundEntity, SpawnRound, TargetMobile},
     shooter::Shooter,
@@ -32,6 +36,9 @@ pub const TARGET_MAX_HP: u32 = 3;
 const VIEW_RANGE: f32 = 40.0;
 const VIEW_HALF_ANGLE: f32 = 0.6; // ~34°, a bit narrower than the camera so "seen" means clearly on screen
 const WALK_SPEED: f32 = 2.2;
+const RUN_SPEED: f32 = 5.5;
+/// "Close enough" for every arrival check (walk itself homes in to 0.2m).
+const ARRIVE: f32 = 0.5;
 
 #[derive(Component, Reflect)]
 #[reflect(Component)]
@@ -79,6 +86,8 @@ pub struct Suspicion {
     pub level: f32,
     pub sees_shooter: bool,
     pub engaged: bool,
+    /// Where he last saw or heard the shooter.
+    pub last_known: Option<Vec3>,
 }
 
 impl Suspicion {
@@ -97,6 +106,7 @@ pub enum Activity {
     Scanning,
     Wandering,
     Investigating,
+    TakingCover,
     Engaging,
 }
 
@@ -106,9 +116,19 @@ struct ScanPlan {
     dwell: Timer,
 }
 
+/// The cover he's using while engaged.
 #[derive(Component, Reflect)]
 #[reflect(Component)]
-pub struct WanderTo(pub Vec3);
+pub struct CoverPlan(pub Cover);
+
+/// Fighting from cover: hide, peek, repeat.
+#[derive(Component, Reflect)]
+#[reflect(Component)]
+struct Fighting {
+    peeking: bool,
+    timer: Timer,
+    hp_at_start: u32,
+}
 
 pub fn plugin(app: &mut App) {
     app.add_systems(OnEnter(GameState::Playing), spawn_target.in_set(SpawnRound))
@@ -202,7 +222,8 @@ fn behaviour() -> impl Node {
     InfiniteLoop::new(Selector::new(vec![
         Box::new(Sequence::new(vec![
             Box::new(CheckIf::new(Cond(|| cond(is_engaged)))),
-            task(|| checker(engage), || insert_while_running(Activity::Engaging)),
+            task(|| checker(take_cover), take_cover_listeners),
+            task(|| checker(fight), fight_listeners),
         ])),
         Box::new(Sequence::new(vec![
             Box::new(CheckIf::new(Cond(|| cond(is_alerted)))),
@@ -280,20 +301,112 @@ fn interrupted(e: Entity, suspicion: &Query<&Suspicion>, alerts: &Query<(), With
     suspicion.get(e).is_ok_and(|s| s.engaged) || alerts.contains(e)
 }
 
-fn engage(
-    In(e): In<Entity>,
-    mut q: Query<(&Suspicion, &mut LookGoal)>,
-    shooter: Query<&Transform, With<Shooter>>,
-) -> TaskStatus {
-    let Ok((suspicion, mut goal)) = q.get_mut(e) else {
-        return FAILURE;
+fn take_cover_listeners() -> Listeners {
+    let mut l = insert_while_running(Activity::TakingCover);
+    l.push((TaskEvent::Enter, listener(plan_cover)));
+    l.push((
+        TaskEvent::Exit,
+        listener(|In(e): In<Entity>, mut commands: Commands| {
+            commands.entity(e).try_remove::<MoveTo>();
+        }),
+    ));
+    l
+}
+
+fn plan_cover(In(e): In<Entity>, mut commands: Commands, q: Query<(&Transform, &Suspicion)>) {
+    let Ok((t, s)) = q.get(e) else { return };
+    let here = t.translation.xz();
+    let threat = s.last_known.map_or(here + t.forward().xz() * 10.0, |p| p.xz());
+    let cover = arena::find_cover(here, threat).unwrap_or(Cover { spot: here, peek: here });
+    commands.entity(e).insert((
+        CoverPlan(cover),
+        MoveTo {
+            dest: cover.spot.extend(BODY_CENTER).xzy(),
+            speed: RUN_SPEED,
+            strafe: false,
+        },
+    ));
+}
+
+fn take_cover(In(e): In<Entity>, q: Query<(&Transform, Option<&CoverPlan>)>) -> TaskStatus {
+    let Ok((t, Some(plan))) = q.get(e) else {
+        return RUNNING; // plan not inserted yet
     };
-    if !suspicion.engaged {
+    if t.translation.xz().distance(plan.0.spot) < ARRIVE { SUCCESS } else { RUNNING }
+}
+
+fn fight_listeners() -> Listeners {
+    let mut l = insert_while_running(Activity::Engaging);
+    l.push((
+        TaskEvent::Enter,
+        listener(|In(e): In<Entity>, mut commands: Commands, q: Query<&Target>| {
+            let hp = q.get(e).map_or(0, |t| t.hp);
+            commands.entity(e).insert(Fighting {
+                peeking: false,
+                timer: Timer::from_seconds(rand::rng().random_range(0.8..1.6), TimerMode::Once),
+                hp_at_start: hp,
+            });
+        }),
+    ));
+    l.push((
+        TaskEvent::Exit,
+        listener(|In(e): In<Entity>, mut commands: Commands| {
+            commands.entity(e).try_remove::<(Fighting, MoveTo)>();
+        }),
+    ));
+    l
+}
+
+/// Hide behind cover, then peek out to shoot, then hide again. Succeeds (so the tree
+/// re-plans cover) when he's no longer engaged or gets hit.
+fn fight(
+    In(e): In<Entity>,
+    time: Res<Time>,
+    mut commands: Commands,
+    mut q: Query<(
+        &Transform,
+        &Target,
+        &Suspicion,
+        &CoverPlan,
+        &mut LookGoal,
+        Option<&mut Fighting>,
+        Has<MoveTo>,
+    )>,
+) -> TaskStatus {
+    let Ok((t, target, suspicion, plan, mut look, Some(mut fighting), moving)) = q.get_mut(e) else {
+        return RUNNING;
+    };
+    if !suspicion.engaged || target.hp < fighting.hp_at_start {
         return SUCCESS;
     }
-    if let Ok(shooter) = shooter.single() {
-        goal.point = shooter.translation;
-        goal.turn_speed = 4.0;
+    if let Some(p) = suspicion.last_known {
+        look.point = p + Vec3::Y * EYE_OFFSET;
+        look.turn_speed = 4.0;
+    }
+    let goal = if fighting.peeking { plan.0.peek } else { plan.0.spot };
+    if t.translation.xz().distance(goal) >= ARRIVE {
+        if !moving {
+            commands.entity(e).insert(MoveTo {
+                dest: goal.extend(BODY_CENTER).xzy(),
+                speed: RUN_SPEED,
+                strafe: true,
+            });
+        }
+        return RUNNING;
+    }
+    if fighting.timer.tick(time.delta()).is_finished() {
+        let peeking = !fighting.peeking;
+        let next = if peeking { plan.0.peek } else { plan.0.spot };
+        fighting.peeking = peeking;
+        fighting.timer = Timer::from_seconds(
+            if peeking { 1.8 } else { rand::rng().random_range(0.8..2.0) },
+            TimerMode::Once,
+        );
+        commands.entity(e).insert(MoveTo {
+            dest: next.extend(BODY_CENTER).xzy(),
+            speed: RUN_SPEED,
+            strafe: true,
+        });
     }
     RUNNING
 }
@@ -371,13 +484,17 @@ fn wander_listeners() -> Listeners {
             let mut rng = rand::rng();
             let r = ARENA_HALF - 4.0;
             let dest = Vec3::new(rng.random_range(-r..r), BODY_CENTER, rng.random_range(-r..r));
-            commands.entity(e).insert(WanderTo(dest));
+            commands.entity(e).insert(MoveTo {
+                dest,
+                speed: WALK_SPEED,
+                strafe: false,
+            });
         }),
     ));
     l.push((
         TaskEvent::Exit,
         listener(|In(e): In<Entity>, mut commands: Commands| {
-            commands.entity(e).try_remove::<WanderTo>();
+            commands.entity(e).try_remove::<MoveTo>();
         }),
     ));
     l
@@ -388,7 +505,7 @@ fn wander(
     mobile: Res<TargetMobile>,
     suspicion: Query<&Suspicion>,
     alerts: Query<(), With<Alert>>,
-    mut q: Query<(&Transform, &mut LookGoal, Option<&WanderTo>)>,
+    q: Query<(&Transform, Option<&MoveTo>)>,
 ) -> TaskStatus {
     if interrupted(e, &suspicion, &alerts) {
         return FAILURE;
@@ -396,12 +513,10 @@ fn wander(
     if !mobile.0 {
         return SUCCESS;
     }
-    let Ok((t, mut goal, Some(dest))) = q.get_mut(e) else {
+    let Ok((t, Some(m))) = q.get(e) else {
         return RUNNING;
     };
-    goal.point = dest.0 + Vec3::Y * EYE_OFFSET;
-    goal.turn_speed = 2.0;
-    if t.translation.xz().distance(dest.0.xz()) < 0.6 {
+    if t.translation.xz().distance(m.dest.xz()) < ARRIVE {
         return SUCCESS;
     }
     RUNNING
@@ -441,6 +556,9 @@ fn perceive(
                 .is_some_and(|hit| hit.entity == shooter_e)
         });
     suspicion.sees_shooter = sees;
+    if sees {
+        suspicion.last_known = Some(shooter_t.translation);
+    }
 
     let dt = time.delta_secs();
     if sees {
@@ -484,17 +602,36 @@ fn gaze(
     head.rotation = Quat::from_rotation_x(new_pitch);
 }
 
-/// Walk toward `WanderTo`, once roughly facing it.
-fn walk(mut q: Query<(&Transform, &mut LinearVelocity, Option<&WanderTo>), With<Target>>) {
-    for (t, mut v, dest) in &mut q {
-        v.0 = match dest {
-            Some(dest) => {
-                let d = (dest.0 - t.translation).with_y(0.0);
-                let facing = t.forward().angle_between(d) < 0.4;
-                if facing { d.normalize_or_zero() * WALK_SPEED } else { Vec3::ZERO }
-            }
-            None => Vec3::ZERO,
+/// Follow the `Route` planned for `MoveTo`, looking where he's going; turn before moving.
+fn walk(
+    mut q: Query<
+        (&Transform, &mut LinearVelocity, &mut LookGoal, Option<&MoveTo>, Option<&mut Route>),
+        With<Target>,
+    >,
+) {
+    for (t, mut v, mut look, m, route) in &mut q {
+        let (Some(m), Some(mut route)) = (m, route) else {
+            v.0 = Vec3::ZERO;
+            continue;
         };
+        let here = t.translation.xz();
+        while route.0.len() > 1 && route.next().is_some_and(|w| w.xz().distance(here) < 0.35) {
+            route.0.remove(0);
+        }
+        let w = route.next().unwrap_or(m.dest).xz();
+        let d = w - here;
+        if d.length() < 0.2 {
+            v.0 = Vec3::ZERO;
+            continue;
+        }
+        let d3 = Vec3::new(d.x, 0.0, d.y);
+        if m.strafe {
+            v.0 = d3.normalize() * m.speed;
+            continue;
+        }
+        look.point = Vec3::new(w.x, t.translation.y + EYE_OFFSET, w.y);
+        look.turn_speed = 7.0;
+        v.0 = if t.forward().angle_between(d3) < 0.5 { d3.normalize() * m.speed } else { Vec3::ZERO };
     }
 }
 
