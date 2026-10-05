@@ -91,6 +91,17 @@ pub fn plugin(app: &mut App) {
 }
 
 fn spawn_radar(mut commands: Commands, mut meshes: ResMut<Assets<Mesh>>) {
+    // The radar's own light: no shadows, so nothing off-layer (shooter, bullets) leaks onto it.
+    commands.spawn((
+        Name::new("Radar light"),
+        DirectionalLight {
+            illuminance: 12_000.0,
+            shadow_maps_enabled: false,
+            ..default()
+        },
+        Transform::from_xyz(20.0, 40.0, 10.0).looking_at(Vec3::ZERO, Vec3::Y),
+        RenderLayers::layer(RADAR_LAYER),
+    ));
     commands.insert_resource(RadarAssets {
         contact: meshes.add(Sphere::new(0.9)),
         ring: meshes.add(Annulus::new(0.95, 1.0)),

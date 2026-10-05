@@ -293,3 +293,18 @@ fn radar_cannot_see_the_shooter_directly() {
         assert!(!layers.intersects(&radar), "{:?} is visible on radar", app.world().get::<Name>(e));
     }
 }
+
+#[test]
+fn no_shadow_casting_light_reaches_the_radar() {
+    use bevy::camera::visibility::RenderLayers;
+    use second_person::radar::RADAR_LAYER;
+    // Shadows from layer-0 actors would show up on the radar's ground and give them away.
+    let mut app = app();
+    let radar = RenderLayers::layer(RADAR_LAYER);
+    let mut q = app.world_mut().query::<(&DirectionalLight, Option<&RenderLayers>)>();
+    for (light, layers) in q.iter(app.world()) {
+        if light.shadow_maps_enabled {
+            assert!(!layers.cloned().unwrap_or_default().intersects(&radar));
+        }
+    }
+}

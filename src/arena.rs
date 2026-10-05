@@ -51,8 +51,7 @@ fn spawn_arena(
             ..default()
         },
         Transform::from_xyz(20.0, 40.0, 10.0).looking_at(Vec3::ZERO, Vec3::Y),
-        // Light the arena for the radar camera too.
-        RenderLayers::from_layers(WORLD_AND_RADAR),
+        // Main view only: on the radar its shadow map would reveal the actors' shadows.
     ));
     commands.insert_resource(GlobalAmbientLight {
         brightness: 400.0,
