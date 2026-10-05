@@ -19,7 +19,7 @@ use rand::Rng;
 use crate::{
     Layer,
     arena::ARENA_HALF,
-    radar::RADAR_LAYER,
+    radar::{LiveBlip, RADAR_LAYER, RadarContact},
     round::{GameState, RoundEntity, SpawnRound, TargetMobile},
     shooter::Shooter,
 };
@@ -136,6 +136,7 @@ fn spawn_target(
         RoundEntity,
         Target { hp: TARGET_MAX_HP },
         Suspicion::default(),
+        RadarContact(Color::srgb(1.0, 0.2, 0.2)),
         LookGoal {
             point: Vec3::new(0.0, BODY_CENTER + EYE_OFFSET, -10.0),
             turn_speed: 1.0,
@@ -172,6 +173,7 @@ fn spawn_target(
                 MeshMaterial3d(blip),
                 Transform::from_xyz(0.0, 4.0, 0.0),
                 RenderLayers::layer(RADAR_LAYER),
+                LiveBlip,
             ),
             (
                 Name::new("Radar view cone"),
@@ -180,6 +182,7 @@ fn spawn_target(
                 MeshMaterial3d(cone),
                 Transform::from_xyz(0.0, 3.0, 0.0).with_rotation(Quat::from_rotation_x(-PI / 2.0)),
                 RenderLayers::layer(RADAR_LAYER),
+                LiveBlip,
             ),
         ],
     ));

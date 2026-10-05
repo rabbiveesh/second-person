@@ -4,6 +4,8 @@ use avian3d::prelude::*;
 use bevy::prelude::*;
 use leafwing_input_manager::prelude::*;
 
+use crate::radar::RadarMode;
+
 #[derive(States, Default, Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub enum GameState {
     #[default]
@@ -21,6 +23,7 @@ pub struct RoundEntity;
 pub enum MetaAction {
     Restart,
     ToggleTargetMobility,
+    CycleRadar,
 }
 
 /// Whether the target is allowed to walk around (vs. standing still and looking around).
@@ -42,6 +45,7 @@ pub fn plugin(app: &mut App) {
                 InputMap::new([
                     (MetaAction::Restart, KeyCode::KeyR),
                     (MetaAction::ToggleTargetMobility, KeyCode::KeyM),
+                    (MetaAction::CycleRadar, KeyCode::Tab),
                 ]),
             ));
         })
@@ -69,7 +73,11 @@ fn meta_input(
     state: Res<State<GameState>>,
     mut next: ResMut<NextState<GameState>>,
     mut mobile: ResMut<TargetMobile>,
+    mut radar: ResMut<RadarMode>,
 ) {
+    if actions.just_pressed(&MetaAction::CycleRadar) {
+        *radar = radar.next();
+    }
     if actions.just_pressed(&MetaAction::Restart) && *state.get() != GameState::Playing {
         next.set(GameState::Playing);
     }

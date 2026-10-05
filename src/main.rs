@@ -2,7 +2,9 @@
 //! driving the shooter who's hunting him.
 
 mod arena;
+mod audio;
 mod combat;
+mod fx;
 mod hud;
 mod radar;
 mod round;
@@ -45,6 +47,8 @@ fn main() {
             target::plugin,
             shooter::plugin,
             combat::plugin,
+            fx::plugin,
+            audio::plugin,
             radar::plugin,
             hud::plugin,
         ))

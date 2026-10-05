@@ -8,7 +8,7 @@ use leafwing_input_manager::prelude::*;
 
 use crate::{
     Layer,
-    radar::{RADAR_LAYER, WORLD_AND_RADAR},
+    radar::{LiveBlip, RADAR_LAYER, RadarContact},
     round::{GameState, RoundEntity, SpawnRound},
 };
 
@@ -30,8 +30,17 @@ pub struct Shooter {
     pub hp: f32,
 }
 
+/// The shooter took a step (heard by the target).
+#[derive(Message, Clone, Copy)]
+pub struct Footstep {
+    pub at: Vec3,
+}
+
+const STEP_INTERVAL: f32 = 0.42;
+
 pub fn plugin(app: &mut App) {
     app.add_plugins(InputManagerPlugin::<ShooterAction>::default())
+        .add_message::<Footstep>()
         .add_systems(OnEnter(GameState::Playing), spawn_shooter.in_set(SpawnRound))
         .add_systems(Update, drive.run_if(in_state(GameState::Playing)));
 }
@@ -46,7 +55,6 @@ fn spawn_shooter(
         unlit: true,
         ..default()
     });
-    let layers = RenderLayers::from_layers(WORLD_AND_RADAR);
 
     commands.spawn((
         Name::new("Shooter"),
@@ -68,7 +76,7 @@ fn spawn_shooter(
         Transform::from_xyz(-12.5, 0.9, -13.5).with_rotation(Quat::from_rotation_y(-FRAC_PI_2)),
         Mesh3d(meshes.add(Capsule3d::new(0.35, 1.0))),
         MeshMaterial3d(materials.add(Color::srgb(0.95, 0.5, 0.1))),
-        layers.clone(),
+        RadarContact(Color::srgb(0.2, 1.0, 0.3)),
         children![
             (
                 Name::new("Visor"),
@@ -79,14 +87,12 @@ fn spawn_shooter(
                     ..default()
                 })),
                 Transform::from_xyz(0.0, 0.45, -0.28),
-                layers.clone(),
             ),
             (
                 Name::new("Gun"),
                 Mesh3d(meshes.add(Cuboid::new(0.12, 0.12, 0.8))),
                 MeshMaterial3d(materials.add(Color::srgb(0.15, 0.15, 0.15))),
                 Transform::from_xyz(0.3, 0.15, -0.45),
-                layers.clone(),
             ),
             (
                 Name::new("Radar blip"),
@@ -94,6 +100,7 @@ fn spawn_shooter(
                 MeshMaterial3d(blip.clone()),
                 Transform::from_xyz(0.0, 4.0, 0.0),
                 RenderLayers::layer(RADAR_LAYER),
+                LiveBlip,
             ),
             (
                 Name::new("Radar heading"),
@@ -101,6 +108,7 @@ fn spawn_shooter(
                 MeshMaterial3d(blip),
                 Transform::from_xyz(0.0, 4.0, -1.3),
                 RenderLayers::layer(RADAR_LAYER),
+                LiveBlip,
             ),
         ],
     ));
@@ -109,9 +117,11 @@ fn spawn_shooter(
 /// Tank controls, relative to the shooter's own facing.
 fn drive(
     time: Res<Time>,
-    mut q: Query<(&ActionState<ShooterAction>, &mut Rotation, &mut LinearVelocity), With<Shooter>>,
+    mut step: Local<f32>,
+    mut steps: MessageWriter<Footstep>,
+    mut q: Query<(&ActionState<ShooterAction>, &Transform, &mut Rotation, &mut LinearVelocity), With<Shooter>>,
 ) {
-    for (actions, mut rot, mut vel) in &mut q {
+    for (actions, t, mut rot, mut vel) in &mut q {
         let turn = actions.pressed(&ShooterAction::TurnLeft) as i8 as f32
             - actions.pressed(&ShooterAction::TurnRight) as i8 as f32;
         rot.0 = Quat::from_rotation_y(turn * TURN_SPEED * time.delta_secs()) * rot.0;
@@ -121,5 +131,15 @@ fn drive(
         let forward = rot.0 * Vec3::NEG_Z;
         let planar = forward * throttle * MOVE_SPEED;
         vel.0 = Vec3::new(planar.x, vel.0.y, planar.z);
+
+        if throttle != 0.0 {
+            *step -= time.delta_secs();
+            if *step <= 0.0 {
+                *step = STEP_INTERVAL;
+                steps.write(Footstep { at: t.translation });
+            }
+        } else {
+            *step = 0.0;
+        }
     }
 }

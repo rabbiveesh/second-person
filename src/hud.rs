@@ -5,7 +5,7 @@ use bevy_egui::{EguiContexts, EguiPrimaryContextPass, PrimaryEguiContext, egui};
 
 use crate::{
     combat::{ShooterHit, TargetHit},
-    radar::RadarRect,
+    radar::{RadarMode, RadarRect},
     round::{GameState, TargetMobile},
     shooter::{SHOOTER_MAX_HP, Shooter},
     target::{Activity, Suspicion, TARGET_MAX_HP, Target},
@@ -60,6 +60,7 @@ fn draw_hud(
     mut contexts: EguiContexts,
     state: Res<State<GameState>>,
     mobile: Res<TargetMobile>,
+    radar_mode: Res<RadarMode>,
     flashes: Res<Flashes>,
     radar: Res<RadarRect>,
     shooter: Option<Single<&Shooter>>,
@@ -118,8 +119,9 @@ fn draw_hud(
         .show(ctx, |ui| {
             ui.label(
                 egui::RichText::new(format!(
-                    "Up/Down move   Left/Right turn   Space fire   M target walks: {}   F1 inspector",
-                    if mobile.0 { "on" } else { "off" }
+                    "Up/Down move   Left/Right turn   Space fire   M target walks: {}   Tab radar: {:?}   F1 inspector",
+                    if mobile.0 { "on" } else { "off" },
+                    *radar_mode
                 ))
                 .color(egui::Color32::WHITE)
                 .background_color(egui::Color32::from_black_alpha(140)),
@@ -128,7 +130,7 @@ fn draw_hud(
 
     // Frame + label for the radar viewport.
     let r = radar.0;
-    if r.width() > 0.0 {
+    if r.width() > 0.0 && *radar_mode != RadarMode::Off {
         let rect = egui::Rect::from_min_max(egui::pos2(r.min.x, r.min.y), egui::pos2(r.max.x, r.max.y));
         let painter = ctx.layer_painter(egui::LayerId::new(egui::Order::Foreground, "radar".into()));
         painter.rect_stroke(
@@ -140,7 +142,7 @@ fn draw_hud(
         painter.text(
             rect.left_top() + egui::vec2(6.0, 4.0),
             egui::Align2::LEFT_TOP,
-            "RADAR",
+            format!("RADAR · {:?}", *radar_mode).to_uppercase(),
             egui::FontId::monospace(14.0),
             egui::Color32::WHITE,
         );

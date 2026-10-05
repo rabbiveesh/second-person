@@ -1,12 +1,11 @@
 //! Bullets, hits, hearing, and the target shooting back.
 
 use avian3d::prelude::*;
-use bevy::{camera::visibility::RenderLayers, prelude::*};
+use bevy::prelude::*;
 use leafwing_input_manager::prelude::*;
 
 use crate::{
     Layer,
-    radar::WORLD_AND_RADAR,
     round::{GameState, RoundEntity},
     shooter::{Shooter, ShooterAction},
     target::{Activity, Alert, MainCamera, Suspicion, Target},
@@ -25,13 +24,31 @@ pub struct Bullet {
     origin: Vec3,
 }
 
-/// The target got shot (for HUD feedback).
-#[derive(Message)]
-pub struct TargetHit;
+/// The shooter fired. Drives muzzle flash, gunshot sound and radar ping.
+#[derive(Message, Clone, Copy)]
+pub struct Gunshot {
+    pub muzzle: Vec3,
+    pub dir: Vec3,
+}
 
-/// The shooter got shot (for HUD feedback).
-#[derive(Message)]
-pub struct ShooterHit;
+/// A bullet hit world geometry.
+#[derive(Message, Clone, Copy)]
+pub struct BulletImpact {
+    pub at: Vec3,
+}
+
+/// The target got shot.
+#[derive(Message, Clone, Copy)]
+pub struct TargetHit {
+    pub at: Vec3,
+}
+
+/// The target shot the shooter (hitscan from `from` to `to`).
+#[derive(Message, Clone, Copy)]
+pub struct ShooterHit {
+    pub from: Vec3,
+    pub to: Vec3,
+}
 
 #[derive(Resource)]
 struct Assets3d {
@@ -39,22 +56,19 @@ struct Assets3d {
     material: Handle<StandardMaterial>,
 }
 
-/// Brief lines drawn for the target's return fire.
-#[derive(Resource, Default)]
-struct Tracers(Vec<(Vec3, Vec3, f32)>);
 
 pub fn plugin(app: &mut App) {
-    app.add_message::<TargetHit>()
+    app.add_message::<Gunshot>()
+        .add_message::<BulletImpact>()
+        .add_message::<TargetHit>()
         .add_message::<ShooterHit>()
-        .init_resource::<Tracers>()
         .add_systems(Startup, load_assets)
         .add_systems(
             Update,
             (fire, bullet_hits, return_fire, check_outcome)
                 .chain()
                 .run_if(in_state(GameState::Playing)),
-        )
-        .add_systems(Update, draw_tracers);
+        );
 }
 
 fn load_assets(
@@ -79,6 +93,7 @@ fn fire(
     mut cooldown: Local<Option<Timer>>,
     shooter: Single<(&ActionState<ShooterAction>, &Transform), With<Shooter>>,
     target: Single<(Entity, &Transform, &mut Suspicion), With<Target>>,
+    mut gunshots: MessageWriter<Gunshot>,
 ) {
     let cooldown = cooldown.get_or_insert_with(|| {
         let mut t = Timer::from_seconds(FIRE_COOLDOWN, TimerMode::Once);
@@ -109,8 +124,8 @@ fn fire(
         Mesh3d(assets.mesh.clone()),
         MeshMaterial3d(assets.material.clone()),
         Transform::from_translation(muzzle),
-        RenderLayers::from_layers(WORLD_AND_RADAR),
     ));
+    gunshots.write(Gunshot { muzzle, dir: *forward });
 
     // Gunshots are loud.
     let (target_e, target_t, mut suspicion) = target.into_inner();
@@ -126,6 +141,7 @@ fn bullet_hits(
     bullets: Query<(&Bullet, &Transform)>,
     mut targets: Query<(Entity, &mut Target, &Transform, &mut Suspicion)>,
     mut hits: MessageWriter<TargetHit>,
+    mut impacts: MessageWriter<BulletImpact>,
 ) {
     let mut spent = Vec::new();
     for ev in collisions.read() {
@@ -143,12 +159,13 @@ fn bullet_hits(
         let (bullet, bullet_t) = bullets.get(bullet_e).unwrap();
         commands.entity(bullet_e).despawn();
 
-        if let Ok((_, mut target, _, mut suspicion)) = targets.get_mut(other) {
+        if let Ok((_, mut target, target_t, mut suspicion)) = targets.get_mut(other) {
             target.hp = target.hp.saturating_sub(1);
             suspicion.bump(0.6);
             commands.entity(other).insert(Alert::new(bullet.origin, 3.0));
-            hits.write(TargetHit);
+            hits.write(TargetHit { at: target_t.translation });
         } else {
+            impacts.write(BulletImpact { at: bullet_t.translation });
             // Near miss: he hears the impact and looks toward where it came from.
             for (target_e, _, target_t, mut suspicion) in &mut targets {
                 if target_t.translation.distance(bullet_t.translation) < NEAR_MISS_RANGE {
@@ -164,7 +181,6 @@ fn bullet_hits(
 fn return_fire(
     time: Res<Time>,
     mut timer: Local<Option<Timer>>,
-    mut tracers: ResMut<Tracers>,
     eyes: Single<&GlobalTransform, With<MainCamera>>,
     target: Single<(&Suspicion, Option<&Activity>), With<Target>>,
     mut shooter: Single<(&mut Shooter, &Transform)>,
@@ -181,17 +197,8 @@ fn return_fire(
         s.hp = (s.hp - RETURN_FIRE_DAMAGE).max(0.0);
         // Start the tracer just below the eyes so it's visible from his own view.
         let from = eyes.translation() + eyes.down() * 0.3 + eyes.right() * 0.2;
-        tracers.0.push((from, t.translation, 0.12));
-        hits.write(ShooterHit);
+        hits.write(ShooterHit { from, to: t.translation });
     }
-}
-
-fn draw_tracers(time: Res<Time>, mut tracers: ResMut<Tracers>, mut gizmos: Gizmos) {
-    for (from, to, ttl) in &mut tracers.0 {
-        gizmos.line(*from, *to, Color::srgb(1.0, 0.3, 0.2));
-        *ttl -= time.delta_secs();
-    }
-    tracers.0.retain(|t| t.2 > 0.0);
 }
 
 fn check_outcome(
