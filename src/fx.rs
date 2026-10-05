@@ -17,11 +17,16 @@ use bevy_firework::{
 use crate::{
     combat::{BulletImpact, Gunshot, ShooterHit, TargetHit},
     round::RoundEntity,
+    shooter::Shooter,
 };
 
 /// Despawn after this long (flash lights, tracers).
 #[derive(Component)]
 struct Ttl(Timer);
+
+/// Thins out over its `Ttl` (the lingering tracer of the killing shot).
+#[derive(Component)]
+struct Thin;
 
 #[derive(Component)]
 struct Tracer {
@@ -31,7 +36,7 @@ struct Tracer {
 
 pub fn plugin(app: &mut App) {
     app.add_plugins(ParticleSystemPlugin::default())
-        .add_systems(Update, (muzzle_flash, impact_sparks, target_hit, return_fire, expire, draw_tracers));
+        .add_systems(Update, (muzzle_flash, impact_sparks, target_hit, return_fire, thin, expire, draw_tracers));
 }
 
 fn muzzle_flash(mut commands: Commands, mut shots: MessageReader<Gunshot>) {
@@ -94,7 +99,14 @@ fn target_hit(mut commands: Commands, mut hits: MessageReader<TargetHit>) {
     }
 }
 
-fn return_fire(mut commands: Commands, mut hits: MessageReader<ShooterHit>) {
+fn return_fire(
+    mut commands: Commands,
+    mut hits: MessageReader<ShooterHit>,
+    shooter: Option<Single<&Shooter>>,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut materials: ResMut<Assets<StandardMaterial>>,
+) {
+    let dead = shooter.is_some_and(|s| s.hp <= 0.0);
     for hit in hits.read() {
         commands.spawn((
             Name::new("Tracer"),
@@ -102,6 +114,56 @@ fn return_fire(mut commands: Commands, mut hits: MessageReader<ShooterHit>) {
             Tracer { from: hit.from, to: hit.to },
             Ttl(Timer::from_seconds(0.12, TimerMode::Once)),
         ));
+        if !dead {
+            continue;
+        }
+        // The killing shot: a thick beam that hangs in the air, and a big burst where it lands.
+        let span = hit.to - hit.from;
+        commands.spawn((
+            Name::new("Killing tracer"),
+            RoundEntity,
+            Mesh3d(meshes.add(Cylinder::new(0.035, span.length()))),
+            MeshMaterial3d(materials.add(StandardMaterial {
+                base_color: Color::srgb(1.0, 0.35, 0.2),
+                emissive: LinearRgba::rgb(10.0, 2.0, 1.0),
+                unlit: true,
+                ..default()
+            })),
+            Transform::from_translation(hit.from + span / 2.0)
+                .with_rotation(Quat::from_rotation_arc(Vec3::Y, span.normalize_or(Vec3::Y))),
+            Thin,
+            Ttl(Timer::from_seconds(1.5, TimerMode::Once)),
+        ));
+        commands.spawn((
+            Name::new("Killing light"),
+            RoundEntity,
+            PointLight {
+                color: Color::srgb(1.0, 0.4, 0.3),
+                intensity: 3_000_000.0,
+                range: 10.0,
+                ..default()
+            },
+            Transform::from_translation(hit.to),
+            Ttl(Timer::from_seconds(0.15, TimerMode::Once)),
+        ));
+        burst(
+            &mut commands,
+            "Shooter down",
+            hit.to,
+            span.normalize_or(Vec3::Y),
+            1.4,
+            48,
+            (3.0, 9.0),
+            LinearRgba::rgb(8.0, 1.0, 0.4),
+            0.7,
+        );
+    }
+}
+
+fn thin(mut q: Query<(&mut Transform, &Ttl), With<Thin>>) {
+    for (mut t, ttl) in &mut q {
+        let left = 1.0 - ttl.0.fraction();
+        t.scale = Vec3::new(left, 1.0, left);
     }
 }
 

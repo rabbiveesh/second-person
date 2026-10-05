@@ -11,12 +11,17 @@ use crate::{
     target::{Activity, Suspicion, TARGET_MAX_HP, Target},
 };
 
-/// Screen flashes: red when you're hit, white when the target is hit.
+/// Screen flashes: red when you're hit; a hit marker and a light flash when the target is hit.
+/// `ended` counts seconds since the round ended (0 while playing).
 #[derive(Resource, Default)]
 struct Flashes {
     hurt: f32,
     hit: f32,
+    ended: f32,
 }
+
+/// Hold the end banner back so you can watch him (or yourself) go down.
+const BANNER_DELAY: f32 = 1.2;
 
 pub fn plugin(app: &mut App) {
     app.init_resource::<Flashes>()
@@ -40,6 +45,7 @@ fn spawn_hud_camera(mut commands: Commands) {
 
 fn track_flashes(
     time: Res<Time>,
+    state: Res<State<GameState>>,
     mut flashes: ResMut<Flashes>,
     mut hurt: MessageReader<ShooterHit>,
     mut hit: MessageReader<TargetHit>,
@@ -47,6 +53,10 @@ fn track_flashes(
     let decay = time.delta_secs() * 2.5;
     flashes.hurt = (flashes.hurt - decay).max(0.0);
     flashes.hit = (flashes.hit - decay).max(0.0);
+    flashes.ended = match state.get() {
+        GameState::Playing => 0.0,
+        _ => flashes.ended + time.delta_secs(),
+    };
     if hurt.read().count() > 0 {
         flashes.hurt = 0.6;
     }
@@ -156,11 +166,27 @@ fn draw_hud(
         painter.rect_filled(screen, 0.0, egui::Color32::from_rgba_unmultiplied(255, 0, 0, (flashes.hurt * 120.0) as u8));
     }
     if flashes.hit > 0.0 {
-        painter.rect_filled(screen, 0.0, egui::Color32::from_rgba_unmultiplied(255, 255, 255, (flashes.hit * 160.0) as u8));
+        painter.rect_filled(screen, 0.0, egui::Color32::from_rgba_unmultiplied(255, 255, 255, (flashes.hit * 60.0) as u8));
+        hit_marker(&painter, screen.center(), flashes.hit);
+    }
+    // His view reddens at the edges as he's wounded, pulsing on each hit.
+    if let Some(target) = &target {
+        let wounds = 1.0 - target.0.hp as f32 / TARGET_MAX_HP as f32;
+        let strength = (wounds * 0.7 + flashes.hit * 0.5).min(1.0);
+        if strength > 0.0 {
+            let width = screen.width().min(screen.height()) * (0.12 + 0.18 * strength);
+            vignette(&painter, screen, width, egui::Color32::from_rgba_unmultiplied(150, 0, 0, (strength * 200.0) as u8));
+        }
+    }
+    // He's dead: the view dims to dark red as he lies there.
+    if *state.get() == GameState::Won {
+        let dim = ((flashes.ended - 0.5) / 1.2).clamp(0.0, 1.0);
+        painter.rect_filled(screen, 0.0, egui::Color32::from_rgba_unmultiplied(40, 0, 0, (dim * 170.0) as u8));
     }
 
     let banner = match state.get() {
         GameState::Playing => None,
+        _ if flashes.ended < BANNER_DELAY => None,
         GameState::Won => Some(("TARGET DOWN", egui::Color32::from_rgb(90, 230, 110))),
         GameState::Lost => Some(("YOU WERE SPOTTED. AND SHOT.", egui::Color32::from_rgb(240, 70, 60))),
     };
@@ -177,4 +203,33 @@ fn draw_hud(
             });
     }
     Ok(())
+}
+
+/// An X of four short strokes around `at`, fading with `alpha`.
+fn hit_marker(painter: &egui::Painter, at: egui::Pos2, alpha: f32) {
+    let colour = egui::Color32::from_rgba_unmultiplied(255, 255, 255, (alpha.min(1.0) * 255.0) as u8);
+    // Pops out a little as it fades.
+    let (inner, outer) = (10.0 + 8.0 * (1.0 - alpha), 26.0 + 8.0 * (1.0 - alpha));
+    for (x, y) in [(1.0, 1.0), (1.0, -1.0), (-1.0, 1.0), (-1.0, -1.0)] {
+        let d = egui::vec2(x, y) * std::f32::consts::FRAC_1_SQRT_2;
+        painter.line_segment([at + d * inner, at + d * outer], egui::Stroke::new(3.0, colour));
+    }
+}
+
+/// A border `width` thick that fades from `colour` at the edge to clear inside.
+fn vignette(painter: &egui::Painter, rect: egui::Rect, width: f32, colour: egui::Color32) {
+    let inner = rect.shrink(width);
+    let outer = [rect.left_top(), rect.right_top(), rect.right_bottom(), rect.left_bottom()];
+    let inner = [inner.left_top(), inner.right_top(), inner.right_bottom(), inner.left_bottom()];
+    let mut mesh = egui::Mesh::default();
+    for i in 0..4 {
+        mesh.colored_vertex(outer[i], colour);
+        mesh.colored_vertex(inner[i], egui::Color32::TRANSPARENT);
+    }
+    for i in 0..4u32 {
+        let j = (i + 1) % 4;
+        mesh.add_triangle(2 * i, 2 * j, 2 * i + 1);
+        mesh.add_triangle(2 * i + 1, 2 * j, 2 * j + 1);
+    }
+    painter.add(egui::Shape::mesh(mesh));
 }
