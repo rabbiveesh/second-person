@@ -18,7 +18,7 @@
 use std::{collections::VecDeque, net::SocketAddr, time::Duration};
 
 use bevy::{
-    camera::{ScalingMode, Viewport},
+    camera::{ScalingMode, Viewport, visibility::RenderLayers},
     ecs::entity::MapEntities,
     math::curve::{Ease, FunctionCurve, Interval},
     prelude::*,
@@ -26,11 +26,12 @@ use bevy::{
 use lightyear::{
     input::native::prelude::*,
     interpolation::plugin::InterpolationDelay,
-    link::LinkConditionerConfig,
     netcode::{NetcodeClient, NetcodeServer},
     prelude::{client::*, server::*, *},
 };
 use lightyear::input::config::InputConfig;
+use lightyear::input::client::InputSystems;
+
 use lightyear::netcode::client_plugin::NetcodeConfig;
 use lightyear::prelude::input::native::InputMarker;
 use rand::Rng;
@@ -73,6 +74,20 @@ impl Ease for Pose {
             pos: start.pos.lerp(end.pos, t),
             yaw: start.yaw + angle_diff(end.yaw, start.yaw) * t,
         })
+    }
+}
+
+// Needed by `.add_correction()` (smooths out rollback corrections of your own body).
+impl Diffable for Pose {
+    fn base_value() -> Self {
+        Pose::default()
+    }
+    fn diff(&self, new: &Self) -> Self {
+        Pose { pos: new.pos - self.pos, yaw: angle_diff(new.yaw, self.yaw) }
+    }
+    fn apply_diff(&mut self, d: &Self) {
+        self.pos += d.pos;
+        self.yaw += d.yaw;
     }
 }
 
@@ -200,6 +215,7 @@ fn main() {
             app.add_plugins((
                 MinimalPlugins.set(bevy::app::ScheduleRunnerPlugin::run_loop(Duration::from_millis(2))),
                 bevy::log::LogPlugin::default(),
+                bevy::state::app::StatesPlugin,
             ));
             app.add_plugins(ServerPlugins { tick_duration: tick });
             protocol(&mut app);
@@ -219,6 +235,7 @@ fn main() {
                     bevy::log::LogPlugin::default(),
                     TransformPlugin,
                     bevy::input::InputPlugin,
+                    bevy::state::app::StatesPlugin,
                 ));
             } else {
                 app.add_plugins(DefaultPlugins.set(WindowPlugin {
@@ -293,7 +310,8 @@ fn server_plugin(app: &mut App, lag: u64) {
         .add_systems(
             FixedUpdate,
             (server_move, record_history, server_fire, server_bullets, server_round).chain(),
-        );
+        )
+        .add_systems(Update, server_log);
 }
 
 fn on_connected(
@@ -397,7 +415,7 @@ fn server_bullets(
                 if pid.0 == b.owner || hp.0 <= 0.0 {
                     continue;
                 }
-                let then = now - b.lag_ticks as u16;
+                let then = now - b.lag_ticks;
                 let victim = hist
                     .0
                     .iter()
@@ -441,6 +459,17 @@ fn server_bullets(
     }
     for ev in events {
         let _ = sender.send::<_, Reliable>(&ev, &server, &NetworkTarget::All);
+    }
+}
+
+fn server_log(time: Res<Time>, mut t: Local<f32>, q: Query<(&PlayerId, &Pose, &Hp, &ActionState<Inputs>)>) {
+    *t += time.delta_secs();
+    if *t < 5.0 {
+        return;
+    }
+    *t = 0.0;
+    for (id, p, hp, i) in &q {
+        info!("server: {:?} at {:?} hp {} input {:?}", id.0, p.pos, hp.0, i.0);
     }
 }
 
@@ -490,6 +519,8 @@ struct Hud {
 }
 
 fn client_plugin(app: &mut App, id: u64, server: SocketAddr, lag: u64, bot: bool, headless: bool) {
+    // Not added by ClientPlugins: without it, rollback/correction systems silently never run.
+    app.insert_resource(PredictionManager::default());
     app.insert_resource(BotBrain { enabled: bot, aim_error: 0.0, retarget: 0 })
         .init_resource::<Hud>()
         .add_systems(Startup, move |mut commands: Commands| {
@@ -529,7 +560,7 @@ fn client_plugin(app: &mut App, id: u64, server: SocketAddr, lag: u64, bot: bool
             .add_systems(FixedUpdate, local_fire_fx.after(predict_move).run_if(not(is_in_rollback)))
             .add_systems(
                 Update,
-                (dress_players, dress_bullets, sync_transforms, eyes_follow_opponent, tick_fx, hud_title),
+                (dress_players, dress_bullets, sync_transforms, eyes_follow_opponent, tick_fx, hud_title, shots),
             );
     }
 }
@@ -553,11 +584,13 @@ fn write_inputs(
             }
             brain.retarget -= 1;
             let to = them.pos - me.pos;
-            let want = (-to.x).atan2(-to.y) + brain.aim_error;
+            let clear_shot = !arena::los_blocked(me.pos, them.pos);
+            // No line of sight: flank around the cover instead of staring at it.
+            let flank = if clear_shot { 0.0 } else { 1.1 };
+            let want = (-to.x).atan2(-to.y) + brain.aim_error + flank;
             let err = angle_diff(want, me.yaw);
             i.turn = if err > 0.04 { 1 } else if err < -0.04 { -1 } else { 0 };
             let ahead = me.pos + dir(me.yaw) * 1.2;
-            let clear_shot = !arena::los_blocked(me.pos, them.pos);
             if !arena::is_clear(ahead, RADIUS) {
                 i.turn = 1;
                 i.fwd = -1;
@@ -668,6 +701,7 @@ fn setup_view(mut commands: Commands) {
             ..OrthographicProjection::default_3d()
         }),
         Transform::from_xyz(0.0, 60.0, 0.0).looking_at(Vec3::ZERO, Vec3::NEG_Z),
+        RenderLayers::from_layers(&[0, 1]),
     ));
 }
 
@@ -679,8 +713,9 @@ fn dress_players(
 ) {
     for (e, mine) in &q {
         let color = if mine { Color::srgb(0.2, 0.9, 0.3) } else { Color::srgb(0.9, 0.3, 0.2) };
+        let blip = if mine { Color::srgb(0.1, 1.0, 1.0) } else { Color::srgb(1.0, 0.15, 0.15) };
         let body = meshes.add(Capsule3d::new(RADIUS, 1.1));
-        commands.entity(e).insert((
+        commands.entity(e).try_insert((
             Mesh3d(body),
             MeshMaterial3d(mats.add(color)),
             Transform::default(),
@@ -690,6 +725,12 @@ fn dress_players(
                 Mesh3d(meshes.add(Cuboid::new(0.12, 0.12, 0.6))),
                 MeshMaterial3d(mats.add(Color::srgb(0.1, 0.1, 0.1))),
                 Transform::from_xyz(0.25, 0.3, -0.4),
+            ), (
+                // big radar blip, on a layer only the radar camera renders
+                Mesh3d(meshes.add(Sphere::new(1.4))),
+                MeshMaterial3d(mats.add(StandardMaterial { base_color: blip, unlit: true, ..default() })),
+                Transform::from_xyz(0.0, 4.0, 0.0),
+                RenderLayers::layer(1),
             )],
         ));
     }
@@ -702,7 +743,7 @@ fn dress_bullets(
     mut mats: ResMut<Assets<StandardMaterial>>,
 ) {
     for e in &q {
-        commands.entity(e).insert((
+        commands.entity(e).try_insert((
             Mesh3d(meshes.add(Sphere::new(0.12))),
             MeshMaterial3d(mats.add(StandardMaterial { base_color: Color::srgb(1.0, 0.4, 0.1), unlit: true, ..default() })),
             Transform::default(),
@@ -813,4 +854,19 @@ fn hud_title(
         window.title = title;
     }
     clear.0 = Color::srgb(0.55, 0.7, 0.85).mix(&Color::srgb(0.9, 0.1, 0.1), (hud.flash / 0.35).min(1.0));
+}
+
+/// Dev aid: `SPIKE_SHOT=/some/dir` saves a screenshot every 3 s (used to check the view headlessly).
+fn shots(time: Res<Time>, mut t: Local<f32>, mut n: Local<u32>, mut commands: Commands) {
+    let Ok(dir) = std::env::var("SPIKE_SHOT") else { return };
+    *t += time.delta_secs();
+    if *t < 3.0 || *n >= 8 {
+        return;
+    }
+    *t = 0.0;
+    *n += 1;
+    use bevy::render::view::screenshot::{Screenshot, save_to_disk};
+    commands
+        .spawn(Screenshot::primary_window())
+        .observe(save_to_disk(format!("{dir}/shot{}.png", *n)));
 }
