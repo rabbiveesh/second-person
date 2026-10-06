@@ -1,0 +1,18 @@
+#!/usr/bin/env bash
+# THROWAWAY: play the network spike against Claude's bot.
+# Starts the server and a headless bot client in the background, then your windowed client.
+#   scripts/net-spike            # localhost, simulated 120 ms round trip
+#   LAG=0 scripts/net-spike      # no simulated lag
+#   BOT=0 scripts/net-spike      # no bot: run a second `cargo run --example net_spike -- client --id 2` yourself
+set -euo pipefail
+LAG=${LAG:-120}
+cargo build --example net_spike
+# cargo run (not the bare binary): dev builds link bevy dynamically and need its lib path.
+run() { cargo run -q --example net_spike -- "$@"; }
+trap 'pkill -f examples/net_spike 2>/dev/null' EXIT
+run server > /tmp/net_spike_server.log 2>&1 &
+sleep 0.5
+if [ "${BOT:-1}" = 1 ]; then
+  run client --id 2 --bot --headless --lag "$LAG" > /tmp/net_spike_bot.log 2>&1 &
+fi
+run client --id 1 --lag "$LAG"

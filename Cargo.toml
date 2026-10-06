@@ -46,6 +46,9 @@ getrandom_04 = { package = "getrandom", version = "0.4", features = ["wasm_js"] 
 bevy_firework = { path = "vendor/bevy_firework" }
 
 [dev-dependencies]
+# THROWAWAY network spike (examples/net_spike.rs). Delete with the example.
+lightyear = { version = "0.30.1", features = ["client", "server", "netcode", "udp", "prediction", "interpolation", "replication", "input_native"] }
+serde = { version = "1", features = ["derive"] }
 hound = "3.5.1"
 sfxr = "0.1"
 
