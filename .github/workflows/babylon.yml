@@ -1,0 +1,27 @@
+# The Babylon.js port (babylon/): typecheck, headless gameplay tests, and a production build.
+name: Babylon port
+
+on:
+  push:
+    paths: ["babylon/**", "assets/**", ".github/workflows/babylon.yml"]
+  pull_request:
+    paths: ["babylon/**", "assets/**", ".github/workflows/babylon.yml"]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: babylon
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: babylon/package-lock.json
+      - run: npm ci
+      - name: Headless gameplay tests
+        run: npm test
+      - name: Typecheck + build
+        run: npm run build
