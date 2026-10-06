@@ -55,6 +55,8 @@ const DAMAGE: f32 = 25.0;
 const MAX_HP: f32 = 100.0;
 const MAX_LAG_COMP_TICKS: u32 = 15; // 250 ms
 const RESPAWN_TICKS: u32 = 180;
+const BLINK_MAX_TICKS: u32 = 90; // eyes stay shut at most 1.5 s per press
+const BLINK_COOLDOWN_TICKS: u32 = 240; // 4 s after they open again
 
 // ---------------------------------------------------------------- protocol
 
@@ -97,6 +99,14 @@ struct Hp(f32);
 #[derive(Component, Serialize, Deserialize, Clone, Copy, Debug, PartialEq)]
 struct Score(u32);
 
+/// Server-owned eyelid state, replicated to both clients.
+#[derive(Component, Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Default)]
+struct Eyelids {
+    closed: bool,
+    /// Ticks until the eyes may close again (0 = ready).
+    cooldown: u32,
+}
+
 /// Server-simulated projectile, replicated (interpolated) to the player who didn't fire it.
 #[derive(Component, Serialize, Deserialize, Clone, Copy, Debug, PartialEq)]
 struct BulletPos(Vec2);
@@ -112,6 +122,8 @@ struct Inputs {
     fwd: i8,
     turn: i8,
     fire: bool,
+    /// Hold to close your eyes: blacks out the opponent's screen (it IS your eyes).
+    blink: bool,
 }
 
 impl MapEntities for Inputs {
@@ -143,6 +155,7 @@ fn protocol(app: &mut App) {
         .add_correction();
     app.component::<Hp>().replicate();
     app.component::<Score>().replicate();
+    app.component::<Eyelids>().replicate();
     app.component::<BulletPos>().replicate().add_linear_interpolation();
     app.register_message::<NetEvent>()
         .add_direction(NetworkDirection::ServerToClient);
@@ -309,7 +322,7 @@ fn server_plugin(app: &mut App, lag: u64) {
         .add_observer(on_connected)
         .add_systems(
             FixedUpdate,
-            (server_move, record_history, server_fire, server_bullets, server_round).chain(),
+            (server_move, record_history, server_eyelids, server_fire, server_bullets, server_round).chain(),
         )
         .add_systems(Update, server_log);
 }
@@ -333,6 +346,8 @@ fn on_connected(
         pose,
         Hp(MAX_HP),
         Score(0),
+        Eyelids::default(),
+        BlinkTimer(0),
         Gun { cooldown: 0 },
         History::default(),
         Replicate::to_clients(NetworkTarget::All),
@@ -353,6 +368,35 @@ fn server_move(round: Res<RoundState>, mut q: Query<(&mut Pose, &ActionState<Inp
     }
 }
 
+#[derive(Component)]
+struct BlinkTimer(u32);
+
+/// Eyes close while blink is held, for at most BLINK_MAX_TICKS, then a cooldown.
+fn server_eyelids(mut q: Query<(&ActionState<Inputs>, &mut Eyelids, &mut BlinkTimer, &Hp)>) {
+    for (input, mut lids, mut shut_for, hp) in &mut q {
+        let mut l = *lids;
+        if l.closed {
+            shut_for.0 += 1;
+            if !input.0.blink || shut_for.0 >= BLINK_MAX_TICKS || hp.0 <= 0.0 {
+                l.closed = false;
+                l.cooldown = BLINK_COOLDOWN_TICKS;
+            }
+        } else if l.cooldown > 0 {
+            l.cooldown -= 1;
+        } else if input.0.blink && hp.0 > 0.0 {
+            info!("BLINK: a player closed their eyes");
+            l.closed = true;
+            shut_for.0 = 0;
+        }
+        // Only touch the component on real changes (cooldown ticks every frame would spam replication).
+        if l.closed != lids.closed || (l.cooldown == 0) != (lids.cooldown == 0) {
+            *lids = l;
+        } else {
+            lids.bypass_change_detection().cooldown = l.cooldown;
+        }
+    }
+}
+
 fn record_history(timeline: Res<LocalTimeline>, mut q: Query<(&Pose, &mut History)>) {
     let tick = timeline.tick();
     for (pose, mut h) in &mut q {
@@ -366,12 +410,13 @@ fn record_history(timeline: Res<LocalTimeline>, mut q: Query<(&Pose, &mut Histor
 fn server_fire(
     round: Res<RoundState>,
     mut commands: Commands,
-    mut q: Query<(&PlayerId, &Pose, &ActionState<Inputs>, &mut Gun, &ControlledBy, &Hp)>,
+    mut q: Query<(&PlayerId, &Pose, &ActionState<Inputs>, &mut Gun, &ControlledBy, &Hp, &Eyelids)>,
     delays: Query<&InterpolationDelay, With<ClientOf>>,
 ) {
-    for (id, pose, input, mut gun, controlled, hp) in &mut q {
+    for (id, pose, input, mut gun, controlled, hp, lids) in &mut q {
         gun.cooldown = gun.cooldown.saturating_sub(1);
-        if !input.0.fire || gun.cooldown > 0 || hp.0 <= 0.0 || round.respawn_in.is_some() {
+        // You can't shoot with your eyes shut.
+        if !input.0.fire || lids.closed || gun.cooldown > 0 || hp.0 <= 0.0 || round.respawn_in.is_some() {
             continue;
         }
         gun.cooldown = FIRE_COOLDOWN_TICKS;
@@ -494,6 +539,10 @@ fn server_round(mut round: ResMut<RoundState>, mut q: Query<(&mut Pose, &mut Hp)
 #[derive(Resource)]
 struct BotBrain {
     enabled: bool,
+    /// Ticks left holding blink.
+    blink_for: u32,
+    /// Where the bot last "saw" you: it loses track while you have your eyes shut.
+    last_seen: Option<Vec2>,
     aim_error: f32,
     retarget: u32,
 }
@@ -521,7 +570,7 @@ struct Hud {
 fn client_plugin(app: &mut App, id: u64, server: SocketAddr, lag: u64, bot: bool, headless: bool) {
     // Not added by ClientPlugins: without it, rollback/correction systems silently never run.
     app.insert_resource(PredictionManager::default());
-    app.insert_resource(BotBrain { enabled: bot, aim_error: 0.0, retarget: 0 })
+    app.insert_resource(BotBrain { enabled: bot, blink_for: 0, last_seen: None, aim_error: 0.0, retarget: 0 })
         .init_resource::<Hud>()
         .add_systems(Startup, move |mut commands: Commands| {
             let auth = Authentication::Manual {
@@ -569,15 +618,36 @@ fn client_plugin(app: &mut App, id: u64, server: SocketAddr, lag: u64, bot: bool
 /// it knows the opponent's position because it has to, to render their eyes.
 fn write_inputs(
     keys: Option<Res<ButtonInput<KeyCode>>>,
-    mut me: Query<(&mut ActionState<Inputs>, &Pose), With<InputMarker<Inputs>>>,
-    them: Query<&Pose, (With<Interpolated>, With<PlayerId>)>,
+    mut me: Query<(&mut ActionState<Inputs>, &Pose, Option<&Eyelids>), With<InputMarker<Inputs>>>,
+    them: Query<(&Pose, Option<&Eyelids>), (With<Interpolated>, With<PlayerId>)>,
     mut brain: ResMut<BotBrain>,
 ) {
-    let Ok((mut action, me)) = me.single_mut() else { return };
+    let Ok((mut action, me, my_lids)) = me.single_mut() else { return };
     let mut i = Inputs::default();
     if brain.enabled {
-        if let Ok(them) = them.single() {
+        if let Ok((them_now, their_lids)) = them.single() {
             let mut rng = rand::rng();
+            // Play fair-ish: when the opponent shuts their eyes, the bot's "screen" is black too,
+            // so it keeps acting on where it last saw them.
+            if !their_lids.is_some_and(|l| l.closed) || brain.last_seen.is_none() {
+                brain.last_seen = Some(them_now.pos);
+            }
+            let them = &Pose { pos: brain.last_seen.unwrap(), yaw: them_now.yaw };
+            // Close our eyes when they're facing us down a clear line: blind them, then reposition.
+            let to_me = me.pos - them_now.pos;
+            let they_aim_at_me = angle_diff((-to_me.x).atan2(-to_me.y), them_now.yaw).abs() < 0.3
+                && !arena::los_blocked(me.pos, them_now.pos);
+            if brain.blink_for == 0
+                && they_aim_at_me
+                && my_lids.is_some_and(|l| !l.closed && l.cooldown == 0)
+                && rng.random_bool(0.04)
+            {
+                brain.blink_for = rng.random_range(40..90);
+            }
+            if brain.blink_for > 0 {
+                brain.blink_for -= 1;
+                i.blink = true;
+            }
             if brain.retarget == 0 {
                 brain.aim_error = rng.random_range(-0.12..0.12);
                 brain.retarget = rng.random_range(20..60);
@@ -599,12 +669,18 @@ fn write_inputs(
             } else if to.length() < 5.0 {
                 i.fwd = -1;
             }
-            i.fire = clear_shot && err.abs() < 0.15 && to.length() < 35.0;
+            i.fire = !i.blink && clear_shot && err.abs() < 0.15 && to.length() < 35.0;
+            if i.blink {
+                // eyes shut: break line of sight instead of standing there
+                i.fwd = 1;
+                i.turn = 1;
+            }
         }
     } else if let Some(k) = keys {
         i.fwd = k.pressed(KeyCode::ArrowUp) as i8 - k.pressed(KeyCode::ArrowDown) as i8;
         i.turn = k.pressed(KeyCode::ArrowLeft) as i8 - k.pressed(KeyCode::ArrowRight) as i8;
         i.fire = k.pressed(KeyCode::Space);
+        i.blink = k.pressed(KeyCode::ShiftLeft) || k.pressed(KeyCode::KeyC);
     }
     action.0 = i;
 }
@@ -769,10 +845,17 @@ fn sync_transforms(
 /// ~100 ms behind), so the view you look through never snaps, even when your own predicted
 /// body gets corrected.
 fn eyes_follow_opponent(
-    them: Query<&Pose, (With<Interpolated>, With<PlayerId>)>,
-    mut eyes: Single<&mut Transform, With<Eyes>>,
+    mut commands: Commands,
+    them: Query<(&Pose, Option<&Eyelids>), (With<Interpolated>, With<PlayerId>)>,
+    eyes: Single<(Entity, &mut Transform, &mut Camera), With<Eyes>>,
 ) {
-    if let Ok(p) = them.single() {
+    let (cam_entity, mut eyes, mut camera) = eyes.into_inner();
+    if let Ok((p, lids)) = them.single() {
+        // They closed their eyes: you're blind. Render nothing, on black.
+        let shut = lids.is_some_and(|l| l.closed);
+        let layers = if shut { RenderLayers::layer(7) } else { RenderLayers::layer(0) };
+        commands.entity(cam_entity).insert(layers);
+        camera.clear_color = if shut { ClearColorConfig::Custom(Color::BLACK) } else { ClearColorConfig::Default };
         eyes.translation = Vec3::new(p.pos.x, EYE_HEIGHT, p.pos.y) + dir(p.yaw).extend(0.0).xzy() * 0.36;
         eyes.rotation = Quat::from_rotation_y(p.yaw);
     }
@@ -782,14 +865,14 @@ fn eyes_follow_opponent(
 /// The server's real bullet is never sent back to you; hits come back as events.
 fn local_fire_fx(
     mut commands: Commands,
-    q: Query<(&Pose, &ActionState<Inputs>, &Hp), With<Predicted>>,
+    q: Query<(&Pose, &ActionState<Inputs>, &Hp, &Eyelids), With<Predicted>>,
     mut cooldown: Local<u32>,
     mut meshes: ResMut<Assets<Mesh>>,
     mut mats: ResMut<Assets<StandardMaterial>>,
 ) {
     *cooldown = cooldown.saturating_sub(1);
-    let Ok((pose, input, hp)) = q.single() else { return };
-    if !input.0.fire || *cooldown > 0 || hp.0 <= 0.0 {
+    let Ok((pose, input, hp, lids)) = q.single() else { return };
+    if !input.0.fire || input.0.blink || lids.closed || *cooldown > 0 || hp.0 <= 0.0 {
         return;
     }
     *cooldown = FIRE_COOLDOWN_TICKS;
@@ -829,8 +912,8 @@ fn tick_fx(
 fn hud_title(
     time: Res<Time>,
     mut hud: ResMut<Hud>,
-    me: Query<(&Hp, &Score), With<Predicted>>,
-    them: Query<&Score, (With<Interpolated>, With<PlayerId>)>,
+    me: Query<(&Hp, &Score, &Eyelids), With<Predicted>>,
+    them: Query<(&Score, &Eyelids), (With<Interpolated>, With<PlayerId>)>,
     mut window: Single<&mut Window>,
     mut clear: ResMut<ClearColor>,
 ) {
@@ -838,15 +921,23 @@ fn hud_title(
     hud.flash = (hud.flash - dt).max(0.0);
     hud.msg_t = (hud.msg_t - dt).max(0.0);
     let title = match (me.single(), them.single()) {
-        (Ok((hp, s)), Ok(os)) => {
+        (Ok((hp, s, lids)), Ok((os, their_lids))) => {
             hud.my_hp = hp.0;
-            format!(
-                "HP {:.0}   score {} - {}   {}",
-                hp.0,
-                s.0,
-                os.0,
-                if hud.msg_t > 0.0 { hud.msg.as_str() } else { "arrows move/turn, space fires; you see through THEIR eyes" }
-            )
+            let eyes = if lids.closed {
+                "YOUR EYES ARE SHUT (they're blind, you can't shoot)".to_string()
+            } else if lids.cooldown > 0 {
+                "eyes recovering".to_string()
+            } else {
+                "shift: close your eyes".to_string()
+            };
+            let status = if hud.msg_t > 0.0 {
+                hud.msg.clone()
+            } else if their_lids.closed {
+                "THEY CLOSED THEIR EYES".into()
+            } else {
+                "arrows move, space fires, you see through THEIR eyes".into()
+            };
+            format!("HP {:.0}   score {} - {}   [{eyes}]   {status}", hp.0, s.0, os.0)
         }
         _ => "waiting for an opponent...".into(),
     };
