@@ -72,6 +72,10 @@ Fyrox (small ecosystem), macroquad/three-d (too thin, would mean rolling our own
   do the work. Use the shared `ARRIVE` constant for every arrival check, because mismatched thresholds deadlock tasks. Lower branches **fail** when a higher-priority condition appears (that's preemption).
   `Suspicion` fills while the shooter is in the view cone with line of sight; at 1.0 he's engaged.
   The engine supports a moving target: the camera is parented to him, and walking is just velocity on a kinematic body.
+- `view.rs` (spike): `ViewRule` (V cycles, restarts): `Single` (default), or 3 targets with `HopOnKill`, `Switch` (Q) or
+  `Threat` (view follows the most suspicious). One target carries `Viewed`; switching moves it and reparents the single
+  `MainCamera` to that target's `TargetHead`. Eyes for perception/return fire come from each `TargetHead`, never the
+  camera. Dead targets get `Dead` + bevior_tree `Freeze`; the round is won when all are dead.
 - `nav.rs`: vleue_navigator navmesh, built synchronously from `NavObstacle` colliders (the arena blocks) inside the
   layout's outline (`fit_navmesh` updates it each round).
   `MoveTo { dest, speed, strafe }` is planned into a `Route` and followed by `target::walk`. With `strafe` he moves

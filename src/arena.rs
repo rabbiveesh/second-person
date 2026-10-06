@@ -421,7 +421,7 @@ pub fn plugin(app: &mut App) {
         );
 }
 
-fn choose_layout(mode: Res<ArenaMode>, mut layout: ResMut<Layout>) {
+pub(crate) fn choose_layout(mode: Res<ArenaMode>, mut layout: ResMut<Layout>) {
     *layout = match *mode {
         ArenaMode::Classic => Layout::classic(),
         // Short seeds read better on the HUD.

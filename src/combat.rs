@@ -8,7 +8,7 @@ use crate::{
     Layer,
     round::{GameState, RoundEntity},
     shooter::{Shooter, ShooterAction},
-    target::{Activity, Alert, MainCamera, Suspicion, Target},
+    target::{Activity, Alert, Dead, Suspicion, Target, TargetHead},
 };
 
 const BULLET_SPEED: f32 = 45.0;
@@ -92,7 +92,7 @@ fn fire(
     assets: Res<Assets3d>,
     mut cooldown: Local<Option<Timer>>,
     shooter: Single<(&ActionState<ShooterAction>, &Transform), With<Shooter>>,
-    target: Single<(Entity, &Transform, &mut Suspicion), With<Target>>,
+    mut targets: Query<(Entity, &Transform, &mut Suspicion), (With<Target>, Without<Dead>)>,
     mut gunshots: MessageWriter<Gunshot>,
 ) {
     let cooldown = cooldown.get_or_insert_with(|| {
@@ -128,11 +128,12 @@ fn fire(
     gunshots.write(Gunshot { muzzle, dir: *forward });
 
     // Gunshots are loud.
-    let (target_e, target_t, mut suspicion) = target.into_inner();
-    if target_t.translation.distance(t.translation) < HEARING_RANGE {
-        suspicion.bump(0.25);
-        suspicion.last_known = Some(t.translation);
-        commands.entity(target_e).insert(Alert::new(t.translation, 3.0));
+    for (target_e, target_t, mut suspicion) in &mut targets {
+        if target_t.translation.distance(t.translation) < HEARING_RANGE {
+            suspicion.bump(0.25);
+            suspicion.last_known = Some(t.translation);
+            commands.entity(target_e).insert(Alert::new(t.translation, 3.0));
+        }
     }
 }
 
@@ -140,7 +141,7 @@ fn bullet_hits(
     mut commands: Commands,
     mut collisions: MessageReader<CollisionStart>,
     bullets: Query<(&Bullet, &Transform)>,
-    mut targets: Query<(Entity, &mut Target, &Transform, &mut Suspicion)>,
+    mut targets: Query<(Entity, &mut Target, &Transform, &mut Suspicion), Without<Dead>>,
     mut hits: MessageWriter<TargetHit>,
     mut impacts: MessageWriter<BulletImpact>,
 ) {
@@ -180,36 +181,41 @@ fn bullet_hits(
     }
 }
 
-/// While engaging and able to see the shooter, the target fires back (hitscan).
+/// While engaging and able to see the shooter, each target fires back (hitscan).
 fn return_fire(
     time: Res<Time>,
-    mut timer: Local<Option<Timer>>,
-    eyes: Single<&GlobalTransform, With<MainCamera>>,
-    target: Single<(&Suspicion, Option<&Activity>), With<Target>>,
+    mut timers: Local<bevy::platform::collections::HashMap<Entity, Timer>>,
+    heads: Query<(&ChildOf, &GlobalTransform), With<TargetHead>>,
+    targets: Query<(&Suspicion, Option<&Activity>), (With<Target>, Without<Dead>)>,
     mut shooter: Single<(&mut Shooter, &Transform)>,
     mut hits: MessageWriter<ShooterHit>,
 ) {
-    let timer = timer.get_or_insert_with(|| Timer::from_seconds(RETURN_FIRE_INTERVAL, TimerMode::Repeating));
-    let (suspicion, activity) = *target;
-    if activity != Some(&Activity::Engaging) || !suspicion.sees_shooter {
-        timer.reset();
-        return;
-    }
-    if timer.tick(time.delta()).just_finished() {
-        let (ref mut s, t) = *shooter;
-        s.hp = (s.hp - RETURN_FIRE_DAMAGE).max(0.0);
-        // Start the tracer just below the eyes so it's visible from his own view.
-        let from = eyes.translation() + eyes.down() * 0.3 + eyes.right() * 0.2;
-        hits.write(ShooterHit { from, to: t.translation });
+    for (parent, eyes) in &heads {
+        let target_e = parent.parent();
+        let timer = timers
+            .entry(target_e)
+            .or_insert_with(|| Timer::from_seconds(RETURN_FIRE_INTERVAL, TimerMode::Repeating));
+        let Ok((suspicion, activity)) = targets.get(target_e) else { continue };
+        if activity != Some(&Activity::Engaging) || !suspicion.sees_shooter {
+            timer.reset();
+            continue;
+        }
+        if timer.tick(time.delta()).just_finished() {
+            let (ref mut s, t) = *shooter;
+            s.hp = (s.hp - RETURN_FIRE_DAMAGE).max(0.0);
+            // Start the tracer just below the eyes so it's visible from his own view.
+            let from = eyes.translation() + eyes.down() * 0.3 + eyes.right() * 0.2;
+            hits.write(ShooterHit { from, to: t.translation });
+        }
     }
 }
 
 fn check_outcome(
-    target: Single<&Target>,
+    targets: Query<&Target>,
     shooter: Single<&Shooter>,
     mut next: ResMut<NextState<GameState>>,
 ) {
-    if target.hp == 0 {
+    if !targets.is_empty() && targets.iter().all(|t| t.hp == 0) {
         next.set(GameState::Won);
     } else if shooter.hp <= 0.0 {
         next.set(GameState::Lost);
