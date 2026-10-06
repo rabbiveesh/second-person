@@ -142,8 +142,7 @@ func round_starts_with_one_of_each() -> void:
 
 func firing_spawns_a_bullet_and_a_gunshot() -> void:
 	var shots := counter("gunshot")
-	Input.action_press("fire")
-	await tick()
+	await press("fire")
 	expect(shots[0] == 1, "gunshots: %d" % shots[0])
 	expect(game.bullet_count() == 1, "bullets: %d" % game.bullet_count())
 

@@ -10,6 +10,8 @@ set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 set(GODOTCPP_API_VERSION 4.6 CACHE STRING "" FORCE)
 set(GODOTCPP_TARGET template_debug CACHE STRING "" FORCE)
 add_subdirectory(thirdparty/godot-cpp)
+# Keep Godot from importing the build tree as project assets.
+file(WRITE ${CMAKE_BINARY_DIR}/.gdignore "")
 
 # BehaviorTree.CPP: the target's AI. Only the core library; no Groot/ZeroMQ, SQLite, tools or tests.
 set(BTCPP_SHARED_LIBS OFF CACHE BOOL "" FORCE)

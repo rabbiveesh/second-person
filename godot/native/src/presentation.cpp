@@ -123,7 +123,7 @@ void Radar::_process(double delta) {
 	const float side = std::min(screen.x, screen.y) * RADAR_FRACTION;
 	set_size(Vector2(side, side));
 	set_position(screen - Vector2(side, side) - Vector2(RADAR_MARGIN, RADAR_MARGIN));
-	get_node<Label>("Label")->set_text(String("RADAR · ") + game->get_radar_mode().to_upper());
+	get_node<Label>("Label")->set_text(String::utf8("RADAR · ") + game->get_radar_mode().to_upper());
 
 	// Live blips (children of the actor scenes in the "live_blip" group) only in Full mode.
 	TypedArray<Node> blips = get_tree()->get_nodes_in_group("live_blip");

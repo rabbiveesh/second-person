@@ -1,0 +1,41 @@
+# The Godot + C++ port (godot/): build the GDExtension, then run the headless gameplay tests.
+name: Godot port
+
+on:
+  push:
+    paths: ["godot/**", ".gitmodules", ".github/workflows/godot.yml"]
+  pull_request:
+    paths: ["godot/**", ".gitmodules", ".github/workflows/godot.yml"]
+
+env:
+  GODOT_VERSION: 4.6.3
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: godot
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+      - run: sudo apt-get update && sudo apt-get install -y ninja-build
+      - uses: actions/cache@v4
+        with:
+          path: godot/build
+          key: godot-build-${{ hashFiles('.gitmodules', 'godot/CMakeLists.txt') }}-${{ github.sha }}
+          restore-keys: godot-build-${{ hashFiles('.gitmodules', 'godot/CMakeLists.txt') }}-
+      - name: Build the extension
+        run: |
+          cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
+          cmake --build build
+      - name: Fetch Godot
+        run: |
+          curl -fsSL -o godot.zip "https://github.com/godotengine/godot/releases/download/${GODOT_VERSION}-stable/Godot_v${GODOT_VERSION}-stable_linux.x86_64.zip"
+          unzip -q godot.zip -d "$RUNNER_TEMP" && rm godot.zip
+          echo "GODOT=$RUNNER_TEMP/Godot_v${GODOT_VERSION}-stable_linux.x86_64" >> "$GITHUB_ENV"
+      - name: Import
+        run: $GODOT --headless --path . --import
+      - name: Headless gameplay tests
+        run: $GODOT --headless --path . --fixed-fps 60 -s res://tests/gameplay.gd

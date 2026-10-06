@@ -9,7 +9,8 @@ background_mode = 1
 background_color = Color(0.55, 0.7, 0.85, 1)
 ambient_light_source = 2
 ambient_light_color = Color(0.75, 0.78, 0.85, 1)
-ambient_light_energy = 0.6
+ambient_light_energy = 0.35
+tonemap_mode = 3
 
 [node name="Main" type="Game" groups=["game"]]
 
@@ -18,7 +19,7 @@ environment = SubResource("Environment_1")
 
 [node name="Sun" type="DirectionalLight3D" parent="."]
 transform = Transform3D(0.894, -0.358, 0.268, 0, 0.6, 0.8, -0.447, -0.716, 0.537, 20, 40, 10)
-light_energy = 1.2
+light_energy = 0.9
 light_cull_mask = 1
 shadow_enabled = true
 
