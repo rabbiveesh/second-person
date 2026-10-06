@@ -1,0 +1,190 @@
+[gd_scene format=3]
+
+[sub_resource type="StyleBoxFlat" id="StyleBoxFlat_1"]
+bg_color = Color(0.106, 0.106, 0.106, 0.87)
+border_width_left = 1
+border_width_top = 1
+border_width_right = 1
+border_width_bottom = 1
+border_color = Color(0.33, 0.33, 0.33, 1)
+corner_radius_top_left = 6
+corner_radius_top_right = 6
+corner_radius_bottom_right = 6
+corner_radius_bottom_left = 6
+content_margin_left = 10
+content_margin_top = 8
+content_margin_right = 10
+content_margin_bottom = 8
+
+[sub_resource type="StyleBoxFlat" id="StyleBoxFlat_2"]
+bg_color = Color(0.23, 0.23, 0.23, 1)
+
+[sub_resource type="StyleBoxFlat" id="StyleBoxFlat_3"]
+bg_color = Color(0.235, 0.667, 0.314, 1)
+
+[sub_resource type="StyleBoxFlat" id="StyleBoxFlat_4"]
+resource_local_to_scene = true
+bg_color = Color(0.86, 0.67, 0.16, 1)
+
+[sub_resource type="StyleBoxFlat" id="StyleBoxFlat_5"]
+bg_color = Color(0.02, 0.07, 0.04, 1)
+border_width_left = 2
+border_width_top = 2
+border_width_right = 2
+border_width_bottom = 2
+border_color = Color(0.31, 0.86, 0.47, 1)
+corner_radius_top_left = 4
+corner_radius_top_right = 4
+corner_radius_bottom_right = 4
+corner_radius_bottom_left = 4
+content_margin_left = 2
+content_margin_top = 2
+content_margin_right = 2
+content_margin_bottom = 2
+
+[sub_resource type="StyleBoxFlat" id="StyleBoxFlat_6"]
+bg_color = Color(0, 0, 0, 0.55)
+content_margin_left = 6
+content_margin_right = 6
+
+[sub_resource type="Environment" id="Environment_7"]
+background_mode = 1
+background_color = Color(0.02, 0.07, 0.04, 1)
+ambient_light_source = 1
+ambient_light_color = Color(1, 1, 1, 1)
+
+[node name="Hud" type="Hud"]
+mouse_filter = 2
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+
+[node name="Flash" type="ColorRect" parent="."]
+unique_name_in_owner = true
+visible = false
+mouse_filter = 2
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+
+[node name="Status" type="PanelContainer" parent="."]
+offset_left = 16.0
+offset_top = 16.0
+offset_right = 276.0
+offset_bottom = 140.0
+theme_override_styles/panel = SubResource("StyleBoxFlat_1")
+
+[node name="Rows" type="VBoxContainer" parent="Status"]
+
+[node name="You" type="Label" parent="Status/Rows"]
+text = "YOU (the shooter)"
+
+[node name="Hp" type="ProgressBar" parent="Status/Rows"]
+unique_name_in_owner = true
+custom_minimum_size = Vector2(240, 20)
+value = 100.0
+show_percentage = false
+theme_override_styles/background = SubResource("StyleBoxFlat_2")
+theme_override_styles/fill = SubResource("StyleBoxFlat_3")
+
+[node name="HpText" type="Label" parent="Status/Rows/Hp"]
+unique_name_in_owner = true
+horizontal_alignment = 1
+theme_override_font_sizes/font_size = 13
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+
+[node name="TargetLine" type="Label" parent="Status/Rows"]
+unique_name_in_owner = true
+
+[node name="Suspicion" type="ProgressBar" parent="Status/Rows"]
+unique_name_in_owner = true
+custom_minimum_size = Vector2(240, 20)
+max_value = 1.0
+step = 0.001
+show_percentage = false
+theme_override_styles/background = SubResource("StyleBoxFlat_2")
+theme_override_styles/fill = SubResource("StyleBoxFlat_4")
+
+[node name="SuspicionText" type="Label" parent="Status/Rows/Suspicion"]
+unique_name_in_owner = true
+horizontal_alignment = 1
+theme_override_font_sizes/font_size = 13
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+
+[node name="Doing" type="Label" parent="Status/Rows"]
+unique_name_in_owner = true
+
+[node name="Help" type="Label" parent="."]
+unique_name_in_owner = true
+anchors_preset = 2
+anchor_top = 1.0
+anchor_bottom = 1.0
+offset_left = 16.0
+offset_top = -40.0
+offset_bottom = -16.0
+grow_vertical = 0
+theme_override_font_sizes/font_size = 14
+theme_override_styles/normal = SubResource("StyleBoxFlat_6")
+
+[node name="Banner" type="PanelContainer" parent="."]
+unique_name_in_owner = true
+visible = false
+anchors_preset = 8
+anchor_left = 0.5
+anchor_top = 0.5
+anchor_right = 0.5
+anchor_bottom = 0.5
+grow_horizontal = 2
+grow_vertical = 2
+theme_override_styles/panel = SubResource("StyleBoxFlat_1")
+
+[node name="Rows" type="VBoxContainer" parent="Banner"]
+
+[node name="BannerText" type="Label" parent="Banner/Rows"]
+unique_name_in_owner = true
+horizontal_alignment = 1
+theme_override_font_sizes/font_size = 36
+
+[node name="Hint" type="Label" parent="Banner/Rows"]
+text = "press R to go again"
+horizontal_alignment = 1
+theme_override_font_sizes/font_size = 18
+
+[node name="Radar" type="Radar" parent="."]
+theme_override_styles/panel = SubResource("StyleBoxFlat_5")
+
+[node name="View" type="SubViewportContainer" parent="Radar"]
+stretch = true
+
+[node name="Viewport" type="SubViewport" parent="Radar/View"]
+handle_input_locally = false
+size = Vector2i(256, 256)
+render_target_update_mode = 4
+
+[node name="World" type="Node3D" parent="Radar/View/Viewport"]
+
+[node name="Camera" type="Camera3D" parent="Radar/View/Viewport/World"]
+transform = Transform3D(1, 0, 0, 0, 0, -1, 0, 1, 0, 0, 60, 0)
+cull_mask = 2
+environment = SubResource("Environment_7")
+projection = 1
+size = 62.0
+near = 1.0
+far = 100.0
+
+[node name="Label" type="Label" parent="Radar"]
+size_flags_vertical = 0
+theme_override_font_sizes/font_size = 14
+text = "RADAR"

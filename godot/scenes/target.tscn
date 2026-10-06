@@ -1,0 +1,50 @@
+[gd_scene format=3]
+
+[sub_resource type="CapsuleShape3D" id="CapsuleShape3D_1"]
+radius = 0.4
+height = 1.8
+
+[sub_resource type="StandardMaterial3D" id="StandardMaterial3D_2"]
+shading_mode = 0
+albedo_color = Color(1, 0.2, 0.2, 1)
+cull_mode = 2
+
+[sub_resource type="SphereMesh" id="SphereMesh_3"]
+radius = 0.9
+height = 1.8
+material = SubResource("StandardMaterial3D_2")
+
+[sub_resource type="StandardMaterial3D" id="StandardMaterial3D_4"]
+shading_mode = 0
+albedo_color = Color(1, 0.9, 0.3, 0.25)
+cull_mode = 2
+transparency = 1
+
+[node name="Target" type="Target" groups=["target"]]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.9, 0)
+collision_layer = 4
+collision_mask = 3
+
+[node name="Shape" type="CollisionShape3D" parent="."]
+shape = SubResource("CapsuleShape3D_1")
+
+[node name="Head" type="Node3D" parent="."]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.7, 0)
+
+[node name="Eyes" type="Camera3D" parent="Head"]
+cull_mask = 1
+current = true
+fov = 70.0
+near = 0.05
+
+[node name="Blip" type="MeshInstance3D" parent="." groups=["live_blip"]]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 3.1, 0)
+layers = 2
+cast_shadow = 0
+mesh = SubResource("SphereMesh_3")
+
+[node name="ViewCone" type="MeshInstance3D" parent="." groups=["live_blip"]]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 2.1, 0)
+layers = 2
+cast_shadow = 0
+material_override = SubResource("StandardMaterial3D_4")

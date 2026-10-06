@@ -1,0 +1,11 @@
+[configuration]
+
+entry_symbol = "second_person_init"
+compatibility_minimum = "4.6"
+reloadable = true
+
+[libraries]
+
+linux.x86_64 = "res://bin/libsecond_person.so"
+windows.x86_64 = "res://bin/second_person.dll"
+macos = "res://bin/libsecond_person.dylib"
