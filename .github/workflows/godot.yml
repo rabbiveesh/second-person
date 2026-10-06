@@ -36,6 +36,8 @@ jobs:
           unzip -q godot.zip -d "$RUNNER_TEMP" && rm godot.zip
           echo "GODOT=$RUNNER_TEMP/Godot_v${GODOT_VERSION}-stable_linux.x86_64" >> "$GITHUB_ENV"
       - name: Import
-        run: $GODOT --headless --path . --import
+        # The import itself completes; the official binary has been seen to abort while
+        # shutting down afterwards. The tests below are the real check.
+        run: $GODOT --headless --verbose --path . --import || echo "::warning::godot --import exited with $?"
       - name: Headless gameplay tests
         run: $GODOT --headless --path . --fixed-fps 60 -s res://tests/gameplay.gd
