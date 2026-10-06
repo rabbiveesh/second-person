@@ -34,9 +34,9 @@ const SPAWN_CLEARANCE: f32 = 4.0;
 #[reflect(Resource)]
 pub enum ArenaMode {
     /// The original hand-placed arena.
-    #[default]
     Classic,
     /// A freshly generated arena every round.
+    #[default]
     Random,
     /// A specific generated arena (replays, levels, tests).
     Seed(u64),

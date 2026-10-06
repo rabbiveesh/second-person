@@ -59,7 +59,7 @@ Fyrox (small ecosystem), macroquad/three-d (too thin, would mean rolling our own
   despawned on `OnEnter(Playing)` before the `SpawnRound` set. Physics pauses outside Playing.
   `MetaAction` (R restart, M toggle target walking). `TargetMobile` resource.
 - `arena.rs`: `Layout` resource (floor outline polygon + axis-aligned cover `Block`s), respawned every round
-  (`RoundEntity`). `ArenaMode` picks it: `Classic` (the original hand-placed arena, default), `Random` (new
+  (`RoundEntity`). `ArenaMode` picks it: `Classic` (the original hand-placed arena), `Random` (default; new
   `Layout::random(seed)` each round: yard, hall, L, cross, octagon or notch, rotated, with scattered cover), or
   `Seed(n)`. L cycles Classic/Random and restarts. Generated cover keeps `COVER_GAP` from walls and other cover so the
   free space stays connected, and keeps the origin (the target's spawn) open. The floor mesh is triangulated with `earcut`.
