@@ -207,12 +207,17 @@ fn draw_hud(
 
 /// An X of four short strokes around `at`, fading with `alpha`.
 fn hit_marker(painter: &egui::Painter, at: egui::Pos2, alpha: f32) {
-    let colour = egui::Color32::from_rgba_unmultiplied(255, 255, 255, (alpha.min(1.0) * 255.0) as u8);
+    let a = alpha.min(1.0);
+    let fill = egui::Color32::from_rgba_unmultiplied(255, 60, 40, (a * 255.0) as u8);
+    let edge = egui::Color32::from_rgba_unmultiplied(0, 0, 0, (a * 200.0) as u8);
     // Pops out a little as it fades.
-    let (inner, outer) = (10.0 + 8.0 * (1.0 - alpha), 26.0 + 8.0 * (1.0 - alpha));
+    let (inner, outer) = (12.0 + 10.0 * (1.0 - a), 34.0 + 10.0 * (1.0 - a));
     for (x, y) in [(1.0, 1.0), (1.0, -1.0), (-1.0, 1.0), (-1.0, -1.0)] {
         let d = egui::vec2(x, y) * std::f32::consts::FRAC_1_SQRT_2;
-        painter.line_segment([at + d * inner, at + d * outer], egui::Stroke::new(3.0, colour));
+        let stroke = [at + d * inner, at + d * outer];
+        // Dark outline first so it reads on bright sky and dark walls alike.
+        painter.line_segment(stroke, egui::Stroke::new(8.0, edge));
+        painter.line_segment(stroke, egui::Stroke::new(4.5, fill));
     }
 }
 

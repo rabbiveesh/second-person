@@ -2,7 +2,7 @@
 //! The muzzle flash is a navigation aid: it lights up the shooter's surroundings even
 //! when he's off-screen.
 
-use bevy::prelude::*;
+use bevy::{light::NotShadowCaster, prelude::*};
 use bevy_firework::{
     bevy_utilitarian::prelude::{RandF32, RandVec3},
     core::{
@@ -118,7 +118,10 @@ fn return_fire(
             continue;
         }
         // The killing shot: a thick beam that hangs in the air, and a big burst where it lands.
-        let span = hit.to - hit.from;
+        // It starts a little way out so it doesn't fill his view up close.
+        let dir = (hit.to - hit.from).normalize_or(Vec3::Y);
+        let from = hit.from + dir * 1.5;
+        let span = hit.to - from;
         commands.spawn((
             Name::new("Killing tracer"),
             RoundEntity,
@@ -129,7 +132,8 @@ fn return_fire(
                 unlit: true,
                 ..default()
             })),
-            Transform::from_translation(hit.from + span / 2.0)
+            NotShadowCaster,
+            Transform::from_translation(from + span / 2.0)
                 .with_rotation(Quat::from_rotation_arc(Vec3::Y, span.normalize_or(Vec3::Y))),
             Thin,
             Ttl(Timer::from_seconds(1.5, TimerMode::Once)),

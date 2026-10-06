@@ -71,8 +71,10 @@ fn start_topple(
     target: Single<&Transform, With<Target>>,
 ) {
     let (e, t) = *shooter;
-    // He's knocked away from the target.
-    let away = (t.translation - target.translation).with_y(0.0).normalize_or(Vec3::X);
+    // He's knocked away from the target, and partly sideways so the fall reads from his view
+    // (falling straight along the line of sight just looks like he shrank).
+    let back = (t.translation - target.translation).with_y(0.0).normalize_or(Vec3::X);
+    let away = (back + Vec3::Y.cross(back) * 1.2).normalize();
     commands.entity(e).insert(Topple {
         t: 0.0,
         start: *t,
