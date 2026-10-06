@@ -111,6 +111,15 @@ fn script(world: &mut World, mut frame: Local<u32>) {
     }
 
     let shot = |name: &str| Some(name.to_string());
+    // With JUICE_VIDEO set, grab every other frame instead (30 fps of game time), e.g.
+    //     ffmpeg -framerate 30 -i <out dir>/frame-%04d.png -pix_fmt yuv420p juice.mp4
+    if std::env::var_os("JUICE_VIDEO").is_some() {
+        if (60..640).contains(&f) && f % 2 == 0 {
+            let path = world.resource::<Out>().0.join(format!("frame-{:04}.png", (f - 60) / 2));
+            world.spawn(Screenshot::primary_window()).observe(save_to_disk(path));
+        }
+        return;
+    }
     let name = match (f, hit) {
         (89, _) => shot("1-before-hit"),
         (_, Some(h)) if f == h + 4 && f < 150 => shot("2-flinch"),
