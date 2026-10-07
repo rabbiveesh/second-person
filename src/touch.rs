@@ -1,5 +1,6 @@
 //! Touch controls for phones and tablets: a floating stick on the left half drives the
-//! shooter (tank controls, analog), and a tap anywhere on the right half fires.
+//! shooter (tank controls, snapped to the four arrow directions), and a tap anywhere on the
+//! right half fires.
 //!
 //! Nothing spawns until the first touch, so mouse-and-keyboard players never see it. Touch
 //! writes into the same leafwing `ActionState` the keyboard does, so gameplay can't tell the
@@ -15,7 +16,7 @@ use bevy::{
 use bevy_egui::input::EguiWantsInput;
 use leafwing_input_manager::{plugin::InputManagerSystem, prelude::*};
 use virtual_joystick::{
-    JoystickFloating, NoAction, VirtualJoystickPlugin, VirtualJoystickState, create_joystick,
+    JoystickFloating, JoystickInvisible, NoAction, VirtualJoystickPlugin, VirtualJoystickState, create_joystick,
 };
 
 use crate::shooter::{Shooter, ShooterAction};
@@ -30,6 +31,8 @@ pub struct TouchWhistle(pub bool);
 
 const STICK_SIZE: f32 = 150.0;
 const KNOB_SIZE: f32 = 70.0;
+/// Stick travel (0..1) below which it does nothing.
+const DEAD_ZONE: f32 = 0.3;
 
 pub fn plugin(app: &mut App) {
     app.add_plugins(VirtualJoystickPlugin::<String>::default())
@@ -67,7 +70,8 @@ fn enable_on_first_touch(
             bottom: Val::Px(0.0),
             ..default()
         },
-        JoystickFloating,
+        // Floats to wherever the thumb lands, and stays hidden until then.
+        (JoystickFloating, JoystickInvisible),
         NoAction,
     );
 }
@@ -89,7 +93,7 @@ fn touch_to_actions(
         return;
     };
     if let Some(stick) = sticks.iter().find(|s| s.pointer_state.is_some()) {
-        actions.set_axis_pair(&ShooterAction::Drive, stick.delta);
+        actions.set_axis_pair(&ShooterAction::Drive, snap_4way(stick.delta));
     }
     // One shot per tap, like Space: press only on the touch's first frame and let the
     // keyboard pass release it on the next.
@@ -99,6 +103,18 @@ fn touch_to_actions(
     }
     if std::mem::take(&mut whistle.0) {
         actions.press(&ShooterAction::Whistle);
+    }
+}
+
+/// Tank controls are hard enough already, so the stick acts like the arrow keys: whichever
+/// axis it's pushed further along wins, at full strength (drive *or* turn, never both).
+pub fn snap_4way(delta: Vec2) -> Vec2 {
+    if delta.length() < DEAD_ZONE {
+        Vec2::ZERO
+    } else if delta.x.abs() > delta.y.abs() {
+        Vec2::new(delta.x.signum(), 0.0)
+    } else {
+        Vec2::new(0.0, delta.y.signum())
     }
 }
 

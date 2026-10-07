@@ -538,3 +538,12 @@ fn whistling_is_heard_from_far_off() {
     assert!(s.level > 0.0, "didn't hear it");
     assert!(app.world().get::<Alert>(target).is_some());
 }
+
+#[test]
+fn touch_stick_snaps_to_the_four_arrows() {
+    use second_person::touch::snap_4way;
+    assert_eq!(snap_4way(Vec2::new(0.1, 0.1)), Vec2::ZERO, "dead zone");
+    assert_eq!(snap_4way(Vec2::new(0.4, 0.8)), Vec2::Y, "mostly up = full forward, no turn");
+    assert_eq!(snap_4way(Vec2::new(-0.9, 0.5)), Vec2::NEG_X, "mostly left = turn only");
+    assert_eq!(snap_4way(Vec2::new(0.2, -0.6)), Vec2::NEG_Y);
+}
