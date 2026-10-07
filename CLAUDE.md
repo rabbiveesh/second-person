@@ -94,7 +94,8 @@ Fyrox (small ecosystem), macroquad/three-d (too thin, would mean rolling our own
   Classic = wood plaza, gravel, metal, grass. Each floor has its own
   footstep sounds and a `hearing_range`; `combat::hear_movement` turns nearby steps, bumps and whistles
   (W, the shooter's "where am I?" sound, heard by him from 28m) into suspicion.
-- `combat.rs`: bullets (CCD, collision events), hearing (shots and near misses raise `Alert` +
+- `combat.rs`: bullets (CCD, collision events; `magnetised` bends a shot within `MAGNET_CONE`/`MAGNET_RANGE` of him with
+  a clear line straight at him, the only aim assist: no lock-on, nothing that leaks where he is), hearing (shots and near misses raise `Alert` +
   suspicion), target hitscan return fire while engaged, warning shots (`WarningShot`, deliberate misses near
   `last_known`) while suspicious but not engaged, win/lose check.
 - `radar.rs`: ortho top-down camera in a bottom-right viewport (layers 0+1). `RadarMode` is the difficulty knob
@@ -120,4 +121,4 @@ Fyrox (small ecosystem), macroquad/three-d (too thin, would mean rolling our own
 
 ## Tuning knobs
 Suspicion rates in `target::perceive`. `VIEW_HALF_ANGLE`/`VIEW_RANGE` in `target.rs`. Return fire
-damage/interval, hearing range and near-miss range in `combat.rs`.
+damage/interval, bullet magnetism (`MAGNET_CONE`, `MAGNET_RANGE`), hearing range and near-miss range in `combat.rs`.

@@ -605,3 +605,38 @@ fn start_screen_holds_the_game_until_a_press_then_controls_follow_the_last_input
     press(&mut app, KeyCode::ArrowUp);
     assert!(!app.world().resource::<TouchControls>().0);
 }
+
+/// Shooter 12m straight behind him (out of his view), turned `off_deg` away, fires once.
+fn shot_off_by(off_deg: f32) -> App {
+    let mut app = app();
+    let shooter_pos = Vec3::new(0.0, 0.9, 12.0);
+    stage(&mut app, shooter_pos, Vec3::new(0.0, 0.9, -10.0));
+    let shooter = single::<Shooter>(&mut app);
+    let yaw = yaw_towards(shooter_pos, Vec3::new(0.0, 0.9, 0.0)) + off_deg.to_radians();
+    place(&mut app, shooter, shooter_pos, yaw);
+    app.update();
+    press(&mut app, KeyCode::Space);
+    step(&mut app, 0.6);
+    app
+}
+
+#[test]
+fn bullet_magnetism_bends_a_near_miss_into_him() {
+    assert_eq!(counted::<TargetHit>(&shot_off_by(8.0)), 1, "8° off should be pulled in");
+    assert_eq!(counted::<TargetHit>(&shot_off_by(-8.0)), 1);
+    assert_eq!(counted::<TargetHit>(&shot_off_by(25.0)), 0, "25° off is a miss");
+}
+
+#[test]
+fn bullet_magnetism_does_not_bend_around_cover() {
+    use second_person::combat::magnetised;
+    // Crate at (-6, _, -8) between this spot and the origin.
+    let muzzle = Vec3::new(-9.0, 1.0, -12.0);
+    let to_him = (Vec3::new(0.0, 0.9, 0.0) - muzzle).normalize();
+    let forward = Quat::from_rotation_y(8f32.to_radians()) * to_him;
+    assert_eq!(magnetised(muzzle, forward, Vec3::new(0.0, 0.9, 0.0)), forward);
+    // Same angle in the open does bend.
+    let open = Vec3::new(0.0, 1.0, 12.0);
+    let fwd = Quat::from_rotation_y(8f32.to_radians()) * (Vec3::new(0.0, 0.9, 0.0) - open).normalize();
+    assert_ne!(magnetised(open, fwd, Vec3::new(0.0, 0.9, 0.0)), fwd);
+}
