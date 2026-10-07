@@ -511,7 +511,7 @@ fn whistling_is_heard_from_far_off() {
     // 20m behind him: far beyond footstep range, within whistle range.
     stage(&mut app, Vec3::new(0.0, 0.9, 20.0), Vec3::new(0.0, 0.9, -10.0));
     let target = single::<Target>(&mut app);
-    press(&mut app, KeyCode::KeyC);
+    press(&mut app, KeyCode::KeyW);
     let s = app.world().get::<Suspicion>(target).unwrap();
     assert!(s.level > 0.0, "didn't hear it");
     assert!(app.world().get::<Alert>(target).is_some());

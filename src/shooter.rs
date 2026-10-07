@@ -119,7 +119,7 @@ fn spawn_shooter(
             (ShooterAction::TurnLeft, KeyCode::ArrowLeft),
             (ShooterAction::TurnRight, KeyCode::ArrowRight),
             (ShooterAction::Fire, KeyCode::Space),
-            (ShooterAction::Whistle, KeyCode::KeyC),
+            (ShooterAction::Whistle, KeyCode::KeyW),
         ]),
         RigidBody::Dynamic,
         Collider::capsule(RADIUS, 1.0),
