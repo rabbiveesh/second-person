@@ -12,6 +12,30 @@ controlling the **shooter** hunting him. A corner radar shows the whole arena.
 - **Never use xdotool or anything that grabs the user's screen/focus/keyboard.** The user works on this
   machine. Avoid long CPU-heavy builds (e.g. `trunk build --release`) without asking; CI does those.
 
+## Learning project
+This is a learning project. Veesh is a deep backend engineer new to game dev, so **whenever work involves
+something that takes deep knowledge, explain and teach it**: what it is, why it works, where it lives in the
+code (`file:line`), and the closest backend analogy. Put a short "how this works" section in replies and PR
+descriptions for any non-trivial technique. Shipping it silently misses the point.
+
+Axes worth teaching as they come up:
+- **Frame budget:** 16.6ms per frame, where the worst frame matters. Hitches come from GC, per-frame
+  allocation, shader compiles and blocking loads (a p99.9 SLO enforced 60×/s).
+- **Memory layout:** cache-friendly data and pooling, which is why ECS exists.
+- **Determinism:** fixed timestep, same inputs give the same sim. Replays, rollback and our headless
+  tests depend on it, and float differences across platforms bite.
+- **Netcode:** authority, client prediction, rollback, lag compensation, and treating every client as
+  hostile. Distributed systems with a 50ms deadline (see the P2P duel direction).
+- **Content pipeline and editors:** asset import, streaming and build size, with tools for
+  non-programmers.
+- **Iteration on feel:** hot reload, live-tweakable data, fast builds.
+- **Platform matrix:** GPU drivers, WebGL2 limits, mobile thermals, console SDKs and certification.
+- **Rendering cost:** draw calls, batching, overdraw, shader variants, GPU profiling.
+- **Testing emergent games:** headless sim tests, replays, bots, playtests.
+- **Live ops:** matchmaking, accounts, telemetry, save sync, anti-cheat.
+- **Engine choice:** ECS vs scene tree vs plain objects for state, plus upgrade churn and licensing
+  (see `babylon/README.md` and `godot/README.md`).
+
 ## Dev loop
 1. `cargo build` with no warnings.
 2. `cargo test`: headless gameplay tests in `tests/gameplay.rs`. They run the real `gameplay` plugins on
