@@ -2,6 +2,7 @@
 
 use bevy::prelude::*;
 use bevy_egui::{EguiContexts, EguiPrimaryContextPass, PrimaryEguiContext, egui};
+use rand::seq::IndexedRandom;
 
 use crate::{
     combat::{ShooterHit, TargetHit},
@@ -18,10 +19,39 @@ struct Flashes {
     hurt: f32,
     hit: f32,
     ended: f32,
+    /// End-of-round headline, picked when the round ends.
+    banner: &'static str,
 }
 
 /// Hold the end banner back so you can watch him (or yourself) go down.
 const BANNER_DELAY: f32 = 1.2;
+
+/// You died. One is picked at random each time.
+const DEATH_BANNERS: &[&str] = &[
+    "Oh dear, you are dead!",
+    "YOU DIED",
+    "WASTED",
+    "Snake? Snake?! SNAAAKE!",
+    "Game over, man! Game over!",
+    "You have died of dysentery.",
+    "Mission failed. We'll get 'em next time.",
+    "Turns out he shoots back.",
+    "The hunter became the hunted.",
+];
+
+/// He died.
+const WIN_BANNERS: &[&str] = &[
+    "Congratulations, you just advanced a Slayer level.",
+    "ENEMY FELLED",
+    "Target eliminated. Agent 47 would be proud.",
+    "He's not coming back.",
+    "Mission accomplished.",
+    "You have slain the target.",
+    "And stay down.",
+];
+
+/// Won without taking a scratch.
+const FLAWLESS_BANNER: &str = "FLAWLESS VICTORY";
 
 pub fn plugin(app: &mut App) {
     app.init_resource::<Flashes>()
@@ -49,8 +79,17 @@ fn track_flashes(
     mut flashes: ResMut<Flashes>,
     mut hurt: MessageReader<ShooterHit>,
     mut hit: MessageReader<TargetHit>,
+    shooter: Option<Single<&Shooter>>,
 ) {
     let decay = time.delta_secs() * 2.5;
+    if flashes.ended == 0.0 && *state.get() != GameState::Playing {
+        let flawless = shooter.is_some_and(|s| s.hp >= SHOOTER_MAX_HP);
+        flashes.banner = match state.get() {
+            GameState::Won if flawless => FLAWLESS_BANNER,
+            GameState::Won => WIN_BANNERS.choose(&mut rand::rng()).unwrap(),
+            _ => DEATH_BANNERS.choose(&mut rand::rng()).unwrap(),
+        };
+    }
     flashes.hurt = (flashes.hurt - decay).max(0.0);
     flashes.hit = (flashes.hit - decay).max(0.0);
     flashes.ended = match state.get() {
@@ -192,8 +231,8 @@ fn draw_hud(
     let banner = match state.get() {
         GameState::Playing => None,
         _ if flashes.ended < BANNER_DELAY => None,
-        GameState::Won => Some(("TARGET DOWN", egui::Color32::from_rgb(90, 230, 110))),
-        GameState::Lost => Some(("YOU WERE SPOTTED. AND SHOT.", egui::Color32::from_rgb(240, 70, 60))),
+        GameState::Won => Some((flashes.banner, egui::Color32::from_rgb(90, 230, 110))),
+        GameState::Lost => Some((flashes.banner, egui::Color32::from_rgb(240, 70, 60))),
     };
     if let Some((text, colour)) = banner {
         egui::Area::new("banner".into())
