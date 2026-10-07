@@ -42,13 +42,38 @@ pub struct Footstep {
     pub at: Vec3,
 }
 
+/// The shooter walked into a wall or cover: a thud (so you notice you're stuck) and a knock back.
+#[derive(Message, Clone, Copy)]
+pub struct Bump {
+    pub at: Vec3,
+}
+
+/// While > 0, the shooter is being knocked back by `push` and can't walk (only turn).
+#[derive(Component, Reflect, Default)]
+#[reflect(Component)]
+pub struct Stagger {
+    pub left: f32,
+    pub push: Vec3,
+}
+
+impl Stagger {
+    /// Knocked back at `push` (m/s), easing off over the stagger.
+    pub fn knock(push: Vec3) -> Self {
+        Self { left: STAGGER_SECS, push }
+    }
+}
+
 const STEP_INTERVAL: f32 = 0.42;
+const BUMP_REACH: f32 = 0.15;
+const KNOCKBACK_SPEED: f32 = 4.0;
+const STAGGER_SECS: f32 = 0.25;
 
 pub fn plugin(app: &mut App) {
     app.add_plugins(InputManagerPlugin::<ShooterAction>::default())
         .add_message::<Footstep>()
+        .add_message::<Bump>()
         .add_systems(OnEnter(GameState::Playing), spawn_shooter.in_set(SpawnRound))
-        .add_systems(Update, drive.run_if(in_state(GameState::Playing)));
+        .add_systems(Update, (drive, bump).chain().run_if(in_state(GameState::Playing)));
 }
 
 fn spawn_shooter(
@@ -66,6 +91,7 @@ fn spawn_shooter(
         Name::new("Shooter"),
         RoundEntity,
         Shooter { hp: SHOOTER_MAX_HP },
+        Stagger::default(),
         InputMap::new([
             (ShooterAction::Forward, KeyCode::ArrowUp),
             (ShooterAction::Back, KeyCode::ArrowDown),
@@ -136,9 +162,12 @@ fn drive(
     time: Res<Time>,
     mut step: Local<f32>,
     mut steps: MessageWriter<Footstep>,
-    mut q: Query<(&ActionState<ShooterAction>, &Transform, &mut Rotation, &mut LinearVelocity), With<Shooter>>,
+    mut q: Query<
+        (&ActionState<ShooterAction>, &Transform, &mut Rotation, &mut LinearVelocity, &mut Stagger),
+        With<Shooter>,
+    >,
 ) {
-    for (actions, t, mut rot, mut vel) in &mut q {
+    for (actions, t, mut rot, mut vel, mut stagger) in &mut q {
         let turn = actions.pressed(&ShooterAction::TurnLeft) as i8 as f32
             - actions.pressed(&ShooterAction::TurnRight) as i8 as f32;
         rot.0 = Quat::from_rotation_y(turn * TURN_SPEED * time.delta_secs()) * rot.0;
@@ -146,6 +175,13 @@ fn drive(
         let throttle = actions.pressed(&ShooterAction::Forward) as i8 as f32
             - actions.pressed(&ShooterAction::Back) as i8 as f32;
         let forward = rot.0 * Vec3::NEG_Z;
+        if stagger.left > 0.0 {
+            stagger.left -= time.delta_secs();
+            let push = stagger.push * (stagger.left / STAGGER_SECS).max(0.0);
+            vel.0 = Vec3::new(push.x, vel.0.y, push.z);
+            *step = 0.0;
+            continue;
+        }
         let planar = forward * throttle * MOVE_SPEED;
         vel.0 = Vec3::new(planar.x, vel.0.y, planar.z);
 
@@ -158,5 +194,32 @@ fn drive(
         } else {
             *step = 0.0;
         }
+    }
+}
+
+/// Walking into something solid: thud and get knocked back, so you notice you're stuck.
+fn bump(
+    spatial: SpatialQuery,
+    mut bumps: MessageWriter<Bump>,
+    mut q: Query<(&Transform, &mut LinearVelocity, &mut Stagger), With<Shooter>>,
+) {
+    for (t, mut vel, mut stagger) in &mut q {
+        if stagger.left > 0.0 {
+            continue;
+        }
+        let Ok(dir) = Dir3::new(Vec3::new(vel.0.x, 0.0, vel.0.z)) else { continue };
+        let Some(hit) = spatial.cast_ray(
+            t.translation,
+            dir,
+            RADIUS + BUMP_REACH,
+            true,
+            &SpatialQueryFilter::from_mask(Layer::World),
+        ) else {
+            continue;
+        };
+        let normal = Vec3::new(hit.normal.x, 0.0, hit.normal.z).normalize_or(-dir.as_vec3());
+        bumps.write(Bump { at: t.translation + dir * hit.distance });
+        *stagger = Stagger::knock(normal * KNOCKBACK_SPEED);
+        vel.0 = Vec3::new(stagger.push.x, vel.0.y, stagger.push.z);
     }
 }

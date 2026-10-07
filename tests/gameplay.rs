@@ -12,7 +12,8 @@ use leafwing_input_manager::prelude::*;
 use second_person::{
     combat::{Bullet, Gunshot, ShooterHit, TargetHit},
     round::GameState,
-    shooter::{SHOOTER_MAX_HP, Shooter},
+    arena::{Floor, floor_at},
+    shooter::{Bump, SHOOTER_MAX_HP, Shooter},
     target::{Activity, Alert, Suspicion, TARGET_MAX_HP, Target},
 };
 
@@ -34,6 +35,8 @@ fn app() -> App {
     count::<Gunshot>(&mut app);
     count::<TargetHit>(&mut app);
     count::<ShooterHit>(&mut app);
+    count::<Bump>(&mut app);
+    count::<second_person::combat::WarningShot>(&mut app);
     // `App::run` would call these; plugins like avian init resources in `finish`.
     app.finish();
     app.cleanup();
@@ -205,8 +208,9 @@ fn engaged_target_eventually_kills_an_exposed_shooter_then_r_restarts() {
             let w = app.world();
             let s = w.get::<Suspicion>(target).unwrap();
             eprintln!(
-                "t={:.1} {:?} pos={:.1?} lvl={:.2} eng={} sees={} last={:?}",
+                "t={:.1} hp={} {:?} pos={:.1?} lvl={:.2} eng={} sees={} last={:?}",
                 i as f32 * DT,
+                w.iter_entities().find_map(|e| e.get::<Shooter>().map(|s| s.hp)).unwrap_or(-1.0),
                 w.get::<Activity>(target),
                 w.get::<Transform>(target).unwrap().translation.xz(),
                 s.level, s.engaged, s.sees_shooter, s.last_known.map(|p| p.xz())
@@ -329,4 +333,119 @@ fn at_most_one_directional_light_with_presentation() {
     let mut app = radar_startup_app();
     let n = app.world_mut().query::<&DirectionalLight>().iter(app.world()).count();
     assert_eq!(n, 1, "WebGL2 supports one directional light");
+}
+
+#[test]
+fn walking_into_a_wall_thuds_and_knocks_you_back() {
+    let mut app = app();
+    let shooter = single::<Shooter>(&mut app);
+    let start = Vec3::new(20.0, 0.9, 25.0);
+    place(&mut app, shooter, start, yaw_towards(start, start + Vec3::Z));
+    KeyCode::ArrowUp.press(app.world_mut());
+    let z = |app: &App| app.world().get::<Transform>(shooter).unwrap().translation.z;
+    for _ in 0..120 {
+        app.update();
+        if counted::<Bump>(&app) > 0 {
+            break;
+        }
+    }
+    assert_eq!(counted::<Bump>(&app), 1, "no bump");
+    let at_wall = z(&app);
+    assert!(at_wall < 29.5, "went through the wall: {at_wall}");
+    KeyCode::ArrowUp.release(app.world_mut());
+    step(&mut app, 0.5);
+    assert!(z(&app) < at_wall - 0.3, "not knocked back: {} vs {at_wall}", z(&app));
+}
+
+#[test]
+fn floor_zones() {
+    assert_eq!(floor_at(Vec2::ZERO), Floor::Wood);
+    assert_eq!(floor_at(Vec2::new(20.0, -20.0)), Floor::Gravel);
+    assert_eq!(floor_at(Vec2::new(-20.0, -20.0)), Floor::Metal);
+    assert_eq!(floor_at(Vec2::new(0.0, 20.0)), Floor::Grass);
+}
+
+#[test]
+fn engaged_target_moves_between_covers() {
+    let mut app = app();
+    let shooter_pos = Vec3::new(0.0, 0.9, -12.0);
+    stage(&mut app, shooter_pos, shooter_pos);
+    let shooter = single::<Shooter>(&mut app);
+    app.world_mut().get_mut::<Shooter>(shooter).unwrap().hp = 1e6;
+    let target = single::<Target>(&mut app);
+    {
+        let mut s = app.world_mut().get_mut::<Suspicion>(target).unwrap();
+        s.bump(1.0);
+        s.last_known = Some(shooter_pos);
+    }
+    let mut spots: Vec<Vec2> = Vec::new();
+    for _ in 0..(40.0 / DT) as usize {
+        app.update();
+        if let Some(c) = app.world().get::<second_person::target::CoverPlan>(target)
+            && !spots.iter().any(|s| s.distance(c.0.spot) < 1.0)
+        {
+            spots.push(c.0.spot);
+        }
+    }
+    assert!(spots.len() >= 2, "only ever used {spots:?}");
+}
+
+#[test]
+fn he_hears_footsteps_up_close_on_loud_floors() {
+    use second_person::shooter::Footstep;
+    let mut app = app();
+    // Facing away from where the steps happen, so it's hearing, not sight.
+    stage(&mut app, Vec3::new(0.0, 0.9, -25.0), Vec3::new(0.0, 0.9, -10.0));
+    let target = single::<Target>(&mut app);
+    let level = |app: &App| app.world().get::<Suspicion>(target).unwrap().level;
+
+    // Grass, 9m behind him: out of earshot.
+    app.world_mut().write_message(Footstep { at: Vec3::new(0.0, 0.9, 9.0) });
+    app.update();
+    assert_eq!(level(&app), 0.0);
+
+    // Wood plaza, 3m behind: heard, and he knows where.
+    app.world_mut().write_message(Footstep { at: Vec3::new(0.0, 0.9, 3.0) });
+    app.update();
+    assert!(level(&app) > 0.0);
+    assert!(app.world().get::<Alert>(target).is_some());
+}
+
+#[test]
+fn his_laser_knocks_you_back() {
+    use second_person::shooter::Stagger;
+    let mut app = app();
+    let shooter_pos = Vec3::new(0.0, 0.9, -8.0);
+    stage(&mut app, shooter_pos, shooter_pos);
+    let target = single::<Target>(&mut app);
+    app.world_mut().get_mut::<Suspicion>(target).unwrap().bump(1.0);
+    let shooter = single::<Shooter>(&mut app);
+    for _ in 0..(30.0 / DT) as usize {
+        app.update();
+        if counted::<ShooterHit>(&app) > 0 {
+            break;
+        }
+    }
+    assert!(counted::<ShooterHit>(&app) > 0, "never fired");
+    let stagger = app.world().get::<Stagger>(shooter).unwrap();
+    assert!(stagger.left > 0.0 && stagger.push.length() > 1.0);
+}
+
+#[test]
+fn suspicious_target_fires_warning_shots_that_miss() {
+    use second_person::combat::WarningShot;
+    let mut app = app();
+    let guess = Vec3::new(0.0, 0.9, -10.0);
+    // You're actually far behind him; he thinks you're in front.
+    stage(&mut app, Vec3::new(0.0, 0.9, 25.0), guess);
+    let target = single::<Target>(&mut app);
+    {
+        let mut s = app.world_mut().get_mut::<Suspicion>(target).unwrap();
+        s.level = 0.8;
+        s.last_known = Some(guess);
+    }
+    step(&mut app, 2.0);
+    assert!(counted::<WarningShot>(&app) >= 1, "no warning shot");
+    assert_eq!(counted::<ShooterHit>(&app), 0);
+    assert!(!app.world().get::<Suspicion>(target).unwrap().engaged);
 }

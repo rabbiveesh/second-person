@@ -3,11 +3,13 @@
 use avian3d::prelude::*;
 use bevy::prelude::*;
 use leafwing_input_manager::prelude::*;
+use rand::Rng;
 
 use crate::{
     Layer,
+    arena,
     round::{GameState, RoundEntity},
-    shooter::{Shooter, ShooterAction},
+    shooter::{Bump, Footstep, Shooter, ShooterAction, Stagger},
     target::{Activity, Alert, MainCamera, Suspicion, Target},
 };
 
@@ -17,6 +19,18 @@ const HEARING_RANGE: f32 = 18.0;
 const NEAR_MISS_RANGE: f32 = 7.0;
 const RETURN_FIRE_INTERVAL: f32 = 0.8;
 const RETURN_FIRE_DAMAGE: f32 = 8.0;
+/// His laser shoves you back, and you can't walk until it wears off.
+const RETURN_FIRE_KNOCKBACK: f32 = 5.0;
+/// Suspicion per footstep at point-blank range (fading to 0 at the floor's hearing range).
+/// Steps come ~2.4 times a second, so walking right behind him on metal fills it in ~3s.
+const FOOTSTEP_SUSPICION: f32 = 0.15;
+const BUMP_HEARING_RANGE: f32 = 14.0;
+const BUMP_SUSPICION: f32 = 0.2;
+/// Suspicious but not yet engaged: he fires warning shots that land this far off where he
+/// thinks you are, every so often.
+const WARNING_SUSPICION: f32 = 0.35;
+const WARNING_MISS: std::ops::Range<f32> = 1.5..3.5;
+const WARNING_INTERVAL: std::ops::Range<f32> = 1.2..2.8;
 
 #[derive(Component)]
 pub struct Bullet {
@@ -43,6 +57,13 @@ pub struct TargetHit {
     pub at: Vec3,
 }
 
+/// The target fired a deliberate miss near where he thinks you are: a warning, no damage.
+#[derive(Message, Clone, Copy)]
+pub struct WarningShot {
+    pub from: Vec3,
+    pub to: Vec3,
+}
+
 /// The target shot the shooter (hitscan from `from` to `to`).
 #[derive(Message, Clone, Copy)]
 pub struct ShooterHit {
@@ -62,10 +83,11 @@ pub fn plugin(app: &mut App) {
         .add_message::<BulletImpact>()
         .add_message::<TargetHit>()
         .add_message::<ShooterHit>()
+        .add_message::<WarningShot>()
         .add_systems(Startup, load_assets)
         .add_systems(
             Update,
-            (fire, bullet_hits, return_fire, check_outcome)
+            (fire, bullet_hits, hear_movement, warning_fire, return_fire, check_outcome)
                 .chain()
                 .run_if(in_state(GameState::Playing)),
         );
@@ -180,13 +202,78 @@ fn bullet_hits(
     }
 }
 
+/// He hears your footsteps when you're close (farther on loud floors) and walking into walls.
+/// Each sound nudges suspicion and tells him where you are, so creeping up is a risk.
+fn hear_movement(
+    mut commands: Commands,
+    mut steps: MessageReader<Footstep>,
+    mut bumps: MessageReader<Bump>,
+    target: Single<(Entity, &Transform, &mut Suspicion), With<Target>>,
+) {
+    let (target_e, target_t, mut suspicion) = target.into_inner();
+    let ear = target_t.translation;
+    let heard = steps
+        .read()
+        .map(|s| (s.at, arena::floor_at(s.at.xz()).hearing_range(), FOOTSTEP_SUSPICION))
+        .chain(bumps.read().map(|b| (b.at, BUMP_HEARING_RANGE, BUMP_SUSPICION)));
+    for (at, range, amount) in heard {
+        let closeness = 1.0 - ear.distance(at) / range;
+        if closeness <= 0.0 {
+            continue;
+        }
+        suspicion.bump(amount * closeness);
+        suspicion.last_known = Some(at);
+        commands.entity(target_e).insert(Alert::new(at, 2.0));
+    }
+}
+
+/// Suspicious but not sure yet: he fires deliberate misses toward where he last saw or heard
+/// you, once he's facing that way. Tells you he's onto you (and where he is).
+fn warning_fire(
+    time: Res<Time>,
+    spatial: SpatialQuery,
+    mut cooldown: Local<f32>,
+    eyes: Single<&GlobalTransform, With<MainCamera>>,
+    target: Single<&Suspicion, With<Target>>,
+    mut warnings: MessageWriter<WarningShot>,
+    mut impacts: MessageWriter<BulletImpact>,
+) {
+    *cooldown -= time.delta_secs();
+    let suspicion = *target;
+    let Some(guess) = suspicion.last_known else { return };
+    if suspicion.engaged || suspicion.level < WARNING_SUSPICION || *cooldown > 0.0 {
+        return;
+    }
+    let from = eyes.translation() + eyes.down() * 0.3 + eyes.right() * 0.2;
+    let to_guess = guess - from;
+    if eyes.forward().angle_between(to_guess) > 0.5 {
+        return; // still turning to look
+    }
+    let mut rng = rand::rng();
+    *cooldown = rng.random_range(WARNING_INTERVAL);
+    let side = to_guess.with_y(0.0).normalize_or_zero().cross(Vec3::Y);
+    let sign = if rng.random_bool(0.5) { 1.0 } else { -1.0 };
+    let aim = guess + side * sign * rng.random_range(WARNING_MISS) + Vec3::Y * rng.random_range(-0.6..0.4);
+    let Ok(dir) = Dir3::new(aim - from) else { return };
+    // Stops at whatever it hits first (cover, a wall), else flies on past.
+    let to = match spatial.cast_ray(from, dir, 60.0, true, &SpatialQueryFilter::from_mask(Layer::World)) {
+        Some(hit) => {
+            let at = from + dir * hit.distance;
+            impacts.write(BulletImpact { at });
+            at
+        }
+        None => from + dir * 60.0,
+    };
+    warnings.write(WarningShot { from, to });
+}
+
 /// While engaging and able to see the shooter, the target fires back (hitscan).
 fn return_fire(
     time: Res<Time>,
     mut timer: Local<Option<Timer>>,
     eyes: Single<&GlobalTransform, With<MainCamera>>,
     target: Single<(&Suspicion, Option<&Activity>), With<Target>>,
-    mut shooter: Single<(&mut Shooter, &Transform)>,
+    mut shooter: Single<(&mut Shooter, &Transform, &mut Stagger)>,
     mut hits: MessageWriter<ShooterHit>,
 ) {
     let timer = timer.get_or_insert_with(|| Timer::from_seconds(RETURN_FIRE_INTERVAL, TimerMode::Repeating));
@@ -196,11 +283,13 @@ fn return_fire(
         return;
     }
     if timer.tick(time.delta()).just_finished() {
-        let (ref mut s, t) = *shooter;
+        let (ref mut s, t, ref mut stagger) = *shooter;
         s.hp = (s.hp - RETURN_FIRE_DAMAGE).max(0.0);
         // Start the tracer just below the eyes so it's visible from his own view.
         let from = eyes.translation() + eyes.down() * 0.3 + eyes.right() * 0.2;
         hits.write(ShooterHit { from, to: t.translation });
+        let away = (t.translation - from).with_y(0.0).normalize_or_zero();
+        **stagger = Stagger::knock(away * RETURN_FIRE_KNOCKBACK);
     }
 }
 

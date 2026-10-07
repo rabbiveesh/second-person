@@ -22,6 +22,52 @@ const CRATE_HALF: f32 = 1.0;
 const PILLARS: &[(f32, f32)] = &[(-10.0, -2.0), (10.0, -2.0), (0.0, -18.0), (-18.0, 20.0), (22.0, 12.0)];
 const PILLAR_HALF: f32 = 0.6;
 
+/// What the floor is made of. Footsteps sound different on each, so you can tell where you are
+/// by ear. Grass is the base ground; the others are painted zones (also visible on the radar).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Reflect)]
+pub enum Floor {
+    Grass,
+    Gravel,
+    Metal,
+    Wood,
+}
+
+impl Floor {
+    pub const ALL: [Floor; 4] = [Floor::Grass, Floor::Gravel, Floor::Metal, Floor::Wood];
+
+    /// How far away he can hear your footsteps on this floor.
+    pub fn hearing_range(self) -> f32 {
+        match self {
+            Floor::Grass => 4.0,
+            Floor::Wood => 7.0,
+            Floor::Gravel => 8.0,
+            Floor::Metal => 10.0,
+        }
+    }
+
+    pub fn name(self) -> &'static str {
+        match self {
+            Floor::Grass => "grass",
+            Floor::Gravel => "gravel",
+            Floor::Metal => "metal",
+            Floor::Wood => "wood",
+        }
+    }
+}
+
+/// Wooden plaza in the middle; the far half (-Z) split into gravel (+X) and metal (-X); grass elsewhere.
+const PLAZA_HALF: f32 = 7.0;
+
+pub fn floor_at(p: Vec2) -> Floor {
+    if p.abs().max_element() < PLAZA_HALF {
+        Floor::Wood
+    } else if p.y < 0.0 {
+        if p.x >= 0.0 { Floor::Gravel } else { Floor::Metal }
+    } else {
+        Floor::Grass
+    }
+}
+
 pub fn plugin(app: &mut App) {
     app.insert_resource(ClearColor(Color::srgb(0.55, 0.7, 0.85)))
         .add_systems(Startup, spawn_arena);
@@ -42,6 +88,21 @@ fn spawn_arena(
         Transform::from_xyz(0.0, -0.1, 0.0),
         RenderLayers::from_layers(WORLD_AND_RADAR),
     ));
+
+    // Floor zones: thin painted slabs on the ground, visual only (`floor_at` is the truth).
+    for (name, color, centre, half, y) in [
+        ("Gravel", Color::srgb(0.55, 0.52, 0.47), Vec2::new(ARENA_HALF / 2.0, -ARENA_HALF / 2.0), ARENA_HALF / 2.0, 0.005),
+        ("Metal", Color::srgb(0.38, 0.42, 0.47), Vec2::new(-ARENA_HALF / 2.0, -ARENA_HALF / 2.0), ARENA_HALF / 2.0, 0.005),
+        ("Wood", Color::srgb(0.4, 0.26, 0.17), Vec2::ZERO, PLAZA_HALF, 0.01),
+    ] {
+        commands.spawn((
+            Name::new(format!("Floor: {name}")),
+            Mesh3d(meshes.add(Cuboid::new(half * 2.0, 0.01, half * 2.0))),
+            MeshMaterial3d(materials.add(color)),
+            Transform::from_xyz(centre.x, y, centre.y),
+            RenderLayers::from_layers(WORLD_AND_RADAR),
+        ));
+    }
 
     commands.spawn((
         Name::new("Sun"),
@@ -159,25 +220,39 @@ pub fn los_blocked(a: Vec2, b: Vec2) -> bool {
 #[derive(Clone, Copy, Debug, Reflect)]
 pub struct Cover {
     pub spot: Vec2,
+    /// Where to step out to see the threat again.
     pub peek: Vec2,
+    /// The other side, if that one also works (else same as `peek`).
+    pub alt_peek: Vec2,
 }
 
 /// Nearest spot (to `from`) that's hidden from `threat` behind some block.
 pub fn find_cover(from: Vec2, threat: Vec2) -> Option<Cover> {
+    find_cover_avoiding(from, threat, None)
+}
+
+/// Like [`find_cover`], but not within a few metres of `avoid` (the cover he's leaving).
+pub fn find_cover_avoiding(from: Vec2, threat: Vec2, avoid: Option<Vec2>) -> Option<Cover> {
     cover_blocks()
         .filter_map(|(c, half)| {
             let away = (c - threat).normalize_or_zero();
             let spot = c + away * (half + 0.9);
-            if !is_clear(spot, 0.5) || !los_blocked(threat, spot) || spot.distance(threat) < 5.0 {
+            if !is_clear(spot, 0.5)
+                || !los_blocked(threat, spot)
+                || spot.distance(threat) < 5.0
+                || avoid.is_some_and(|a| a.distance(spot) < 3.0)
+            {
                 return None;
             }
             // Step sideways out of cover to see the threat again.
             let side = away.perp() * (half + 1.0);
-            let peek = [spot + side, spot - side]
+            let mut peeks = [spot + side, spot - side]
                 .into_iter()
-                .find(|&p| is_clear(p, 0.5) && !los_blocked(threat, p))
-                .unwrap_or(spot);
-            Some(Cover { spot, peek })
+                .filter(|&p| is_clear(p, 0.5) && !los_blocked(threat, p));
+            // Cover he can't shoot back from is no use to him.
+            let peek = peeks.next()?;
+            let alt_peek = peeks.next().unwrap_or(peek);
+            Some(Cover { spot, peek, alt_peek })
         })
         .min_by(|a, b| from.distance(a.spot).total_cmp(&from.distance(b.spot)))
 }

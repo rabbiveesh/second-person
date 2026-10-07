@@ -15,7 +15,7 @@ use bevy_firework::{
 };
 
 use crate::{
-    combat::{BulletImpact, Gunshot, ShooterHit, TargetHit},
+    combat::{BulletImpact, Gunshot, ShooterHit, TargetHit, WarningShot},
     round::RoundEntity,
 };
 
@@ -94,12 +94,17 @@ fn target_hit(mut commands: Commands, mut hits: MessageReader<TargetHit>) {
     }
 }
 
-fn return_fire(mut commands: Commands, mut hits: MessageReader<ShooterHit>) {
-    for hit in hits.read() {
+fn return_fire(
+    mut commands: Commands,
+    mut hits: MessageReader<ShooterHit>,
+    mut warnings: MessageReader<WarningShot>,
+) {
+    let shots = hits.read().map(|h| (h.from, h.to)).chain(warnings.read().map(|w| (w.from, w.to)));
+    for (from, to) in shots {
         commands.spawn((
             Name::new("Tracer"),
             RoundEntity,
-            Tracer { from: hit.from, to: hit.to },
+            Tracer { from, to },
             Ttl(Timer::from_seconds(0.12, TimerMode::Once)),
         ));
     }
