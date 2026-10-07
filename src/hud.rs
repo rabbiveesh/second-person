@@ -7,7 +7,7 @@ use crate::{
     combat::{ShooterHit, TargetHit},
     radar::{RadarMode, RadarRect},
     round::{GameState, TargetMobile},
-    shooter::{SHOOTER_MAX_HP, Shooter},
+    shooter::{SHOOTER_MAX_HP, Shooter, Stunned},
     target::{Activity, Suspicion, TARGET_MAX_HP, Target},
 };
 
@@ -63,7 +63,7 @@ fn draw_hud(
     radar_mode: Res<RadarMode>,
     flashes: Res<Flashes>,
     radar: Res<RadarRect>,
-    shooter: Option<Single<&Shooter>>,
+    shooter: Option<Single<(&Shooter, &Stunned)>>,
     target: Option<Single<(&Target, &Suspicion, Option<&Activity>)>>,
 ) -> Result {
     let ctx = contexts.ctx_mut()?;
@@ -74,7 +74,12 @@ fn draw_hud(
             egui::Frame::popup(ui.style()).show(ui, |ui| {
                 ui.set_width(240.0);
                 if let Some(shooter) = &shooter {
-                    ui.label("YOU (the shooter)");
+                    let (shooter, stunned) = **shooter;
+                    if stunned.left > 0.0 {
+                        ui.colored_label(egui::Color32::from_rgb(255, 120, 60), "YOU (the shooter) · STUNNED");
+                    } else {
+                        ui.label("YOU (the shooter)");
+                    }
                     ui.add(
                         egui::ProgressBar::new(shooter.hp / SHOOTER_MAX_HP)
                             .text(format!("{:.0} HP", shooter.hp))
@@ -120,7 +125,7 @@ fn draw_hud(
         .show(ctx, |ui| {
             ui.label(
                 egui::RichText::new(format!(
-                    "Up/Down move   Left/Right turn   Space fire   M target walks: {}   Tab radar: {:?}   F1 inspector",
+                    "Up/Down move   Left/Right turn   Space fire   W whistle   M target walks: {}   Tab radar: {:?}   F1 inspector",
                     if mobile.0 { "on" } else { "off" },
                     *radar_mode
                 ))
