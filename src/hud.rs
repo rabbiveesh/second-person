@@ -6,12 +6,13 @@ use rand::seq::IndexedRandom;
 
 use crate::{
     combat::{ShooterHit, TargetHit},
-    radar::{RadarMode, RadarRect},
+    layout::ScreenLayout,
+    radar::RadarMode,
     round::{GameState, TargetMobile},
     shooter::{SHOOTER_MAX_HP, Shooter, Stunned},
     start::Started,
     target::{Activity, Suspicion, TARGET_MAX_HP, Target},
-    touch::{TouchControls, TouchWhistle},
+    touch::{TouchControls, TouchWhistle, WHISTLE_SIZE},
 };
 
 /// Screen flashes: red when you're hit; a hit marker and a light flash when the target is hit.
@@ -121,11 +122,31 @@ fn draw_hud(
     started: Res<Started>,
     mut whistle: ResMut<TouchWhistle>,
     flashes: Res<Flashes>,
-    radar: Res<RadarRect>,
+    layout: Res<ScreenLayout>,
     shooter: Option<Single<(&Shooter, &Stunned)>>,
     target: Option<Single<(&Target, &Suspicion, Option<&Activity>)>>,
 ) -> Result {
     let ctx = contexts.ctx_mut()?;
+    let screen = ctx.content_rect();
+    let view = rect(layout.view);
+
+    // Portrait deck under the view, holding the radar and whistle. Filled around the radar, not
+    // under it: egui draws after every camera, so a full fill would paint over the radar.
+    if layout.portrait() {
+        let deck = rect(layout.deck);
+        let painter = ctx.layer_painter(egui::LayerId::background());
+        fill_around(&painter, deck, rect(layout.radar), egui::Color32::from_rgb(14, 20, 17));
+        painter.hline(deck.x_range(), deck.top(), egui::Stroke::new(2.0, egui::Color32::from_rgb(40, 90, 60)));
+        if touch.0 {
+            painter.text(
+                egui::pos2(deck.left() + deck.width() / 4.0, deck.center().y),
+                egui::Align2::CENTER_CENTER,
+                "drive",
+                egui::FontId::proportional(18.0),
+                egui::Color32::from_white_alpha(40),
+            );
+        }
+    }
 
     egui::Area::new("status".into())
         .anchor(egui::Align2::LEFT_TOP, [16.0, 16.0])
@@ -195,15 +216,22 @@ fn draw_hud(
     // Whistle for thumbs: a big round button on the right, just above the radar. Taps on it
     // don't fire (see `touch::TouchWhistle`).
     if touch.0 {
-        let above_radar = if radar.0.height() > 0.0 { ctx.content_rect().height() - radar.0.min.y } else { 0.0 };
-        let response = egui::Area::new("whistle".into())
-            .anchor(egui::Align2::RIGHT_BOTTOM, [-24.0, -above_radar - 16.0])
+        let radar = layout.radar;
+        let mut area = egui::Area::new("whistle".into());
+        area = if layout.portrait() {
+            // Centred over the radar in the deck.
+            area.fixed_pos([radar.center().x - WHISTLE_SIZE / 2.0, radar.min.y - 16.0 - WHISTLE_SIZE])
+        } else {
+            let above_radar = if radar.height() > 0.0 { screen.height() - radar.min.y } else { 0.0 };
+            area.anchor(egui::Align2::RIGHT_BOTTOM, [-24.0, -above_radar - 16.0])
+        };
+        let response = area
             .show(ctx, |ui| {
                 // `add_sized` lays the button out centred-and-justified, so the label sits in the middle.
                 ui.add_sized(
-                    [84.0, 84.0],
+                    [WHISTLE_SIZE, WHISTLE_SIZE],
                     egui::Button::new(egui::RichText::new("whistle").size(18.0))
-                        .corner_radius(42.0)
+                        .corner_radius(WHISTLE_SIZE / 2.0)
                         .fill(egui::Color32::from_black_alpha(150))
                         .stroke(egui::Stroke::new(2.0, egui::Color32::from_rgb(80, 220, 120))),
                 )
@@ -240,9 +268,8 @@ fn draw_hud(
     }
 
     // Frame + label for the radar viewport.
-    let r = radar.0;
-    if r.width() > 0.0 && *radar_mode != RadarMode::Off {
-        let rect = egui::Rect::from_min_max(egui::pos2(r.min.x, r.min.y), egui::pos2(r.max.x, r.max.y));
+    if layout.radar.width() > 0.0 && *radar_mode != RadarMode::Off {
+        let rect = rect(layout.radar);
         let painter = ctx.layer_painter(egui::LayerId::new(egui::Order::Foreground, "radar".into()));
         painter.rect_stroke(
             rect,
@@ -259,29 +286,28 @@ fn draw_hud(
         );
     }
 
-    // Full-screen flashes.
-    let screen = ctx.content_rect();
+    // Flashes over the view.
     let painter = ctx.layer_painter(egui::LayerId::new(egui::Order::Background, "flash".into()));
     if flashes.hurt > 0.0 {
-        painter.rect_filled(screen, 0.0, egui::Color32::from_rgba_unmultiplied(255, 0, 0, (flashes.hurt * 120.0) as u8));
+        painter.rect_filled(view, 0.0, egui::Color32::from_rgba_unmultiplied(255, 0, 0, (flashes.hurt * 120.0) as u8));
     }
     if flashes.hit > 0.0 {
-        painter.rect_filled(screen, 0.0, egui::Color32::from_rgba_unmultiplied(255, 255, 255, (flashes.hit * 60.0) as u8));
-        hit_marker(&painter, screen.center(), flashes.hit);
+        painter.rect_filled(view, 0.0, egui::Color32::from_rgba_unmultiplied(255, 255, 255, (flashes.hit * 60.0) as u8));
+        hit_marker(&painter, view.center(), flashes.hit);
     }
     // His view reddens at the edges as he's wounded, pulsing on each hit.
     if let Some(target) = &target {
         let wounds = 1.0 - target.0.hp as f32 / TARGET_MAX_HP as f32;
         let strength = (wounds * 0.7 + flashes.hit * 0.5).min(1.0);
         if strength > 0.0 {
-            let width = screen.width().min(screen.height()) * (0.12 + 0.18 * strength);
-            vignette(&painter, screen, width, egui::Color32::from_rgba_unmultiplied(150, 0, 0, (strength * 200.0) as u8));
+            let width = view.width().min(view.height()) * (0.12 + 0.18 * strength);
+            vignette(&painter, view, width, egui::Color32::from_rgba_unmultiplied(150, 0, 0, (strength * 200.0) as u8));
         }
     }
     // He's dead: the view dims to dark red as he lies there.
     if *state.get() == GameState::Won {
         let dim = ((flashes.ended - 0.5) / 1.2).clamp(0.0, 1.0);
-        painter.rect_filled(screen, 0.0, egui::Color32::from_rgba_unmultiplied(40, 0, 0, (dim * 170.0) as u8));
+        painter.rect_filled(view, 0.0, egui::Color32::from_rgba_unmultiplied(40, 0, 0, (dim * 170.0) as u8));
     }
 
     let banner = match state.get() {
@@ -294,7 +320,7 @@ fn draw_hud(
         // Smaller on a phone in portrait, so the longer lines wrap to two rows, not four.
         let size = (screen.width() / 15.0).clamp(22.0, 36.0);
         egui::Area::new("banner".into())
-            .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
+            .anchor(egui::Align2::CENTER_CENTER, view.center() - screen.center())
             .show(ctx, |ui| {
                 egui::Frame::popup(ui.style()).show(ui, |ui| {
                     ui.vertical_centered(|ui| {
@@ -330,6 +356,23 @@ fn draw_hud(
             });
     }
     Ok(())
+}
+
+fn rect(r: Rect) -> egui::Rect {
+    egui::Rect::from_min_max(egui::pos2(r.min.x, r.min.y), egui::pos2(r.max.x, r.max.y))
+}
+
+/// Fill `outer` except for `hole`, which must lie inside it.
+fn fill_around(painter: &egui::Painter, outer: egui::Rect, hole: egui::Rect, colour: egui::Color32) {
+    let rects = [
+        egui::Rect::from_x_y_ranges(outer.x_range(), outer.top()..=hole.top()),
+        egui::Rect::from_x_y_ranges(outer.x_range(), hole.bottom()..=outer.bottom()),
+        egui::Rect::from_x_y_ranges(outer.left()..=hole.left(), hole.y_range()),
+        egui::Rect::from_x_y_ranges(hole.right()..=outer.right(), hole.y_range()),
+    ];
+    for r in rects {
+        painter.rect_filled(r, 0.0, colour);
+    }
 }
 
 /// An X of four short strokes around `at`, fading with `alpha`.
