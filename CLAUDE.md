@@ -44,6 +44,8 @@ controlling the **shooter** hunting him. A corner radar shows the whole arena.
 | vleue_navigator 0.16 (`avian3d`) | navmesh pathfinding (polyanya), built from avian colliders, WASM-safe |
 
 Dev builds: `dev` feature = `bevy/dynamic_linking` + `inspector`; mold via `.cargo/config.toml`; deps at opt-level 3.
+Machine-local cargo settings (e.g. `rustc-wrapper = "kache"`, a shared build cache across worktrees) go in the
+gitignored `.cargo/config.local.toml`, which `.cargo/config.toml` includes if present.
 Web/Pages: `trunk build --release` uses the `wasm-release` profile, which uses **fat LTO on purpose**.
 Deploys are slower (~6 min warm vs ~3 for thin), but the download is ~3MB smaller, and the dev loop never uses that profile.
 System deps (Ubuntu): `libudev-dev`, `libasound2-dev`, `libwayland-dev`, `libxkbcommon-dev`.
