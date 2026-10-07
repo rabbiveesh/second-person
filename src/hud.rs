@@ -291,12 +291,14 @@ fn draw_hud(
         GameState::Lost => Some((flashes.banner, egui::Color32::from_rgb(240, 70, 60))),
     };
     if let Some((text, colour)) = banner {
+        // Smaller on a phone in portrait, so the longer lines wrap to two rows, not four.
+        let size = (screen.width() / 15.0).clamp(22.0, 36.0);
         egui::Area::new("banner".into())
             .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
             .show(ctx, |ui| {
                 egui::Frame::popup(ui.style()).show(ui, |ui| {
                     ui.vertical_centered(|ui| {
-                        ui.label(egui::RichText::new(text).size(36.0).color(colour).strong());
+                        ui.label(egui::RichText::new(text).size(size).color(colour).strong());
                         if touch.0 {
                             if ui.button(egui::RichText::new("go again").size(22.0)).clicked() {
                                 next.set(GameState::Playing);

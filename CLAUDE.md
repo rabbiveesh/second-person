@@ -25,6 +25,8 @@ controlling the **shooter** hunting him. A corner radar shows the whole arena.
    - `scripts/brp world.query '{"data":{"components":["second_person::target::Suspicion"]},"filter":{}}'`
    - `scripts/brp brp_extras/send_keys '{"keys":["Space"],"duration_ms":60}'`
    - `scripts/brp brp_extras/screenshot '{"path":"<scratchpad>/shot.png"}'`
+   - `scripts/shots <out dir> 1280x720 390x844:touch 844x390:touch` screenshots the staged juice moments
+     (`examples/juice_shots`) at any sizes (logical px; `:touch` = touch UI, fires by tapping). Check mobile with it.
    Gameplay components derive `Reflect` + `#[reflect(Component)]` (auto-registered) so they're queryable.
    `.mcp.json` also registers `bevy_brp_mcp` for MCP-native access.
 
