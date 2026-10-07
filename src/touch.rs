@@ -24,12 +24,17 @@ use crate::shooter::{Shooter, ShooterAction};
 #[derive(Resource, Default)]
 pub struct TouchControls(pub bool);
 
+/// Set by the HUD's whistle button; pressed into the shooter's actions on the next frame.
+#[derive(Resource, Default)]
+pub struct TouchWhistle(pub bool);
+
 const STICK_SIZE: f32 = 150.0;
 const KNOB_SIZE: f32 = 70.0;
 
 pub fn plugin(app: &mut App) {
     app.add_plugins(VirtualJoystickPlugin::<String>::default())
         .init_resource::<TouchControls>()
+        .init_resource::<TouchWhistle>()
         .add_systems(Update, enable_on_first_touch)
         .add_systems(PreUpdate, touch_to_actions.in_set(InputManagerSystem::ManualControl));
 }
@@ -73,6 +78,7 @@ fn touch_to_actions(
     touches: Res<Touches>,
     window: Single<&Window, With<PrimaryWindow>>,
     egui: Res<EguiWantsInput>,
+    mut whistle: ResMut<TouchWhistle>,
     sticks: Query<&VirtualJoystickState>,
     mut actions: Query<&mut ActionState<ShooterAction>, With<Shooter>>,
 ) {
@@ -90,6 +96,9 @@ fn touch_to_actions(
     let half = window.width() / 2.0;
     if !egui.wants_pointer_input() && touches.iter_just_pressed().any(|t| t.position().x > half) {
         actions.press(&ShooterAction::Fire);
+    }
+    if std::mem::take(&mut whistle.0) {
+        actions.press(&ShooterAction::Whistle);
     }
 }
 
