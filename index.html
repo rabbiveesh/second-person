@@ -23,6 +23,18 @@
     <div id="loading">loading… (keyboard: click, then arrows + space · touch: left thumb drives, tap right to fire)</div>
     <canvas id="game" tabindex="0"></canvas>
     <script>
+      // Browsers keep audio suspended until a user gesture, and cpal only calls resume() at
+      // startup, so the game would stay silent. Track every AudioContext and resume them all
+      // on the first touch, click or key.
+      const audioContexts = [];
+      window.AudioContext = new Proxy(window.AudioContext, {
+        construct(target, args) { const ctx = new target(...args); audioContexts.push(ctx); return ctx; },
+      });
+      for (const ev of ["pointerdown", "touchend", "keydown"]) {
+        document.addEventListener(ev, () => audioContexts.forEach((c) => c.state !== "running" && c.resume()), { capture: true });
+      }
+    </script>
+    <script>
       // Hide the loading note once Bevy starts drawing, and keep keyboard focus on the canvas.
       const canvas = document.getElementById("game");
       const loading = document.getElementById("loading");
