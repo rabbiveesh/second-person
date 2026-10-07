@@ -14,7 +14,7 @@ use bevy_kira_audio::prelude::*;
 use rand::Rng;
 
 use crate::{
-    arena::{self, Floor},
+    arena::{self, Floor, Floors},
     combat::{BulletImpact, Gunshot, ShooterHit, TargetHit, WarningShot},
     round::{GameState, RoundEntity},
     shooter::{Bump, Footstep},
@@ -164,6 +164,7 @@ fn play_events(
     mut target_hits: MessageReader<TargetHit>,
     mut shooter_hits: MessageReader<ShooterHit>,
     mut warnings: MessageReader<WarningShot>,
+    floors: Res<Floors>,
     mut steps: MessageReader<Footstep>,
     mut bumps: MessageReader<Bump>,
 ) {
@@ -205,7 +206,7 @@ fn play_events(
         play(&sfx.return_fire, h.from, -2.0, 30.0, 1.0, 1.0);
     }
     for s in steps.read() {
-        let variants = &sfx.steps[&arena::floor_at(s.at.xz())];
+        let variants = &sfx.steps[&floors.at(s.at.xz())];
         let step = &variants[rng.random_range(0..variants.len())];
         let rate = 1.0 + rng.random_range(-FOOTSTEP_PITCH_JITTER..FOOTSTEP_PITCH_JITTER);
         play(step, s.at, FOOTSTEP_DB, FOOTSTEP_RANGE, FOOTSTEP_ROLLOFF, rate);

@@ -12,7 +12,7 @@ use leafwing_input_manager::prelude::*;
 use second_person::{
     combat::{Bullet, Gunshot, ShooterHit, TargetHit},
     round::GameState,
-    arena::{Floor, floor_at},
+    arena::{Floor, Floors},
     shooter::{Bump, SHOOTER_MAX_HP, Shooter},
     target::{Activity, Alert, Suspicion, TARGET_MAX_HP, Target},
 };
@@ -359,10 +359,11 @@ fn walking_into_a_wall_thuds_and_knocks_you_back() {
 
 #[test]
 fn floor_zones() {
-    assert_eq!(floor_at(Vec2::ZERO), Floor::Wood);
-    assert_eq!(floor_at(Vec2::new(20.0, -20.0)), Floor::Gravel);
-    assert_eq!(floor_at(Vec2::new(-20.0, -20.0)), Floor::Metal);
-    assert_eq!(floor_at(Vec2::new(0.0, 20.0)), Floor::Grass);
+    let floors = Floors::classic();
+    assert_eq!(floors.at(Vec2::ZERO), Floor::Wood);
+    assert_eq!(floors.at(Vec2::new(20.0, -20.0)), Floor::Gravel);
+    assert_eq!(floors.at(Vec2::new(-20.0, -20.0)), Floor::Metal);
+    assert_eq!(floors.at(Vec2::new(0.0, 20.0)), Floor::Grass);
 }
 
 #[test]

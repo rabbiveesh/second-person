@@ -206,6 +206,7 @@ fn bullet_hits(
 /// Each sound nudges suspicion and tells him where you are, so creeping up is a risk.
 fn hear_movement(
     mut commands: Commands,
+    floors: Res<arena::Floors>,
     mut steps: MessageReader<Footstep>,
     mut bumps: MessageReader<Bump>,
     target: Single<(Entity, &Transform, &mut Suspicion), With<Target>>,
@@ -214,7 +215,7 @@ fn hear_movement(
     let ear = target_t.translation;
     let heard = steps
         .read()
-        .map(|s| (s.at, arena::floor_at(s.at.xz()).hearing_range(), FOOTSTEP_SUSPICION))
+        .map(|s| (s.at, floors.at(s.at.xz()).hearing_range(), FOOTSTEP_SUSPICION))
         .chain(bumps.read().map(|b| (b.at, BUMP_HEARING_RANGE, BUMP_SUSPICION)));
     for (at, range, amount) in heard {
         let closeness = 1.0 - ear.distance(at) / range;

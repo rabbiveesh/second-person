@@ -79,7 +79,8 @@ Fyrox (small ecosystem), macroquad/three-d (too thin, would mean rolling our own
 - `shooter.rs`: random start via `random_start` (clear of cover, ≥12m from the target).
 - `shooter.rs`: dynamic capsule, rotation locked, tank controls (arrows), relative to its own facing.
   Walking into the world emits `Bump` and a `Stagger` knockback (can't walk, only turn); his laser staggers you too.
-- `arena.rs` floor zones: `floor_at` → `Floor` (wood plaza, gravel, metal, grass). Each floor has its own
+- `arena.rs` floor zones: the `Floors` resource (base `Floor` + rect `FloorZone`s, later ones win; `Floors::at`).
+  Classic = wood plaza, gravel, metal, grass. Each floor has its own
   footstep sounds and a `hearing_range`; `combat::hear_movement` turns nearby steps and bumps into suspicion.
 - `combat.rs`: bullets (CCD, collision events), hearing (shots and near misses raise `Alert` +
   suspicion), target hitscan return fire while engaged, warning shots (`WarningShot`, deliberate misses near

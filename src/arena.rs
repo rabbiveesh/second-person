@@ -45,6 +45,16 @@ impl Floor {
         }
     }
 
+    /// How it's painted (the base floor is the ground itself, which is grass-green).
+    pub fn color(self) -> Color {
+        match self {
+            Floor::Grass => Color::srgb(0.32, 0.45, 0.28),
+            Floor::Gravel => Color::srgb(0.55, 0.52, 0.47),
+            Floor::Metal => Color::srgb(0.38, 0.42, 0.47),
+            Floor::Wood => Color::srgb(0.4, 0.26, 0.17),
+        }
+    }
+
     pub fn name(self) -> &'static str {
         match self {
             Floor::Grass => "grass",
@@ -55,21 +65,52 @@ impl Floor {
     }
 }
 
-/// Wooden plaza in the middle; the far half (-Z) split into gravel (+X) and metal (-X); grass elsewhere.
-const PLAZA_HALF: f32 = 7.0;
+/// A patch of floor. Later zones paint over earlier ones.
+#[derive(Clone, Copy, Debug, Reflect)]
+pub struct FloorZone {
+    /// Axis-aligned, in XZ.
+    pub area: Rect,
+    pub floor: Floor,
+}
 
-pub fn floor_at(p: Vec2) -> Floor {
-    if p.abs().max_element() < PLAZA_HALF {
-        Floor::Wood
-    } else if p.y < 0.0 {
-        if p.x >= 0.0 { Floor::Gravel } else { Floor::Metal }
-    } else {
-        Floor::Grass
+/// What the arena's floor is made of: a base material plus painted zones. It's data, so a
+/// generated arena can bring its own; `classic()` is the hand-made one.
+#[derive(Resource, Clone, Debug, Reflect)]
+#[reflect(Resource)]
+pub struct Floors {
+    pub base: Floor,
+    pub zones: Vec<FloorZone>,
+}
+
+impl Default for Floors {
+    fn default() -> Self {
+        Self::classic()
+    }
+}
+
+impl Floors {
+    /// Wooden plaza in the middle; the far half (-Z) split into gravel (+X) and metal (-X); grass elsewhere.
+    pub fn classic() -> Self {
+        let h = ARENA_HALF;
+        let zone = |min: Vec2, max: Vec2, floor| FloorZone { area: Rect::from_corners(min, max), floor };
+        Self {
+            base: Floor::Grass,
+            zones: vec![
+                zone(Vec2::new(0.0, -h), Vec2::new(h, 0.0), Floor::Gravel),
+                zone(Vec2::new(-h, -h), Vec2::new(0.0, 0.0), Floor::Metal),
+                zone(Vec2::splat(-7.0), Vec2::splat(7.0), Floor::Wood),
+            ],
+        }
+    }
+
+    pub fn at(&self, p: Vec2) -> Floor {
+        self.zones.iter().rev().find(|z| z.area.contains(p)).map_or(self.base, |z| z.floor)
     }
 }
 
 pub fn plugin(app: &mut App) {
     app.insert_resource(ClearColor(Color::srgb(0.55, 0.7, 0.85)))
+        .init_resource::<Floors>()
         .add_systems(Startup, spawn_arena);
 }
 
@@ -77,6 +118,7 @@ fn spawn_arena(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
+    floors: Res<Floors>,
 ) {
     let size = ARENA_HALF * 2.0;
     commands.spawn((
@@ -84,22 +126,20 @@ fn spawn_arena(
         RigidBody::Static,
         Collider::cuboid(size, 0.2, size),
         Mesh3d(meshes.add(Cuboid::new(size, 0.2, size))),
-        MeshMaterial3d(materials.add(Color::srgb(0.32, 0.45, 0.28))),
+        MeshMaterial3d(materials.add(floors.base.color())),
         Transform::from_xyz(0.0, -0.1, 0.0),
         RenderLayers::from_layers(WORLD_AND_RADAR),
     ));
 
-    // Floor zones: thin painted slabs on the ground, visual only (`floor_at` is the truth).
-    for (name, color, centre, half, y) in [
-        ("Gravel", Color::srgb(0.55, 0.52, 0.47), Vec2::new(ARENA_HALF / 2.0, -ARENA_HALF / 2.0), ARENA_HALF / 2.0, 0.005),
-        ("Metal", Color::srgb(0.38, 0.42, 0.47), Vec2::new(-ARENA_HALF / 2.0, -ARENA_HALF / 2.0), ARENA_HALF / 2.0, 0.005),
-        ("Wood", Color::srgb(0.4, 0.26, 0.17), Vec2::ZERO, PLAZA_HALF, 0.01),
-    ] {
+    // Floor zones: thin painted slabs on the ground, visual only (`Floors::at` is the truth).
+    // Each sits a hair above the last, so later zones paint over earlier ones.
+    for (i, zone) in floors.zones.iter().enumerate() {
+        let (c, size) = (zone.area.center(), zone.area.size());
         commands.spawn((
-            Name::new(format!("Floor: {name}")),
-            Mesh3d(meshes.add(Cuboid::new(half * 2.0, 0.01, half * 2.0))),
-            MeshMaterial3d(materials.add(color)),
-            Transform::from_xyz(centre.x, y, centre.y),
+            Name::new(format!("Floor: {}", zone.floor.name())),
+            Mesh3d(meshes.add(Cuboid::new(size.x, 0.01, size.y))),
+            MeshMaterial3d(materials.add(zone.floor.color())),
+            Transform::from_xyz(c.x, 0.005 + 0.004 * i as f32, c.y),
             RenderLayers::from_layers(WORLD_AND_RADAR),
         ));
     }
