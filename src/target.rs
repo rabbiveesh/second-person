@@ -20,6 +20,7 @@ use bevy::{camera::visibility::RenderLayers, prelude::*};
 use rand::Rng;
 
 use crate::{
+    combat::Grapple,
     Layer,
     arena::{self, ARENA_HALF, Cover},
     nav::{MoveTo, Route},
@@ -136,7 +137,7 @@ struct Fighting {
 
 /// Leave this cover spot: the next cover plan avoids it.
 #[derive(Component)]
-struct Relocate(Vec2);
+pub struct Relocate(pub Vec2);
 
 pub fn plugin(app: &mut App) {
     app.add_systems(OnEnter(GameState::Playing), spawn_target.in_set(SpawnRound))
@@ -390,11 +391,22 @@ fn fight(
         &mut LookGoal,
         Option<&mut Fighting>,
         Has<MoveTo>,
+        Has<Grapple>,
+        Has<Relocate>,
     )>,
 ) -> TaskStatus {
-    let Ok((t, target, suspicion, plan, mut look, Some(mut fighting), moving)) = q.get_mut(e) else {
+    let Ok((t, target, suspicion, plan, mut look, Some(mut fighting), moving, grappling, relocate)) =
+        q.get_mut(e)
+    else {
         return RUNNING;
     };
+    // The grapple (`combat::grapple`) takes over; when it's done he runs for other cover.
+    if grappling {
+        return RUNNING;
+    }
+    if relocate {
+        return SUCCESS;
+    }
     if !suspicion.engaged {
         return SUCCESS;
     }

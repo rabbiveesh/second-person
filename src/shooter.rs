@@ -65,6 +65,17 @@ pub struct Stagger {
     pub push: Vec3,
 }
 
+/// Caught by his grappling hook: no walking, turning or firing until `left` runs out. While
+/// `pull_to` is set you're being reeled toward that point.
+#[derive(Component, Reflect, Default)]
+#[reflect(Component)]
+pub struct Stunned {
+    pub left: f32,
+    pub pull_to: Option<Vec3>,
+}
+
+const PULL_SPEED: f32 = 14.0;
+
 impl Stagger {
     /// Knocked back at `push` (m/s), easing off over the stagger.
     pub fn knock(push: Vec3) -> Self {
@@ -101,7 +112,7 @@ fn spawn_shooter(
         Name::new("Shooter"),
         RoundEntity,
         Shooter { hp: SHOOTER_MAX_HP },
-        Stagger::default(),
+        (Stagger::default(), Stunned::default()),
         InputMap::new([
             (ShooterAction::Forward, KeyCode::ArrowUp),
             (ShooterAction::Back, KeyCode::ArrowDown),
@@ -174,11 +185,26 @@ fn drive(
     mut step: Local<f32>,
     mut steps: MessageWriter<Footstep>,
     mut q: Query<
-        (&ActionState<ShooterAction>, &Transform, &mut Rotation, &mut LinearVelocity, &mut Stagger),
+        (
+            &ActionState<ShooterAction>,
+            &Transform,
+            &mut Rotation,
+            &mut LinearVelocity,
+            &mut Stagger,
+            &mut Stunned,
+        ),
         With<Shooter>,
     >,
 ) {
-    for (actions, t, mut rot, mut vel, mut stagger) in &mut q {
+    for (actions, t, mut rot, mut vel, mut stagger, mut stunned) in &mut q {
+        if stunned.left > 0.0 {
+            stunned.left -= time.delta_secs();
+            let pull = stunned.pull_to.map_or(Vec3::ZERO, |p| (p - t.translation).with_y(0.0).normalize_or_zero() * PULL_SPEED);
+            vel.0 = Vec3::new(pull.x, vel.0.y, pull.z);
+            stagger.left = 0.0;
+            *step = 0.0;
+            continue;
+        }
         let turn = actions.pressed(&ShooterAction::TurnLeft) as i8 as f32
             - actions.pressed(&ShooterAction::TurnRight) as i8 as f32;
         rot.0 = Quat::from_rotation_y(turn * TURN_SPEED * time.delta_secs()) * rot.0;
@@ -212,10 +238,10 @@ fn drive(
 fn bump(
     spatial: SpatialQuery,
     mut bumps: MessageWriter<Bump>,
-    mut q: Query<(&Transform, &mut LinearVelocity, &mut Stagger), With<Shooter>>,
+    mut q: Query<(&Transform, &mut LinearVelocity, &mut Stagger, &Stunned), With<Shooter>>,
 ) {
-    for (t, mut vel, mut stagger) in &mut q {
-        if stagger.left > 0.0 {
+    for (t, mut vel, mut stagger, stunned) in &mut q {
+        if stagger.left > 0.0 || stunned.left > 0.0 {
             continue;
         }
         let Ok(dir) = Dir3::new(Vec3::new(vel.0.x, 0.0, vel.0.z)) else { continue };

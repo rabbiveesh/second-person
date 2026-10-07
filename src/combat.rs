@@ -9,8 +9,9 @@ use crate::{
     Layer,
     arena,
     round::{GameState, RoundEntity},
-    shooter::{Bump, Footstep, Whistle, Shooter, ShooterAction, Stagger},
-    target::{Activity, Alert, MainCamera, Suspicion, Target},
+    nav::MoveTo,
+    shooter::{Bump, Footstep, Whistle, Shooter, ShooterAction, Stagger, Stunned},
+    target::{Activity, Alert, MainCamera, Relocate, Suspicion, Target},
 };
 
 const BULLET_SPEED: f32 = 45.0;
@@ -34,6 +35,16 @@ const WHISTLE_SUSPICION: f32 = 0.4;
 const WARNING_SUSPICION: f32 = 0.35;
 const WARNING_MISS: std::ops::Range<f32> = 1.5..3.5;
 const WARNING_INTERVAL: std::ops::Range<f32> = 1.2..2.8;
+/// Grappling hook: used while fighting, on a shooter he can see within this range.
+const GRAPPLE_RANGE: std::ops::Range<f32> = 6.0..20.0;
+const GRAPPLE_COOLDOWN: f32 = 14.0;
+/// Stop reeling at this distance (or after `GRAPPLE_MAX_PULL` seconds, if you snag on something).
+const GRAPPLE_CLOSE: f32 = 2.5;
+const GRAPPLE_MAX_PULL: f32 = 2.0;
+const HAMMER_SHOTS: u32 = 3;
+const HAMMER_INTERVAL: f32 = 0.18;
+const HAMMER_DAMAGE: f32 = 7.0;
+const GRAPPLE_STUN: f32 = 1.6;
 
 #[derive(Component)]
 pub struct Bullet {
@@ -67,6 +78,22 @@ pub struct WarningShot {
     pub to: Vec3,
 }
 
+/// He fired his grappling hook at you (from his hand, to you).
+#[derive(Message, Clone, Copy)]
+pub struct GrappleFired {
+    pub from: Vec3,
+    pub to: Vec3,
+}
+
+/// His grappling hook move, on the target while it runs: reel you in, hammer you with
+/// shots, leave you stunned, then run for other cover.
+#[derive(Component, Reflect, Debug)]
+#[reflect(Component)]
+pub enum Grapple {
+    Pulling { time: f32 },
+    Hammering { shots_left: u32, next: f32 },
+}
+
 /// The target shot the shooter (hitscan from `from` to `to`).
 #[derive(Message, Clone, Copy)]
 pub struct ShooterHit {
@@ -87,10 +114,11 @@ pub fn plugin(app: &mut App) {
         .add_message::<TargetHit>()
         .add_message::<ShooterHit>()
         .add_message::<WarningShot>()
+        .add_message::<GrappleFired>()
         .add_systems(Startup, load_assets)
         .add_systems(
             Update,
-            (fire, bullet_hits, hear_movement, warning_fire, return_fire, check_outcome)
+            (fire, bullet_hits, hear_movement, warning_fire, grapple, return_fire, check_outcome)
                 .chain()
                 .run_if(in_state(GameState::Playing)),
         );
@@ -116,7 +144,7 @@ fn fire(
     time: Res<Time>,
     assets: Res<Assets3d>,
     mut cooldown: Local<Option<Timer>>,
-    shooter: Single<(&ActionState<ShooterAction>, &Transform), With<Shooter>>,
+    shooter: Single<(&ActionState<ShooterAction>, &Transform, &Stunned), With<Shooter>>,
     target: Single<(Entity, &Transform, &mut Suspicion), With<Target>>,
     mut gunshots: MessageWriter<Gunshot>,
 ) {
@@ -127,8 +155,8 @@ fn fire(
     });
     cooldown.tick(time.delta());
 
-    let (actions, t) = *shooter;
-    if !actions.just_pressed(&ShooterAction::Fire) || !cooldown.is_finished() {
+    let (actions, t, stunned) = *shooter;
+    if !actions.just_pressed(&ShooterAction::Fire) || !cooldown.is_finished() || stunned.left > 0.0 {
         return;
     }
     cooldown.reset();
@@ -274,18 +302,79 @@ fn warning_fire(
     warnings.write(WarningShot { from, to });
 }
 
+/// The grappling hook. While fighting, if he can see you at mid range and it's off cooldown,
+/// he hooks you and reels you in, fires a quick burst point-blank, leaves you stunned, and
+/// runs for a different cover.
+#[allow(clippy::too_many_arguments)]
+fn grapple(
+    mut commands: Commands,
+    time: Res<Time>,
+    mut cooldown: Local<f32>,
+    eyes: Single<&GlobalTransform, With<MainCamera>>,
+    target: Single<(Entity, &Transform, &Suspicion, Option<&Activity>, Option<&mut Grapple>), With<Target>>,
+    shooter: Single<(&mut Shooter, &Transform, &mut Stunned)>,
+    mut fired: MessageWriter<GrappleFired>,
+    mut hits: MessageWriter<ShooterHit>,
+) {
+    let dt = time.delta_secs();
+    *cooldown -= dt;
+    let (target_e, target_t, suspicion, activity, grapple) = target.into_inner();
+    let (mut s, shooter_t, mut stunned) = shooter.into_inner();
+    let hand = eyes.translation() + eyes.down() * 0.3 + eyes.right() * 0.2;
+    let dist = target_t.translation.xz().distance(shooter_t.translation.xz());
+
+    let Some(mut grapple) = grapple else {
+        if *cooldown <= 0.0
+            && activity == Some(&Activity::Engaging)
+            && suspicion.sees_shooter
+            && GRAPPLE_RANGE.contains(&dist)
+        {
+            *cooldown = GRAPPLE_COOLDOWN;
+            commands.entity(target_e).insert(Grapple::Pulling { time: 0.0 }).try_remove::<MoveTo>();
+            fired.write(GrappleFired { from: hand, to: shooter_t.translation });
+        }
+        return;
+    };
+    match &mut *grapple {
+        Grapple::Pulling { time } => {
+            *time += dt;
+            *stunned = Stunned { left: 0.2, pull_to: Some(target_t.translation) };
+            if dist < GRAPPLE_CLOSE || *time > GRAPPLE_MAX_PULL {
+                *grapple = Grapple::Hammering { shots_left: HAMMER_SHOTS, next: 0.0 };
+            }
+        }
+        Grapple::Hammering { shots_left, next } => {
+            *stunned = Stunned { left: GRAPPLE_STUN, pull_to: None };
+            *next -= dt;
+            if *next > 0.0 {
+                return;
+            }
+            s.hp = (s.hp - HAMMER_DAMAGE).max(0.0);
+            hits.write(ShooterHit { from: hand, to: shooter_t.translation });
+            *shots_left -= 1;
+            *next = HAMMER_INTERVAL;
+            if *shots_left == 0 {
+                commands
+                    .entity(target_e)
+                    .remove::<Grapple>()
+                    .insert(Relocate(target_t.translation.xz()));
+            }
+        }
+    }
+}
+
 /// While engaging and able to see the shooter, the target fires back (hitscan).
 fn return_fire(
     time: Res<Time>,
     mut timer: Local<Option<Timer>>,
     eyes: Single<&GlobalTransform, With<MainCamera>>,
-    target: Single<(&Suspicion, Option<&Activity>), With<Target>>,
+    target: Single<(&Suspicion, Option<&Activity>, Has<Grapple>), With<Target>>,
     mut shooter: Single<(&mut Shooter, &Transform, &mut Stagger)>,
     mut hits: MessageWriter<ShooterHit>,
 ) {
     let timer = timer.get_or_insert_with(|| Timer::from_seconds(RETURN_FIRE_INTERVAL, TimerMode::Repeating));
-    let (suspicion, activity) = *target;
-    if activity != Some(&Activity::Engaging) || !suspicion.sees_shooter {
+    let (suspicion, activity, grappling) = *target;
+    if activity != Some(&Activity::Engaging) || !suspicion.sees_shooter || grappling {
         timer.reset();
         return;
     }

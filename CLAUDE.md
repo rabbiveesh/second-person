@@ -65,6 +65,8 @@ Fyrox (small ecosystem), macroquad/three-d (too thin, would mean rolling our own
   Engaged means he runs to cover (`arena::find_cover`, no shooting while running), then fights from it: hide, then
   strafe out to a peek spot (random side, random length, sometimes a quick glance), then duck back.
   After 1-3 peeks, or when hit, he `Relocate`s to a *different* cover (`arena::find_cover_avoiding`).
+  Grappling hook (`combat::grapple`, `Grapple` on the target): while fighting and seeing you at 6-20m, he reels
+  you in (shooter `Stunned { pull_to }`), fires a point-blank burst, leaves you stunned, then `Relocate`s.
   Investigating a noise he can't see (cover in the way) makes him walk toward it until he can.
   `Suspicion.last_known` is where he last saw or heard you (no omniscience).
   Tasks only set intent (`LookGoal`, `MoveTo`, `Activity`). Systems `perceive` → `gaze` → `walk`

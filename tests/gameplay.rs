@@ -414,22 +414,28 @@ fn he_hears_footsteps_up_close_on_loud_floors() {
 
 #[test]
 fn his_laser_knocks_you_back() {
-    use second_person::shooter::Stagger;
+    use second_person::{combat::Grapple, shooter::{Stagger, Stunned}};
     let mut app = app();
     let shooter_pos = Vec3::new(0.0, 0.9, -8.0);
     stage(&mut app, shooter_pos, shooter_pos);
     let target = single::<Target>(&mut app);
     app.world_mut().get_mut::<Suspicion>(target).unwrap().bump(1.0);
     let shooter = single::<Shooter>(&mut app);
-    for _ in 0..(30.0 / DT) as usize {
+    app.world_mut().get_mut::<Shooter>(shooter).unwrap().hp = 1e6;
+    // Wait for a plain return-fire hit (not part of a grapple burst).
+    let mut seen = counted::<ShooterHit>(&app);
+    for _ in 0..(60.0 / DT) as usize {
         app.update();
-        if counted::<ShooterHit>(&app) > 0 {
-            break;
+        let hits = counted::<ShooterHit>(&app);
+        let w = app.world();
+        if hits > seen && w.get::<Grapple>(target).is_none() && w.get::<Stunned>(shooter).unwrap().left <= 0.0 {
+            let stagger = w.get::<Stagger>(shooter).unwrap();
+            assert!(stagger.left > 0.0 && stagger.push.length() > 1.0);
+            return;
         }
+        seen = hits;
     }
-    assert!(counted::<ShooterHit>(&app) > 0, "never fired");
-    let stagger = app.world().get::<Stagger>(shooter).unwrap();
-    assert!(stagger.left > 0.0 && stagger.push.length() > 1.0);
+    panic!("no plain return fire");
 }
 
 #[test]
@@ -449,6 +455,54 @@ fn suspicious_target_fires_warning_shots_that_miss() {
     assert!(counted::<WarningShot>(&app) >= 1, "no warning shot");
     assert_eq!(counted::<ShooterHit>(&app), 0);
     assert!(!app.world().get::<Suspicion>(target).unwrap().engaged);
+}
+
+#[test]
+fn grapple_pulls_you_in_hammers_stuns_and_he_runs() {
+    use second_person::{combat::Grapple, shooter::Stunned};
+    let mut app = app();
+    let shooter_pos = Vec3::new(0.0, 0.9, -12.0);
+    stage(&mut app, shooter_pos, shooter_pos);
+    let target = single::<Target>(&mut app);
+    let shooter = single::<Shooter>(&mut app);
+    app.world_mut().get_mut::<Shooter>(shooter).unwrap().hp = 1e6;
+    {
+        let mut s = app.world_mut().get_mut::<Suspicion>(target).unwrap();
+        s.bump(1.0);
+        s.last_known = Some(shooter_pos);
+    }
+    let dist = |app: &App| {
+        let w = app.world();
+        w.get::<Transform>(target).unwrap().translation.xz().distance(w.get::<Transform>(shooter).unwrap().translation.xz())
+    };
+    // Wait for the hook.
+    let mut hooked_at = None;
+    for _ in 0..(30.0 / DT) as usize {
+        app.update();
+        if app.world().get::<Grapple>(target).is_some() {
+            hooked_at = Some(dist(&app));
+            break;
+        }
+    }
+    let hooked_at = hooked_at.expect("never grappled");
+    let hits_before = counted::<ShooterHit>(&app);
+    let mut closest = hooked_at;
+    let mut stunned = false;
+    for _ in 0..(4.0 / DT) as usize {
+        app.update();
+        closest = closest.min(dist(&app));
+        stunned |= app.world().get::<Stunned>(shooter).unwrap().left > 0.5;
+        if app.world().get::<Grapple>(target).is_none() {
+            break;
+        }
+    }
+    assert!(app.world().get::<Grapple>(target).is_none(), "grapple never finished");
+    assert!(closest < 3.5, "not reeled in: {hooked_at} -> {closest}");
+    assert!(counted::<ShooterHit>(&app) >= hits_before + 3, "no burst");
+    assert!(stunned, "never stunned");
+    // Then he runs for it.
+    step(&mut app, 1.5);
+    assert!(dist(&app) > closest + 2.0, "didn't run: {}", dist(&app));
 }
 
 #[test]

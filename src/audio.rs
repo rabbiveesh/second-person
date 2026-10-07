@@ -15,7 +15,7 @@ use rand::Rng;
 
 use crate::{
     arena::{self, Floor, Floors},
-    combat::{BulletImpact, Gunshot, ShooterHit, TargetHit, WarningShot},
+    combat::{BulletImpact, GrappleFired, Gunshot, ShooterHit, TargetHit, WarningShot},
     round::{GameState, RoundEntity},
     shooter::{Bump, Footstep, Whistle},
     target::MainCamera,
@@ -70,6 +70,7 @@ pub struct Sfx {
     steps: HashMap<Floor, Vec<Sound>>,
     bump: Sound,
     whistle: Sound,
+    grapple: Sound,
 }
 
 /// A playing sound placed in the world. Its two instances are re-mixed every frame.
@@ -108,6 +109,7 @@ fn load(mut commands: Commands, assets: Res<AssetServer>) {
             .collect(),
         bump: Sound::load(&assets, "bump"),
         whistle: Sound::load(&assets, "whistle"),
+        grapple: Sound::load(&assets, "grapple"),
     });
 }
 
@@ -168,6 +170,7 @@ fn play_events(
     mut target_hits: MessageReader<TargetHit>,
     mut shooter_hits: MessageReader<ShooterHit>,
     mut warnings: MessageReader<WarningShot>,
+    mut grapples: MessageReader<GrappleFired>,
     floors: Res<Floors>,
     mut steps: MessageReader<Footstep>,
     mut bumps: MessageReader<Bump>,
@@ -203,6 +206,9 @@ fn play_events(
     }
     for h in target_hits.read() {
         play(&sfx.target_hit, h.at, 0.0, 10.0, 1.0, 1.0);
+    }
+    for g in grapples.read() {
+        play(&sfx.grapple, g.from, 0.0, 40.0, 1.0, 1.0);
     }
     for w in warnings.read() {
         play(&sfx.return_fire, w.from, -2.0, 30.0, 1.0, 1.0);

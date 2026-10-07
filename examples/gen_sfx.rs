@@ -32,6 +32,17 @@ fn main() {
             s
         }),
         ("return_fire", Sample::laser(Some(5))),
+        ("grapple", {
+            // A falling zip: the hook flying out on its line.
+            let mut s = Sample::new();
+            s.wave_type = WaveType::Square;
+            s.base_freq = 0.6;
+            s.freq_ramp = -0.35;
+            s.env_attack = 0.0;
+            s.env_sustain = 0.12;
+            s.env_decay = 0.2;
+            s
+        }),
     ];
 
     let mut bufs: Vec<(String, Vec<f32>)> = sounds
