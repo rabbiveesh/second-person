@@ -41,6 +41,7 @@ controlling the **shooter** hunting him. A corner radar shows the whole arena.
 | sfxr + hound (dev-deps) | procedural SFX generation |
 | bevy_brp_extras 0.22 | BRP + screenshots/key input for agents (`brp` feature) |
 | rand 0.9 | randomness |
+| virtual_joystick 2.8 | on-screen touch stick (bevy_ui) |
 | vleue_navigator 0.16 (`avian3d`) | navmesh pathfinding (polyanya), built from avian colliders, WASM-safe |
 
 Dev builds: `dev` feature = `bevy/dynamic_linking` + `inspector`; mold via `.cargo/config.toml`; deps at opt-level 3.
@@ -73,7 +74,11 @@ Fyrox (small ecosystem), macroquad/three-d (too thin, would mean rolling our own
 - `arena.rs` also has the pure geometry helpers `is_clear`, `los_blocked` (top-down; all cover is taller than eyes)
   and `find_cover`. They're unit-testable without an app.
 - `shooter.rs`: random start via `random_start` (clear of cover, ≥12m from the target).
-- `shooter.rs`: dynamic capsule, rotation locked, tank controls (arrows), relative to its own facing.
+- `shooter.rs`: dynamic capsule, rotation locked, tank controls relative to its own facing. One analog
+  `ShooterAction::Drive` dual axis (x turn, y throttle); arrows bind to it as a virtual d-pad.
+- `touch.rs`: phone controls, spawned on the first touch. A floating `virtual_joystick` stick (left half) and
+  tap-right-to-fire write the shooter's `ActionState` in leafwing's `ManualControl` set. The HUD swaps the
+  R/M/Tab hints for egui buttons once touch is on.
 - `combat.rs`: bullets (CCD, collision events), hearing (shots and near misses raise `Alert` +
   suspicion), target hitscan return fire while engaged, win/lose check.
 - `radar.rs`: ortho top-down camera in a bottom-right viewport (layers 0+1). `RadarMode` is the difficulty knob
