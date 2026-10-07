@@ -1,7 +1,7 @@
 //! Headless gameplay tests: the real `gameplay` plugins on `MinimalPlugins`, with a
 //! fixed 60 Hz clock so runs are deterministic(ish — the AI's scan uses rand).
 
-use std::time::Duration;
+use std::{f32::consts::TAU, time::Duration};
 
 use avian3d::prelude::*;
 use bevy::{
@@ -14,7 +14,7 @@ use second_person::{
     round::GameState,
     arena::{Floor, Floors},
     shooter::{Bump, SHOOTER_MAX_HP, Shooter},
-    target::{Activity, Alert, Suspicion, TARGET_MAX_HP, Target},
+    target::{Activity, Alert, Suspicion, TARGET_MAX_HP, Target, VIEW_RANGE},
 };
 
 const DT: f32 = 1.0 / 60.0;
@@ -120,6 +120,8 @@ fn round_starts_with_one_of_each() {
 #[test]
 fn firing_spawns_a_bullet_and_a_gunshot() {
     let mut app = app();
+    // Not the random start: that can put you nose-up against a crate, which eats the bullet.
+    stage(&mut app, Vec3::new(0.0, 0.9, -12.0), Vec3::NEG_Z);
     press(&mut app, KeyCode::Space);
     assert_eq!(counted::<Gunshot>(&app), 1);
     assert_eq!(app.world_mut().query::<&Bullet>().iter(app.world()).count(), 1);
@@ -213,10 +215,15 @@ fn engaged_target_eventually_kills_an_exposed_shooter_then_r_restarts() {
         if std::env::var("TRACE").is_ok() && i % 30 == 0 {
             let w = app.world();
             let s = w.get::<Suspicion>(target).unwrap();
+            let (hp, you) = w
+                .iter_entities()
+                .find_map(|e| Some((e.get::<Shooter>()?.hp, e.get::<Transform>()?.translation.xz())))
+                .unwrap();
             eprintln!(
-                "t={:.1} hp={} {:?} pos={:.1?} lvl={:.2} eng={} sees={} last={:?}",
+                "t={:.1} hp={} you={:.1?} {:?} pos={:.1?} lvl={:.2} eng={} sees={} last={:?}",
                 i as f32 * DT,
-                w.iter_entities().find_map(|e| e.get::<Shooter>().map(|s| s.hp)).unwrap_or(-1.0),
+                hp,
+                you,
                 w.get::<Activity>(target),
                 w.get::<Transform>(target).unwrap().translation.xz(),
                 s.level, s.engaged, s.sees_shooter, s.last_known.map(|p| p.xz())
@@ -250,6 +257,39 @@ fn cover_spots_hide_from_the_threat() {
         assert!(los_blocked(threat, cover.spot), "{cover:?} visible from {threat}");
         assert!(is_clear(cover.spot, 0.5));
     }
+}
+
+/// He never quite lands on his peek spot and you rarely stay exactly where he saw you, so a
+/// peek whose sightline grazes a corner sees nothing but crate and the fight stalls.
+#[test]
+fn peeks_see_the_threat_with_some_slack() {
+    use second_person::arena::{find_cover, is_clear, los_blocked};
+    let ring: Vec<Vec2> = (0..8).map(|i| Vec2::from_angle(i as f32 * TAU / 8.0) * 0.45).chain([Vec2::ZERO]).collect();
+    let mut checked = 0;
+    for x in (-26..=26).step_by(4) {
+        for z in (-26..=26).step_by(4) {
+            let threat = Vec2::new(x as f32, z as f32);
+            if !is_clear(threat, 1.0) {
+                continue;
+            }
+            for from in [Vec2::ZERO, Vec2::new(15.0, -15.0), Vec2::new(-15.0, 15.0)] {
+                let Some(cover) = find_cover(from, threat) else { continue };
+                for peek in [cover.peek, cover.alt_peek] {
+                    assert!(peek.distance(threat) < VIEW_RANGE - 1.0, "{cover:?}: peek out of eyesight of {threat}");
+                    for (&him, &you) in ring.iter().flat_map(|a| ring.iter().map(move |b| (a, b))) {
+                        assert!(
+                            !los_blocked(peek + him, threat + you),
+                            "{cover:?}: peek {} can't see {}",
+                            peek + him,
+                            threat + you
+                        );
+                    }
+                    checked += 1;
+                }
+            }
+        }
+    }
+    assert!(checked > 100, "only {checked} peeks checked");
 }
 
 #[test]
@@ -730,3 +770,4 @@ fn magnetised_fire_down_the_line_misses_most_shots_on_a_cover_run() {
     assert!(shots >= 8, "too few shots: {shots}");
     assert!(hits * 2 < shots, "{hits} of {shots} shots hit");
 }
+
