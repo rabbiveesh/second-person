@@ -83,9 +83,10 @@ Fyrox (small ecosystem), macroquad/three-d (too thin, would mean rolling our own
 - `shooter.rs`: dynamic capsule, rotation locked, tank controls relative to its own facing. One analog
   `ShooterAction::Drive` dual axis (x turn, y throttle); arrows bind to it as a virtual d-pad.
   Walking into the world emits `Bump` and a `Stagger` knockback (can't walk, only turn); his laser staggers you too.
-- `touch.rs`: phone controls, spawned on the first touch. A floating `virtual_joystick` stick (left half) and
-  tap-right-to-fire write the shooter's `ActionState` in leafwing's `ManualControl` set. The HUD swaps the
-  R/M/Tab hints for egui buttons once touch is on.
+- `touch.rs`: phone controls, spawned on the first touch. A floating `virtual_joystick` stick (left half,
+  snapped to 8 arrow-key directions by `snap_8way`) and tap-right-to-fire write the shooter's `ActionState` in
+  leafwing's `ManualControl` set. The HUD swaps the R/M/Tab hints for egui buttons once touch is on, plus a big
+  whistle button above the radar (`TouchWhistle` keeps its rect so taps on it don't fire).
 - `arena.rs` floor zones: the `Floors` resource (base `Floor` + rect `FloorZone`s, later ones win; `Floors::at`).
   Classic = wood plaza, gravel, metal, grass. Each floor has its own
   footstep sounds and a `hearing_range`; `combat::hear_movement` turns nearby steps, bumps and whistles

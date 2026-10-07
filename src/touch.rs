@@ -1,5 +1,5 @@
 //! Touch controls for phones and tablets: a floating stick on the left half drives the
-//! shooter (tank controls, snapped to the four arrow directions), and a tap anywhere on the
+//! shooter (tank controls, snapped to the 8 arrow-key directions), and a tap anywhere on the
 //! right half fires.
 //!
 //! Nothing spawns until the first touch, so mouse-and-keyboard players never see it. Touch
@@ -8,7 +8,7 @@
 
 use bevy::{
     asset::RenderAssetUsages,
-    input::touch::TouchInput,
+    input::touch::{Touch, TouchInput},
     prelude::*,
     render::render_resource::{Extent3d, TextureDimension, TextureFormat},
     window::PrimaryWindow,
@@ -25,9 +25,14 @@ use crate::shooter::{Shooter, ShooterAction};
 #[derive(Resource, Default)]
 pub struct TouchControls(pub bool);
 
-/// Set by the HUD's whistle button; pressed into the shooter's actions on the next frame.
+/// The HUD's whistle button: `pressed` is set when it's clicked and pressed into the shooter's
+/// actions on the next frame. `button` is where it was last drawn (logical px), so a tap on it
+/// doesn't also fire. (`EguiWantsInput` lags a frame, too late for a touch's first frame.)
 #[derive(Resource, Default)]
-pub struct TouchWhistle(pub bool);
+pub struct TouchWhistle {
+    pub pressed: bool,
+    pub button: Rect,
+}
 
 const STICK_SIZE: f32 = 150.0;
 const KNOB_SIZE: f32 = 70.0;
@@ -93,29 +98,35 @@ fn touch_to_actions(
         return;
     };
     if let Some(stick) = sticks.iter().find(|s| s.pointer_state.is_some()) {
-        actions.set_axis_pair(&ShooterAction::Drive, snap_4way(stick.delta));
+        actions.set_axis_pair(&ShooterAction::Drive, snap_8way(stick.delta));
     }
     // One shot per tap, like Space: press only on the touch's first frame and let the
     // keyboard pass release it on the next.
-    let half = window.width() / 2.0;
-    if !egui.wants_pointer_input() && touches.iter_just_pressed().any(|t| t.position().x > half) {
+    let fires = |t: &Touch| tap_fires(t.position(), window.width(), whistle.button);
+    if !egui.wants_pointer_input() && touches.iter_just_pressed().any(fires) {
         actions.press(&ShooterAction::Fire);
     }
-    if std::mem::take(&mut whistle.0) {
+    if std::mem::take(&mut whistle.pressed) {
         actions.press(&ShooterAction::Whistle);
     }
 }
 
-/// Tank controls are hard enough already, so the stick acts like the arrow keys: whichever
-/// axis it's pushed further along wins, at full strength (drive *or* turn, never both).
-pub fn snap_4way(delta: Vec2) -> Vec2 {
+/// A new touch fires if it lands on the right half of the screen, but not on the whistle button.
+pub fn tap_fires(at: Vec2, window_width: f32, whistle_button: Rect) -> bool {
+    at.x > window_width / 2.0 && !whistle_button.contains(at)
+}
+
+/// Tank controls are hard enough already, so the stick acts like the arrow keys: 8 directions at
+/// full strength, so a diagonal is exactly two arrows held (forward while turning). The straight
+/// directions get 60° each and the diagonals 30°, so a sloppy "up" still drives dead straight.
+pub fn snap_8way(delta: Vec2) -> Vec2 {
     if delta.length() < DEAD_ZONE {
-        Vec2::ZERO
-    } else if delta.x.abs() > delta.y.abs() {
-        Vec2::new(delta.x.signum(), 0.0)
-    } else {
-        Vec2::new(0.0, delta.y.signum())
+        return Vec2::ZERO;
     }
+    // An axis counts once the stick is within 60° of it (cos 60° = 0.5).
+    let held = |v: f32| if v.abs() > 0.5 { v.signum() } else { 0.0 };
+    let n = delta.normalize();
+    Vec2::new(held(n.x), held(n.y))
 }
 
 /// An anti-aliased white disc (or ring, if `hole` > 0) tinted per use by `ImageNode::color`.

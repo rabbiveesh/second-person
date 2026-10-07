@@ -128,9 +128,6 @@ fn draw_hud(
                 if touch.0 {
                     ui.add_space(6.0);
                     ui.horizontal(|ui| {
-                        if ui.button("whistle").clicked() {
-                            whistle.0 = true;
-                        }
                         if ui.button(format!("radar: {:?}", *radar_mode)).clicked() {
                             *radar_mode = radar_mode.next();
                         }
@@ -141,6 +138,31 @@ fn draw_hud(
                 }
             });
         });
+
+    // Whistle for thumbs: a big round button on the right, just above the radar. Taps on it
+    // don't fire (see `touch::TouchWhistle`).
+    if touch.0 {
+        let above_radar = if radar.0.height() > 0.0 { ctx.content_rect().height() - radar.0.min.y } else { 0.0 };
+        let response = egui::Area::new("whistle".into())
+            .anchor(egui::Align2::RIGHT_BOTTOM, [-24.0, -above_radar - 16.0])
+            .show(ctx, |ui| {
+                ui.add(
+                    egui::Button::new(egui::RichText::new("whistle").size(18.0))
+                        .min_size(egui::vec2(84.0, 84.0))
+                        .corner_radius(42.0)
+                        .fill(egui::Color32::from_black_alpha(150))
+                        .stroke(egui::Stroke::new(2.0, egui::Color32::from_rgb(80, 220, 120))),
+                )
+            })
+            .inner;
+        if response.clicked() {
+            whistle.pressed = true;
+        }
+        let r = response.rect;
+        whistle.button = Rect::new(r.min.x, r.min.y, r.max.x, r.max.y);
+    } else {
+        whistle.button = Rect::default();
+    }
 
     egui::Area::new("help".into())
         .anchor(egui::Align2::LEFT_BOTTOM, [16.0, -16.0])

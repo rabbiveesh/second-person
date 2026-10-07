@@ -540,10 +540,20 @@ fn whistling_is_heard_from_far_off() {
 }
 
 #[test]
-fn touch_stick_snaps_to_the_four_arrows() {
-    use second_person::touch::snap_4way;
-    assert_eq!(snap_4way(Vec2::new(0.1, 0.1)), Vec2::ZERO, "dead zone");
-    assert_eq!(snap_4way(Vec2::new(0.4, 0.8)), Vec2::Y, "mostly up = full forward, no turn");
-    assert_eq!(snap_4way(Vec2::new(-0.9, 0.5)), Vec2::NEG_X, "mostly left = turn only");
-    assert_eq!(snap_4way(Vec2::new(0.2, -0.6)), Vec2::NEG_Y);
+fn touch_stick_snaps_to_arrow_key_directions() {
+    use second_person::touch::snap_8way;
+    assert_eq!(snap_8way(Vec2::new(0.1, 0.1)), Vec2::ZERO, "dead zone");
+    assert_eq!(snap_8way(Vec2::new(0.7, 0.7)), Vec2::ONE, "diagonal = up and right held");
+    assert_eq!(snap_8way(Vec2::new(0.4, 0.9)), Vec2::Y, "mostly up = full forward, no turn");
+    assert_eq!(snap_8way(Vec2::new(-0.9, 0.2)), Vec2::NEG_X, "mostly left = turn only");
+    assert_eq!(snap_8way(Vec2::new(-0.5, -0.6)), Vec2::NEG_ONE);
+}
+
+#[test]
+fn tapping_the_whistle_button_does_not_fire() {
+    use second_person::touch::tap_fires;
+    let button = Rect::new(800.0, 300.0, 884.0, 384.0);
+    assert!(tap_fires(Vec2::new(700.0, 200.0), 1000.0, button), "right half fires");
+    assert!(!tap_fires(Vec2::new(300.0, 200.0), 1000.0, button), "left half is the stick");
+    assert!(!tap_fires(Vec2::new(840.0, 340.0), 1000.0, button), "whistle button");
 }
