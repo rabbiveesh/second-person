@@ -557,6 +557,9 @@ struct LocalBullet {
 struct Eyes;
 
 #[derive(Component)]
+struct Radar;
+
+#[derive(Component)]
 struct Flash(f32);
 
 #[derive(Resource, Default)]
@@ -761,6 +764,7 @@ fn setup_view(mut commands: Commands) {
     ));
     // Radar (Full mode, spike shortcut): top-down ortho in the corner.
     commands.spawn((
+        Radar,
         Camera3d::default(),
         Camera {
             order: 1,
@@ -847,15 +851,22 @@ fn sync_transforms(
 fn eyes_follow_opponent(
     mut commands: Commands,
     them: Query<(&Pose, Option<&Eyelids>), (With<Interpolated>, With<PlayerId>)>,
-    eyes: Single<(Entity, &mut Transform, &mut Camera), With<Eyes>>,
+    eyes: Single<(Entity, &mut Transform, &mut Camera), (With<Eyes>, Without<Radar>)>,
+    radar: Single<(Entity, &mut Camera), With<Radar>>,
 ) {
     let (cam_entity, mut eyes, mut camera) = eyes.into_inner();
+    let (radar_entity, mut radar_cam) = radar.into_inner();
     if let Ok((p, lids)) = them.single() {
         // They closed their eyes: you're blind. Render nothing, on black.
         let shut = lids.is_some_and(|l| l.closed);
         let layers = if shut { RenderLayers::layer(7) } else { RenderLayers::layer(0) };
         commands.entity(cam_entity).insert(layers);
         camera.clear_color = if shut { ClearColorConfig::Custom(Color::BLACK) } else { ClearColorConfig::Default };
+        // Blind means blind: the radar goes dark too.
+        let radar_layers = if shut { RenderLayers::layer(7) } else { RenderLayers::from_layers(&[0, 1]) };
+        commands.entity(radar_entity).insert(radar_layers);
+        radar_cam.clear_color =
+            ClearColorConfig::Custom(if shut { Color::BLACK } else { Color::srgb(0.02, 0.07, 0.04) });
         eyes.translation = Vec3::new(p.pos.x, EYE_HEIGHT, p.pos.y) + dir(p.yaw).extend(0.0).xzy() * 0.36;
         eyes.rotation = Quat::from_rotation_y(p.yaw);
     }
