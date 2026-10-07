@@ -330,3 +330,25 @@ fn at_most_one_directional_light_with_presentation() {
     let n = app.world_mut().query::<&DirectionalLight>().iter(app.world()).count();
     assert_eq!(n, 1, "WebGL2 supports one directional light");
 }
+
+#[test]
+fn arrow_keys_drive_the_shooter_like_a_tank() {
+    let mut app = app();
+    let shooter = single::<Shooter>(&mut app);
+    let start = Vec3::new(0.0, 0.9, 15.0);
+    place(&mut app, shooter, start, 0.0); // facing -Z, towards the origin
+    app.update();
+
+    KeyCode::ArrowUp.press(app.world_mut());
+    step(&mut app, 0.5);
+    KeyCode::ArrowUp.release(app.world_mut());
+    let pos = app.world().get::<Transform>(shooter).unwrap().translation;
+    assert!(pos.z < start.z - 1.0, "Up drives forward: {pos}");
+    assert!((pos.x - start.x).abs() < 0.1, "and straight: {pos}");
+
+    KeyCode::ArrowLeft.press(app.world_mut());
+    step(&mut app, 0.5);
+    KeyCode::ArrowLeft.release(app.world_mut());
+    let (yaw, _, _) = app.world().get::<Transform>(shooter).unwrap().rotation.to_euler(EulerRot::YXZ);
+    assert!(yaw > 0.5, "Left turns counter-clockwise (left): yaw {yaw}");
+}

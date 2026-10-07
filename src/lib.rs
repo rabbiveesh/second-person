@@ -14,6 +14,7 @@ pub mod radar;
 pub mod round;
 pub mod shooter;
 pub mod target;
+pub mod touch;
 
 use avian3d::prelude::*;
 use bevy::prelude::*;
@@ -46,5 +47,5 @@ pub fn gameplay(app: &mut App) {
 
 /// Everything that only matters when there's a screen and speakers.
 pub fn presentation(app: &mut App) {
-    app.add_plugins((fx::plugin, audio::plugin, radar::plugin, hud::plugin));
+    app.add_plugins((fx::plugin, audio::plugin, radar::plugin, hud::plugin, touch::plugin));
 }

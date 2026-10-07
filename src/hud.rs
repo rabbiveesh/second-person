@@ -9,6 +9,7 @@ use crate::{
     round::{GameState, TargetMobile},
     shooter::{SHOOTER_MAX_HP, Shooter},
     target::{Activity, Suspicion, TARGET_MAX_HP, Target},
+    touch::TouchControls,
 };
 
 /// Screen flashes: red when you're hit, white when the target is hit.
@@ -35,6 +36,8 @@ fn spawn_hud_camera(mut commands: Commands) {
             ..default()
         },
         PrimaryEguiContext,
+        // bevy_ui (the touch stick) draws here too, above every game viewport.
+        IsDefaultUiCamera,
     ));
 }
 
@@ -59,8 +62,10 @@ fn track_flashes(
 fn draw_hud(
     mut contexts: EguiContexts,
     state: Res<State<GameState>>,
-    mobile: Res<TargetMobile>,
-    radar_mode: Res<RadarMode>,
+    mut mobile: ResMut<TargetMobile>,
+    mut radar_mode: ResMut<RadarMode>,
+    mut next: ResMut<NextState<GameState>>,
+    touch: Res<TouchControls>,
     flashes: Res<Flashes>,
     radar: Res<RadarRect>,
     shooter: Option<Single<&Shooter>>,
@@ -112,12 +117,28 @@ fn draw_hud(
                         if suspicion.sees_shooter { " · sees you" } else { "" }
                     ));
                 }
+                // No keyboard on a phone: the meta keys become buttons. They sit on the left
+                // half, where a tap only wakes the drive stick, never fires.
+                if touch.0 {
+                    ui.add_space(6.0);
+                    ui.horizontal(|ui| {
+                        if ui.button(format!("radar: {:?}", *radar_mode)).clicked() {
+                            *radar_mode = radar_mode.next();
+                        }
+                        if ui.button(format!("he walks: {}", if mobile.0 { "on" } else { "off" })).clicked() {
+                            mobile.0 = !mobile.0;
+                        }
+                    });
+                }
             });
         });
 
     egui::Area::new("help".into())
         .anchor(egui::Align2::LEFT_BOTTOM, [16.0, -16.0])
         .show(ctx, |ui| {
+            if touch.0 {
+                return;
+            }
             ui.label(
                 egui::RichText::new(format!(
                     "Up/Down move   Left/Right turn   Space fire   M target walks: {}   Tab radar: {:?}   F1 inspector",
@@ -171,7 +192,13 @@ fn draw_hud(
                 egui::Frame::popup(ui.style()).show(ui, |ui| {
                     ui.vertical_centered(|ui| {
                         ui.label(egui::RichText::new(text).size(36.0).color(colour).strong());
-                        ui.label(egui::RichText::new("press R to go again").size(18.0));
+                        if touch.0 {
+                            if ui.button(egui::RichText::new("go again").size(22.0)).clicked() {
+                                next.set(GameState::Playing);
+                            }
+                        } else {
+                            ui.label(egui::RichText::new("press R to go again").size(18.0));
+                        }
                     });
                 });
             });
