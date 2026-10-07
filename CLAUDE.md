@@ -87,6 +87,9 @@ Fyrox (small ecosystem), macroquad/three-d (too thin, would mean rolling our own
   snapped to 8 arrow-key directions by `snap_8way`) and tap-right-to-fire write the shooter's `ActionState` in
   leafwing's `ManualControl` set. The HUD swaps the R/M/Tab hints for egui buttons once touch is on, plus a big
   whistle button above the radar (`TouchWhistle` keeps its rect so taps on it don't fire).
+- `start.rs` (presentation): "tap to play" overlay. `Time<Virtual>` is paused and the shooter's actions disabled
+  until the first touch/key/click (`Started`). Then `TouchControls` follows the last input (touch on, key/click
+  off), and the stick spawns/despawns with it. `scripts/headless-run` starts on this overlay: send any key over BRP.
 - `arena.rs` floor zones: the `Floors` resource (base `Floor` + rect `FloorZone`s, later ones win; `Floors::at`).
   Classic = wood plaza, gravel, metal, grass. Each floor has its own
   footstep sounds and a `hearing_range`; `combat::hear_movement` turns nearby steps, bumps and whistles

@@ -2,13 +2,13 @@
 //! shooter (tank controls, snapped to the 8 arrow-key directions), and a tap anywhere on the
 //! right half fires.
 //!
-//! Nothing spawns until the first touch, so mouse-and-keyboard players never see it. Touch
+//! Nothing spawns until a touch, so mouse-and-keyboard players never see it. Touch
 //! writes into the same leafwing `ActionState` the keyboard does, so gameplay can't tell the
 //! two apart.
 
 use bevy::{
     asset::RenderAssetUsages,
-    input::touch::{Touch, TouchInput},
+    input::touch::Touch,
     prelude::*,
     render::render_resource::{Extent3d, TextureDimension, TextureFormat},
     window::PrimaryWindow,
@@ -16,13 +16,15 @@ use bevy::{
 use bevy_egui::input::EguiWantsInput;
 use leafwing_input_manager::{plugin::InputManagerSystem, prelude::*};
 use virtual_joystick::{
-    JoystickFloating, JoystickInvisible, NoAction, VirtualJoystickPlugin, VirtualJoystickState, create_joystick,
+    JoystickFloating, JoystickInvisible, NoAction, VirtualJoystickNode, VirtualJoystickPlugin, VirtualJoystickState,
+    create_joystick,
 };
 
 use crate::shooter::{Shooter, ShooterAction};
 
-/// Set once the player first touches the screen; the HUD switches to touch buttons.
-#[derive(Resource, Default)]
+/// On while the last input was a touch (see `start::follow_last_input`): the stick is up and the
+/// HUD shows touch buttons instead of key hints.
+#[derive(Resource, Default, PartialEq)]
 pub struct TouchControls(pub bool);
 
 /// The HUD's whistle button: `pressed` is set when it's clicked and pressed into the shooter's
@@ -43,20 +45,29 @@ pub fn plugin(app: &mut App) {
     app.add_plugins(VirtualJoystickPlugin::<String>::default())
         .init_resource::<TouchControls>()
         .init_resource::<TouchWhistle>()
-        .add_systems(Update, enable_on_first_touch)
+        .add_systems(Update, sync_stick)
         .add_systems(PreUpdate, touch_to_actions.in_set(InputManagerSystem::ManualControl));
 }
 
-fn enable_on_first_touch(
-    mut touches: MessageReader<TouchInput>,
-    mut enabled: ResMut<TouchControls>,
+/// The stick exists only while touch controls are on.
+fn sync_stick(
+    touch: Res<TouchControls>,
+    sticks: Query<Entity, With<VirtualJoystickNode<String>>>,
     mut commands: Commands,
     mut images: ResMut<Assets<Image>>,
 ) {
-    if enabled.0 || touches.read().next().is_none() {
+    if !touch.is_changed() {
         return;
     }
-    enabled.0 = true;
+    if !touch.0 {
+        for stick in &sticks {
+            commands.entity(stick).despawn();
+        }
+        return;
+    }
+    if !sticks.is_empty() {
+        return;
+    }
     create_joystick(
         &mut commands,
         "drive".to_string(),

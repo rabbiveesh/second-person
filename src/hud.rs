@@ -8,6 +8,7 @@ use crate::{
     radar::{RadarMode, RadarRect},
     round::{GameState, TargetMobile},
     shooter::{SHOOTER_MAX_HP, Shooter, Stunned},
+    start::Started,
     target::{Activity, Suspicion, TARGET_MAX_HP, Target},
     touch::{TouchControls, TouchWhistle},
 };
@@ -66,6 +67,7 @@ fn draw_hud(
     mut radar_mode: ResMut<RadarMode>,
     mut next: ResMut<NextState<GameState>>,
     touch: Res<TouchControls>,
+    started: Res<Started>,
     mut whistle: ResMut<TouchWhistle>,
     flashes: Res<Flashes>,
     radar: Res<RadarRect>,
@@ -231,6 +233,25 @@ fn draw_hud(
                             ui.label(egui::RichText::new("press R to go again").size(18.0));
                         }
                     });
+                });
+            });
+    }
+    if !started.0 {
+        let painter = ctx.layer_painter(egui::LayerId::new(egui::Order::Middle, "start dim".into()));
+        painter.rect_filled(screen, 0.0, egui::Color32::from_black_alpha(170));
+        egui::Area::new("start".into())
+            .order(egui::Order::Foreground)
+            .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
+            .show(ctx, |ui| {
+                ui.vertical_centered(|ui| {
+                    ui.label(egui::RichText::new("SECOND PERSON SHOOTER").size(28.0).color(egui::Color32::WHITE).strong());
+                    ui.label("You see through his eyes. Hunt him down.");
+                    ui.add_space(18.0);
+                    ui.label(egui::RichText::new("tap to play").size(36.0).color(egui::Color32::from_rgb(90, 230, 110)).strong());
+                    ui.label(egui::RichText::new("or press any key").size(18.0).color(egui::Color32::WHITE));
+                    ui.add_space(18.0);
+                    ui.label("touch: left thumb drives · tap right to fire · whistle button");
+                    ui.label("keys: arrows drive · Space fires · W whistles");
                 });
             });
     }

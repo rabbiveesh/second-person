@@ -20,6 +20,11 @@ use second_person::{
 const DT: f32 = 1.0 / 60.0;
 
 fn app() -> App {
+    app_with(|_| {})
+}
+
+/// `app()` plus extra plugins, which must go in before `finish`.
+fn app_with(extra: impl FnOnce(&mut App)) -> App {
     let mut app = App::new();
     app.add_plugins((
         MinimalPlugins,
@@ -32,6 +37,7 @@ fn app() -> App {
     .init_asset::<StandardMaterial>()
     .insert_resource(TimeUpdateStrategy::ManualDuration(Duration::from_secs_f32(DT)))
     .add_plugins(second_person::gameplay);
+    extra(&mut app);
     count::<Gunshot>(&mut app);
     count::<TargetHit>(&mut app);
     count::<ShooterHit>(&mut app);
@@ -556,4 +562,46 @@ fn tapping_the_whistle_button_does_not_fire() {
     assert!(tap_fires(Vec2::new(700.0, 200.0), 1000.0, button), "right half fires");
     assert!(!tap_fires(Vec2::new(300.0, 200.0), 1000.0, button), "left half is the stick");
     assert!(!tap_fires(Vec2::new(840.0, 340.0), 1000.0, button), "whistle button");
+}
+
+#[test]
+fn start_screen_holds_the_game_until_a_press_then_controls_follow_the_last_input() {
+    use bevy::input::touch::{TouchInput, TouchPhase};
+    use leafwing_input_manager::prelude::ActionState;
+    use second_person::{shooter::ShooterAction, start::{self, Started}, touch::TouchControls};
+    let mut app = app_with(|app| {
+        app.add_plugins(start::plugin);
+    });
+    step(&mut app, 0.5);
+    assert!(!app.world().resource::<Started>().0);
+    assert!(app.world().resource::<Time<Virtual>>().is_paused(), "frozen behind the overlay");
+
+    // The key that dismisses the overlay doesn't fire.
+    KeyCode::Space.press(app.world_mut());
+    step(&mut app, 0.1);
+    KeyCode::Space.release(app.world_mut());
+    step(&mut app, 0.1);
+    assert!(app.world().resource::<Started>().0);
+    assert!(!app.world().resource::<Time<Virtual>>().is_paused());
+    assert_eq!(counted::<Gunshot>(&app), 0, "dismissing press fired");
+    assert!(!app.world().resource::<TouchControls>().0, "a key means keyboard");
+
+    // Now Space fires as usual.
+    press(&mut app, KeyCode::Space);
+    assert_eq!(counted::<Gunshot>(&app), 1);
+    let shooter = single::<Shooter>(&mut app);
+    assert!(!app.world().get::<ActionState<ShooterAction>>(shooter).unwrap().disabled());
+
+    // A touch switches to touch controls, a key back to keyboard.
+    app.world_mut().write_message(TouchInput {
+        phase: TouchPhase::Started,
+        position: Vec2::new(10.0, 10.0),
+        window: Entity::PLACEHOLDER,
+        force: None,
+        id: 1,
+    });
+    app.update();
+    assert!(app.world().resource::<TouchControls>().0);
+    press(&mut app, KeyCode::ArrowUp);
+    assert!(!app.world().resource::<TouchControls>().0);
 }
