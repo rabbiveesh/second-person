@@ -50,6 +50,7 @@ fn main() {
         }
     }
     bufs.push(("bump".into(), bump()));
+    bufs.push(("whistle".into(), whistle()));
 
     for (name, mut buf) in bufs {
         // Trim trailing silence and normalise.
@@ -156,6 +157,28 @@ fn bump() -> Vec<f32> {
             phase += std::f32::consts::TAU * (90.0 * (-t / 0.04).exp() + 50.0) * dt;
             let a = (t / 0.002).min(1.0);
             phase.sin() * a * (-t / 0.09).exp() + body[n] * a * (-t / 0.03).exp() * 4.0
+        })
+        .collect()
+}
+
+/// A two-note "wheet-whoo" whistle. Bright (2-3 kHz) with a little breath, which is the
+/// range ears place best, so you can tell where you are from it.
+fn whistle() -> Vec<f32> {
+    let mut rng = StdRng::seed_from_u64(7);
+    let len = (RATE as f32 * 0.55) as usize;
+    let dt = 1.0 / RATE as f32;
+    let breath = highpass(&(0..len).map(|_| rng.random_range(-1.0f32..1.0)).collect::<Vec<_>>(), 1500.0);
+    let mut phase = 0.0f32;
+    (0..len)
+        .map(|n| {
+            let t = n as f32 * dt;
+            // Rise to the first note, then drop to the second.
+            let f = if t < 0.25 { 1800.0 + 900.0 * (t / 0.08).min(1.0) } else { 2100.0 - 300.0 * ((t - 0.25) / 0.1).min(1.0) };
+            let vibrato = 1.0 + 0.01 * (std::f32::consts::TAU * 6.0 * t).sin();
+            phase += std::f32::consts::TAU * f * vibrato * dt;
+            let gap = if (0.22..0.28).contains(&t) { 0.3 } else { 1.0 };
+            let env = (t / 0.02).min(1.0) * ((0.55 - t) / 0.08).clamp(0.0, 1.0) * gap;
+            (phase.sin() + breath[n] * 0.08) * env
         })
         .collect()
 }

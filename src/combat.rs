@@ -9,7 +9,7 @@ use crate::{
     Layer,
     arena,
     round::{GameState, RoundEntity},
-    shooter::{Bump, Footstep, Shooter, ShooterAction, Stagger},
+    shooter::{Bump, Footstep, Whistle, Shooter, ShooterAction, Stagger},
     target::{Activity, Alert, MainCamera, Suspicion, Target},
 };
 
@@ -26,6 +26,9 @@ const RETURN_FIRE_KNOCKBACK: f32 = 5.0;
 const FOOTSTEP_SUSPICION: f32 = 0.15;
 const BUMP_HEARING_RANGE: f32 = 14.0;
 const BUMP_SUSPICION: f32 = 0.2;
+/// The whistle is your "where am I?" button, and the price is that he hears it from far off.
+const WHISTLE_HEARING_RANGE: f32 = 28.0;
+const WHISTLE_SUSPICION: f32 = 0.4;
 /// Suspicious but not yet engaged: he fires warning shots that land this far off where he
 /// thinks you are, every so often.
 const WARNING_SUSPICION: f32 = 0.35;
@@ -202,13 +205,15 @@ fn bullet_hits(
     }
 }
 
-/// He hears your footsteps when you're close (farther on loud floors) and walking into walls.
+/// He hears your footsteps when you're close (farther on loud floors), walking into walls,
+/// and whistling (from far off).
 /// Each sound nudges suspicion and tells him where you are, so creeping up is a risk.
 fn hear_movement(
     mut commands: Commands,
     floors: Res<arena::Floors>,
     mut steps: MessageReader<Footstep>,
     mut bumps: MessageReader<Bump>,
+    mut whistles: MessageReader<Whistle>,
     target: Single<(Entity, &Transform, &mut Suspicion), With<Target>>,
 ) {
     let (target_e, target_t, mut suspicion) = target.into_inner();
@@ -216,7 +221,8 @@ fn hear_movement(
     let heard = steps
         .read()
         .map(|s| (s.at, floors.at(s.at.xz()).hearing_range(), FOOTSTEP_SUSPICION))
-        .chain(bumps.read().map(|b| (b.at, BUMP_HEARING_RANGE, BUMP_SUSPICION)));
+        .chain(bumps.read().map(|b| (b.at, BUMP_HEARING_RANGE, BUMP_SUSPICION)))
+        .chain(whistles.read().map(|w| (w.at, WHISTLE_HEARING_RANGE, WHISTLE_SUSPICION)));
     for (at, range, amount) in heard {
         let closeness = 1.0 - ear.distance(at) / range;
         if closeness <= 0.0 {

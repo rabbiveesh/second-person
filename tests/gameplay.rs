@@ -450,3 +450,15 @@ fn suspicious_target_fires_warning_shots_that_miss() {
     assert_eq!(counted::<ShooterHit>(&app), 0);
     assert!(!app.world().get::<Suspicion>(target).unwrap().engaged);
 }
+
+#[test]
+fn whistling_is_heard_from_far_off() {
+    let mut app = app();
+    // 20m behind him: far beyond footstep range, within whistle range.
+    stage(&mut app, Vec3::new(0.0, 0.9, 20.0), Vec3::new(0.0, 0.9, -10.0));
+    let target = single::<Target>(&mut app);
+    press(&mut app, KeyCode::KeyC);
+    let s = app.world().get::<Suspicion>(target).unwrap();
+    assert!(s.level > 0.0, "didn't hear it");
+    assert!(app.world().get::<Alert>(target).is_some());
+}

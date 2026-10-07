@@ -28,6 +28,7 @@ pub enum ShooterAction {
     TurnLeft,
     TurnRight,
     Fire,
+    Whistle,
 }
 
 #[derive(Component, Reflect)]
@@ -47,6 +48,14 @@ pub struct Footstep {
 pub struct Bump {
     pub at: Vec3,
 }
+
+/// You whistled: a loud, far-carrying sound so you can find yourself by ear. He can hear it too.
+#[derive(Message, Clone, Copy)]
+pub struct Whistle {
+    pub at: Vec3,
+}
+
+const WHISTLE_COOLDOWN: f32 = 2.0;
 
 /// While > 0, the shooter is being knocked back by `push` and can't walk (only turn).
 #[derive(Component, Reflect, Default)]
@@ -72,8 +81,9 @@ pub fn plugin(app: &mut App) {
     app.add_plugins(InputManagerPlugin::<ShooterAction>::default())
         .add_message::<Footstep>()
         .add_message::<Bump>()
+        .add_message::<Whistle>()
         .add_systems(OnEnter(GameState::Playing), spawn_shooter.in_set(SpawnRound))
-        .add_systems(Update, (drive, bump).chain().run_if(in_state(GameState::Playing)));
+        .add_systems(Update, ((drive, bump).chain(), whistle).run_if(in_state(GameState::Playing)));
 }
 
 fn spawn_shooter(
@@ -98,6 +108,7 @@ fn spawn_shooter(
             (ShooterAction::TurnLeft, KeyCode::ArrowLeft),
             (ShooterAction::TurnRight, KeyCode::ArrowRight),
             (ShooterAction::Fire, KeyCode::Space),
+            (ShooterAction::Whistle, KeyCode::KeyC),
         ]),
         RigidBody::Dynamic,
         Collider::capsule(RADIUS, 1.0),
@@ -221,5 +232,20 @@ fn bump(
         bumps.write(Bump { at: t.translation + dir * hit.distance });
         *stagger = Stagger::knock(normal * KNOCKBACK_SPEED);
         vel.0 = Vec3::new(stagger.push.x, vel.0.y, stagger.push.z);
+    }
+}
+
+fn whistle(
+    time: Res<Time>,
+    mut cooldown: Local<f32>,
+    mut whistles: MessageWriter<Whistle>,
+    q: Query<(&ActionState<ShooterAction>, &Transform), With<Shooter>>,
+) {
+    *cooldown -= time.delta_secs();
+    for (actions, t) in &q {
+        if actions.just_pressed(&ShooterAction::Whistle) && *cooldown <= 0.0 {
+            *cooldown = WHISTLE_COOLDOWN;
+            whistles.write(Whistle { at: t.translation });
+        }
     }
 }

@@ -17,7 +17,7 @@ use crate::{
     arena::{self, Floor, Floors},
     combat::{BulletImpact, Gunshot, ShooterHit, TargetHit, WarningShot},
     round::{GameState, RoundEntity},
-    shooter::{Bump, Footstep},
+    shooter::{Bump, Footstep, Whistle},
     target::MainCamera,
 };
 
@@ -43,6 +43,8 @@ const FOOTSTEP_PITCH_JITTER: f64 = 0.06;
 const STEP_VARIANTS: usize = 3;
 /// Walking into a wall. Carries like footsteps, since it's also about where *you* are.
 const BUMP_DB: f32 = -2.0;
+/// Your "where am I?" whistle: loud and bright (easy to place), carries like footsteps.
+const WHISTLE_DB: f32 = 0.0;
 
 /// A sound and its low-passed twin.
 struct Sound {
@@ -67,6 +69,7 @@ pub struct Sfx {
     return_fire: Sound,
     steps: HashMap<Floor, Vec<Sound>>,
     bump: Sound,
+    whistle: Sound,
 }
 
 /// A playing sound placed in the world. Its two instances are re-mixed every frame.
@@ -104,6 +107,7 @@ fn load(mut commands: Commands, assets: Res<AssetServer>) {
             })
             .collect(),
         bump: Sound::load(&assets, "bump"),
+        whistle: Sound::load(&assets, "whistle"),
     });
 }
 
@@ -167,6 +171,7 @@ fn play_events(
     floors: Res<Floors>,
     mut steps: MessageReader<Footstep>,
     mut bumps: MessageReader<Bump>,
+    mut whistles: MessageReader<Whistle>,
 ) {
     let Ok(ear) = ear.single() else { return };
     let mut rng = rand::rng();
@@ -213,6 +218,9 @@ fn play_events(
     }
     for b in bumps.read() {
         play(&sfx.bump, b.at, BUMP_DB, FOOTSTEP_RANGE, FOOTSTEP_ROLLOFF, 1.0);
+    }
+    for w in whistles.read() {
+        play(&sfx.whistle, w.at, WHISTLE_DB, FOOTSTEP_RANGE, FOOTSTEP_ROLLOFF, 1.0);
     }
 }
 

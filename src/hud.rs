@@ -120,7 +120,7 @@ fn draw_hud(
         .show(ctx, |ui| {
             ui.label(
                 egui::RichText::new(format!(
-                    "Up/Down move   Left/Right turn   Space fire   M target walks: {}   Tab radar: {:?}   F1 inspector",
+                    "Up/Down move   Left/Right turn   Space fire   C whistle   M target walks: {}   Tab radar: {:?}   F1 inspector",
                     if mobile.0 { "on" } else { "off" },
                     *radar_mode
                 ))
