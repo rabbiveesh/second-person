@@ -148,9 +148,10 @@ fn draw_hud(
         let response = egui::Area::new("whistle".into())
             .anchor(egui::Align2::RIGHT_BOTTOM, [-24.0, -above_radar - 16.0])
             .show(ctx, |ui| {
-                ui.add(
+                // `add_sized` lays the button out centred-and-justified, so the label sits in the middle.
+                ui.add_sized(
+                    [84.0, 84.0],
                     egui::Button::new(egui::RichText::new("whistle").size(18.0))
-                        .min_size(egui::vec2(84.0, 84.0))
                         .corner_radius(42.0)
                         .fill(egui::Color32::from_black_alpha(150))
                         .stroke(egui::Stroke::new(2.0, egui::Color32::from_rgb(80, 220, 120))),
@@ -166,22 +167,26 @@ fn draw_hud(
         whistle.button = Rect::default();
     }
 
-    egui::Area::new("help".into())
-        .anchor(egui::Align2::LEFT_BOTTOM, [16.0, -16.0])
-        .show(ctx, |ui| {
-            if touch.0 {
-                return;
-            }
-            ui.label(
-                egui::RichText::new(format!(
-                    "Up/Down move   Left/Right turn   Space fire   W whistle   M target walks: {}   Tab radar: {:?}   F1 inspector",
-                    if mobile.0 { "on" } else { "off" },
-                    *radar_mode
-                ))
-                .color(egui::Color32::WHITE)
-                .background_color(egui::Color32::from_black_alpha(140)),
-            );
-        });
+    // Key hints, only in keyboard mode. Skip the area entirely in touch mode: drawn empty, egui
+    // remembers it as zero-width and the hints wrap into a one-letter column when they come back.
+    if !touch.0 {
+        egui::Area::new("help".into())
+            .anchor(egui::Align2::LEFT_BOTTOM, [16.0, -16.0])
+            .show(ctx, |ui| {
+                ui.add(
+                    egui::Label::new(
+                        egui::RichText::new(format!(
+                            "Up/Down move   Left/Right turn   Space fire   W whistle   M target walks: {}   Tab radar: {:?}   F1 inspector",
+                            if mobile.0 { "on" } else { "off" },
+                            *radar_mode
+                        ))
+                        .color(egui::Color32::WHITE)
+                        .background_color(egui::Color32::from_black_alpha(140)),
+                    )
+                    .extend(),
+                );
+            });
+    }
 
     // Frame + label for the radar viewport.
     let r = radar.0;
@@ -245,13 +250,13 @@ fn draw_hud(
             .show(ctx, |ui| {
                 ui.vertical_centered(|ui| {
                     ui.label(egui::RichText::new("SECOND PERSON SHOOTER").size(28.0).color(egui::Color32::WHITE).strong());
-                    ui.label("You see through his eyes. Hunt him down.");
+                    ui.label(egui::RichText::new("You see through his eyes. Hunt him down.").color(egui::Color32::LIGHT_GRAY));
                     ui.add_space(18.0);
                     ui.label(egui::RichText::new("tap to play").size(36.0).color(egui::Color32::from_rgb(90, 230, 110)).strong());
                     ui.label(egui::RichText::new("or press any key").size(18.0).color(egui::Color32::WHITE));
                     ui.add_space(18.0);
-                    ui.label("touch: left thumb drives · tap right to fire · whistle button");
-                    ui.label("keys: arrows drive · Space fires · W whistles");
+                    ui.label(egui::RichText::new("touch: left thumb drives · tap right to fire · whistle button").color(egui::Color32::LIGHT_GRAY));
+                    ui.label(egui::RichText::new("keys: arrows drive · Space fires · W whistles").color(egui::Color32::LIGHT_GRAY));
                 });
             });
     }
