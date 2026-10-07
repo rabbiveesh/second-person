@@ -44,6 +44,8 @@ controlling the **shooter** hunting him. A corner radar shows the whole arena.
 | vleue_navigator 0.16 (`avian3d`) | navmesh pathfinding (polyanya), built from avian colliders, WASM-safe |
 
 Dev builds: `dev` feature = `bevy/dynamic_linking` + `inspector`; mold via `.cargo/config.toml`; deps at opt-level 3.
+Machine-local cargo settings (e.g. `rustc-wrapper = "kache"`, a shared build cache across worktrees) go in the
+gitignored `.cargo/config.local.toml`, which `.cargo/config.toml` includes if present.
 Web/Pages: `trunk build --release` uses the `wasm-release` profile, which uses **fat LTO on purpose**.
 Deploys are slower (~6 min warm vs ~3 for thin), but the download is ~3MB smaller, and the dev loop never uses that profile.
 System deps (Ubuntu): `libudev-dev`, `libasound2-dev`, `libwayland-dev`, `libxkbcommon-dev`.
@@ -61,7 +63,11 @@ Fyrox (small ecosystem), macroquad/three-d (too thin, would mean rolling our own
 - `target.rs`: target entity → Head (pitch) → `MainCamera`. Behaviour tree:
   `Selector[engaged→(TakeCover, Fight), alerted→Investigate, mobile→Wander, Scan]`.
   Engaged means he runs to cover (`arena::find_cover`, no shooting while running), then fights from it: hide, then
-  strafe out to a peek spot (shooting if he sees you), then duck back. Getting hit makes him re-plan cover.
+  strafe out to a peek spot (random side, random length, sometimes a quick glance), then duck back.
+  After 1-3 peeks, or when hit, he `Relocate`s to a *different* cover (`arena::find_cover_avoiding`).
+  Grappling hook (`combat::grapple`, `Grapple` on the target): while fighting and seeing you at 6-20m, he reels
+  you in (shooter `Stunned { pull_to }`), fires a point-blank burst, leaves you stunned, then `Relocate`s.
+  Investigating a noise he can't see (cover in the way) makes him walk toward it until he can.
   `Suspicion.last_known` is where he last saw or heard you (no omniscience).
   Tasks only set intent (`LookGoal`, `MoveTo`, `Activity`). Systems `perceive` → `gaze` → `walk`
   do the work. Use the shared `ARRIVE` constant for every arrival check, because mismatched thresholds deadlock tasks. Lower branches **fail** when a higher-priority condition appears (that's preemption).
@@ -74,8 +80,14 @@ Fyrox (small ecosystem), macroquad/three-d (too thin, would mean rolling our own
   and `find_cover`. They're unit-testable without an app.
 - `shooter.rs`: random start via `random_start` (clear of cover, ≥12m from the target).
 - `shooter.rs`: dynamic capsule, rotation locked, tank controls (arrows), relative to its own facing.
+  Walking into the world emits `Bump` and a `Stagger` knockback (can't walk, only turn); his laser staggers you too.
+- `arena.rs` floor zones: the `Floors` resource (base `Floor` + rect `FloorZone`s, later ones win; `Floors::at`).
+  Classic = wood plaza, gravel, metal, grass. Each floor has its own
+  footstep sounds and a `hearing_range`; `combat::hear_movement` turns nearby steps, bumps and whistles
+  (W, the shooter's "where am I?" sound, heard by him from 28m) into suspicion.
 - `combat.rs`: bullets (CCD, collision events), hearing (shots and near misses raise `Alert` +
-  suspicion), target hitscan return fire while engaged, win/lose check.
+  suspicion), target hitscan return fire while engaged, warning shots (`WarningShot`, deliberate misses near
+  `last_known`) while suspicious but not engaged, win/lose check.
 - `radar.rs`: ortho top-down camera in a bottom-right viewport (layers 0+1). `RadarMode` is the difficulty knob
   (Tab cycles; init'd in `round` so it exists headless):
   - Full: live `LiveBlip`s, heading arrow and view cone.
@@ -91,7 +103,9 @@ Fyrox (small ecosystem), macroquad/three-d (too thin, would mean rolling our own
 - `juice.rs`: transform-only feel, so it runs headless and is tested: the eyes flinch along the bullet
   (spring + shake on `CameraJuice`, layered on the `MainCamera`, which the AI never moves), drop and roll to the
   floor when he dies (`OnEnter(Won)`), and the shooter topples when killed (`OnEnter(Lost)`). Part of `presentation`.
-- `audio.rs`: bevy_kira_audio spatial one-shots. The listener is the target's head (`MainCamera`). SFX come from
+- `audio.rs`: bevy_kira_audio with our own spatial mix (`audio::mix`, not kira's spatial plugin): pan capped
+  at ±0.3 (one-earbud friendly), inverse-distance falloff, and a low-passed `_muffled` twin crossfaded in for
+  sounds behind the listener or behind cover. The listener is the target's head (`MainCamera`). SFX come from
   `cargo run --example gen_sfx` (sfxr, fixed seeds) and are written to `assets/sfx/`.
 - Combat emits messages (`Gunshot`, `BulletImpact`, `TargetHit`, `ShooterHit`, shooter `Footstep`); fx, audio
   and radar subscribe to them. Add new feedback by subscribing, not by calling across modules.
