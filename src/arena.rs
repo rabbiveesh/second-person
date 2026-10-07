@@ -294,5 +294,16 @@ pub fn find_cover_avoiding(from: Vec2, threat: Vec2, avoid: Option<Vec2>) -> Opt
             let alt_peek = peeks.next().unwrap_or(peek);
             Some(Cover { spot, peek, alt_peek })
         })
-        .min_by(|a, b| from.distance(a.spot).total_cmp(&from.distance(b.spot)))
+        .min_by(|a, b| cover_cost(from, threat, a.spot).total_cmp(&cover_cost(from, threat, b.spot)))
+}
+
+/// How much a run along the line of fire (straight away from or towards the threat) costs, over
+/// a run across it. Magnetised shots barely miss a man running down the line.
+const RADIAL_RUN_PENALTY: f32 = 2.0;
+
+/// Distance to `spot`, scaled up the more the run lines up with the threat's line of fire.
+fn cover_cost(from: Vec2, threat: Vec2, spot: Vec2) -> f32 {
+    let run = (spot - from).normalize_or_zero();
+    let radial = run.dot((from - threat).normalize_or_zero());
+    from.distance(spot) * (1.0 + RADIAL_RUN_PENALTY * radial * radial)
 }

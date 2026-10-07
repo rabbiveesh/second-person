@@ -20,6 +20,11 @@ use second_person::{
 const DT: f32 = 1.0 / 60.0;
 
 fn app() -> App {
+    app_with(|_| {})
+}
+
+/// `app()` plus extra plugins, which must go in before `finish`.
+fn app_with(extra: impl FnOnce(&mut App)) -> App {
     let mut app = App::new();
     app.add_plugins((
         MinimalPlugins,
@@ -32,6 +37,7 @@ fn app() -> App {
     .init_asset::<StandardMaterial>()
     .insert_resource(TimeUpdateStrategy::ManualDuration(Duration::from_secs_f32(DT)))
     .add_plugins(second_person::gameplay);
+    extra(&mut app);
     count::<Gunshot>(&mut app);
     count::<TargetHit>(&mut app);
     count::<ShooterHit>(&mut app);
@@ -336,6 +342,28 @@ fn at_most_one_directional_light_with_presentation() {
 }
 
 #[test]
+fn arrow_keys_drive_the_shooter_like_a_tank() {
+    let mut app = app();
+    let shooter = single::<Shooter>(&mut app);
+    let start = Vec3::new(0.0, 0.9, 15.0);
+    place(&mut app, shooter, start, 0.0); // facing -Z, towards the origin
+    app.update();
+
+    KeyCode::ArrowUp.press(app.world_mut());
+    step(&mut app, 0.5);
+    KeyCode::ArrowUp.release(app.world_mut());
+    let pos = app.world().get::<Transform>(shooter).unwrap().translation;
+    assert!(pos.z < start.z - 1.0, "Up drives forward: {pos}");
+    assert!((pos.x - start.x).abs() < 0.1, "and straight: {pos}");
+
+    KeyCode::ArrowLeft.press(app.world_mut());
+    step(&mut app, 0.5);
+    KeyCode::ArrowLeft.release(app.world_mut());
+    let (yaw, _, _) = app.world().get::<Transform>(shooter).unwrap().rotation.to_euler(EulerRot::YXZ);
+    assert!(yaw > 0.5, "Left turns counter-clockwise (left): yaw {yaw}");
+}
+
+#[test]
 fn walking_into_a_wall_thuds_and_knocks_you_back() {
     let mut app = app();
     let shooter = single::<Shooter>(&mut app);
@@ -461,7 +489,8 @@ fn suspicious_target_fires_warning_shots_that_miss() {
 fn grapple_pulls_you_in_hammers_stuns_and_he_runs() {
     use second_person::{combat::Grapple, shooter::Stunned};
     let mut app = app();
-    let shooter_pos = Vec3::new(0.0, 0.9, -12.0);
+    // Close enough that the cover he picks (off to the side) keeps you within grapple range.
+    let shooter_pos = Vec3::new(0.0, 0.9, -10.0);
     stage(&mut app, shooter_pos, shooter_pos);
     let target = single::<Target>(&mut app);
     let shooter = single::<Shooter>(&mut app);
@@ -515,4 +544,189 @@ fn whistling_is_heard_from_far_off() {
     let s = app.world().get::<Suspicion>(target).unwrap();
     assert!(s.level > 0.0, "didn't hear it");
     assert!(app.world().get::<Alert>(target).is_some());
+}
+
+#[test]
+fn touch_stick_snaps_to_arrow_key_directions() {
+    use second_person::touch::snap_8way;
+    assert_eq!(snap_8way(Vec2::new(0.1, 0.1)), Vec2::ZERO, "dead zone");
+    assert_eq!(snap_8way(Vec2::new(0.7, 0.7)), Vec2::ONE, "diagonal = up and right held");
+    assert_eq!(snap_8way(Vec2::new(0.4, 0.9)), Vec2::Y, "mostly up = full forward, no turn");
+    assert_eq!(snap_8way(Vec2::new(-0.9, 0.2)), Vec2::NEG_X, "mostly left = turn only");
+    assert_eq!(snap_8way(Vec2::new(-0.5, -0.6)), Vec2::NEG_ONE);
+}
+
+#[test]
+fn tapping_the_whistle_button_does_not_fire() {
+    use second_person::touch::tap_fires;
+    let button = Rect::new(800.0, 300.0, 884.0, 384.0);
+    assert!(tap_fires(Vec2::new(700.0, 200.0), 1000.0, button), "right half fires");
+    assert!(!tap_fires(Vec2::new(300.0, 200.0), 1000.0, button), "left half is the stick");
+    assert!(!tap_fires(Vec2::new(840.0, 340.0), 1000.0, button), "whistle button");
+}
+
+#[test]
+fn start_screen_holds_the_game_until_a_press_then_controls_follow_the_last_input() {
+    use bevy::input::touch::{TouchInput, TouchPhase};
+    use leafwing_input_manager::prelude::ActionState;
+    use second_person::{shooter::ShooterAction, start::{self, Started}, touch::TouchControls};
+    let mut app = app_with(|app| {
+        app.add_plugins(start::plugin);
+    });
+    step(&mut app, 0.5);
+    assert!(!app.world().resource::<Started>().0);
+    assert!(app.world().resource::<Time<Virtual>>().is_paused(), "frozen behind the overlay");
+
+    // The key that dismisses the overlay doesn't fire.
+    KeyCode::Space.press(app.world_mut());
+    step(&mut app, 0.1);
+    KeyCode::Space.release(app.world_mut());
+    step(&mut app, 0.1);
+    assert!(app.world().resource::<Started>().0);
+    assert!(!app.world().resource::<Time<Virtual>>().is_paused());
+    assert_eq!(counted::<Gunshot>(&app), 0, "dismissing press fired");
+    assert!(!app.world().resource::<TouchControls>().0, "a key means keyboard");
+
+    // Now Space fires as usual.
+    press(&mut app, KeyCode::Space);
+    assert_eq!(counted::<Gunshot>(&app), 1);
+    let shooter = single::<Shooter>(&mut app);
+    assert!(!app.world().get::<ActionState<ShooterAction>>(shooter).unwrap().disabled());
+
+    // A touch switches to touch controls, a key back to keyboard.
+    app.world_mut().write_message(TouchInput {
+        phase: TouchPhase::Started,
+        position: Vec2::new(10.0, 10.0),
+        window: Entity::PLACEHOLDER,
+        force: None,
+        id: 1,
+    });
+    app.update();
+    assert!(app.world().resource::<TouchControls>().0);
+    press(&mut app, KeyCode::ArrowUp);
+    assert!(!app.world().resource::<TouchControls>().0);
+}
+
+/// Shooter 12m straight behind him (out of his view), turned `off_deg` away, fires once.
+fn shot_off_by(off_deg: f32) -> App {
+    let mut app = app();
+    let shooter_pos = Vec3::new(0.0, 0.9, 12.0);
+    stage(&mut app, shooter_pos, Vec3::new(0.0, 0.9, -10.0));
+    let shooter = single::<Shooter>(&mut app);
+    let yaw = yaw_towards(shooter_pos, Vec3::new(0.0, 0.9, 0.0)) + off_deg.to_radians();
+    place(&mut app, shooter, shooter_pos, yaw);
+    app.update();
+    press(&mut app, KeyCode::Space);
+    step(&mut app, 0.6);
+    app
+}
+
+#[test]
+fn bullet_magnetism_bends_a_near_miss_into_him() {
+    assert_eq!(counted::<TargetHit>(&shot_off_by(8.0)), 1, "8° off should be pulled in");
+    assert_eq!(counted::<TargetHit>(&shot_off_by(-8.0)), 1);
+    assert_eq!(counted::<TargetHit>(&shot_off_by(25.0)), 0, "25° off is a miss");
+}
+
+#[test]
+fn bullet_magnetism_does_not_bend_around_cover() {
+    use second_person::combat::magnetised;
+    // Crate at (-6, _, -8) between this spot and the origin.
+    let muzzle = Vec3::new(-9.0, 1.0, -12.0);
+    let to_him = (Vec3::new(0.0, 0.9, 0.0) - muzzle).normalize();
+    let forward = Quat::from_rotation_y(8f32.to_radians()) * to_him;
+    assert_eq!(magnetised(muzzle, forward, Vec3::new(0.0, 0.9, 0.0)), forward);
+    // Same angle in the open does bend.
+    let open = Vec3::new(0.0, 1.0, 12.0);
+    let fwd = Quat::from_rotation_y(8f32.to_radians()) * (Vec3::new(0.0, 0.9, 0.0) - open).normalize();
+    assert_ne!(magnetised(open, fwd, Vec3::new(0.0, 0.9, 0.0)), fwd);
+}
+
+/// Him at `him`, the shooter at `shooter_pos`, both on the ground plane (XZ). Engages him, then
+/// runs frames while he's running for cover; `each` sees the app every frame of the run.
+fn run_for_cover(him: Vec2, shooter_pos: Vec2, mut each: impl FnMut(&mut App, Entity, Entity)) {
+    let (him, shooter_pos) = (Vec3::new(him.x, 0.9, him.y), Vec3::new(shooter_pos.x, 0.9, shooter_pos.y));
+    let mut app = app();
+    let target = single::<Target>(&mut app);
+    let shooter = single::<Shooter>(&mut app);
+    place(&mut app, target, him, yaw_towards(him, shooter_pos));
+    place(&mut app, shooter, shooter_pos, yaw_towards(shooter_pos, him));
+    app.update();
+    app.world_mut().get_mut::<Shooter>(shooter).unwrap().hp = 1e6;
+    {
+        let mut s = app.world_mut().get_mut::<Suspicion>(target).unwrap();
+        s.bump(1.0);
+        s.last_known = Some(shooter_pos);
+    }
+    let running = |app: &App| app.world().get::<Activity>(target) == Some(&Activity::TakingCover);
+    for _ in 0..(1.0 / DT) as usize {
+        app.update();
+        if running(&app) {
+            break;
+        }
+    }
+    assert!(running(&app), "never ran for cover from {shooter_pos}");
+    for _ in 0..(8.0 / DT) as usize {
+        if !running(&app) {
+            break;
+        }
+        each(&mut app, target, shooter);
+        app.update();
+    }
+}
+
+/// (him, shooter): spots where the nearest cover is straight along the line of fire, away from
+/// or towards the shooter, so a plain nearest-cover dash would be a shooting-gallery run.
+const COVER_RUNS: [(Vec2, Vec2); 4] = [
+    (Vec2::new(24.0, 0.0), Vec2::new(24.0, -12.0)),
+    (Vec2::new(20.0, -8.0), Vec2::new(20.0, 4.0)),
+    (Vec2::new(24.0, 4.0), Vec2::new(24.0, 16.0)),
+    (Vec2::new(20.0, 8.0), Vec2::new(11.5, -0.5)),
+];
+
+#[test]
+fn running_for_cover_moves_across_your_line_of_fire() {
+    let (mut tangential, mut total) = (0.0, 0.0);
+    for (him, shooter_pos) in COVER_RUNS {
+        run_for_cover(him, shooter_pos, |app, target, _| {
+            let w = app.world();
+            let v = w.get::<LinearVelocity>(target).unwrap().0.xz();
+            let line = (w.get::<Transform>(target).unwrap().translation.xz() - shooter_pos).normalize();
+            tangential += v.perp_dot(line).abs();
+            total += v.length();
+        });
+    }
+    let share = tangential / total.max(1e-6);
+    assert!(total > 0.0, "never moved");
+    assert!(share > 0.4, "mostly along the line of fire: tangential share {share:.2}");
+}
+
+#[test]
+fn magnetised_fire_down_the_line_misses_most_shots_on_a_cover_run() {
+    let (mut shots, mut hits) = (0, 0);
+    for (him, shooter_pos) in COVER_RUNS {
+        let shooter_at = Vec3::new(shooter_pos.x, 0.9, shooter_pos.y);
+        let mut since = 1.0;
+        let (mut shots_seen, mut hits_seen) = (0, 0);
+        run_for_cover(him, shooter_pos, |app, target, shooter| {
+            // He can take it: we're counting hits, not ending the round.
+            app.world_mut().get_mut::<Target>(target).unwrap().hp = 1000;
+            // Keep the gun on him (magnetism does the rest) and fire as fast as allowed.
+            let at = app.world().get::<Transform>(target).unwrap().translation;
+            place(app, shooter, shooter_at, yaw_towards(shooter_at, at));
+            since += DT;
+            if since >= 0.3 {
+                since = 0.0;
+                KeyCode::Space.press(app.world_mut());
+            } else {
+                KeyCode::Space.release(app.world_mut());
+            }
+            let (s, h) = (counted::<Gunshot>(app), counted::<TargetHit>(app));
+            shots += s - shots_seen;
+            hits += h - hits_seen;
+            (shots_seen, hits_seen) = (s, h);
+        });
+    }
+    assert!(shots >= 8, "too few shots: {shots}");
+    assert!(hits * 2 < shots, "{hits} of {shots} shots hit");
 }

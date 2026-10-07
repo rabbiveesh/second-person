@@ -11,17 +11,24 @@ fn main() {
             ..default()
         })
         .add_plugins((
-            DefaultPlugins.set(WindowPlugin {
-                primary_window: Some(Window {
-                    title: "Second Person Shooter".into(),
-                    // Web: render into the page's canvas and keep arrows/space from scrolling it.
-                    canvas: Some("#game".into()),
-                    fit_canvas_to_parent: true,
-                    prevent_default_event_handling: true,
+            DefaultPlugins
+                .set(WindowPlugin {
+                    primary_window: Some(Window {
+                        title: "Second Person Shooter".into(),
+                        // Web: render into the page's canvas and keep arrows/space from scrolling it.
+                        canvas: Some("#game".into()),
+                        fit_canvas_to_parent: true,
+                        prevent_default_event_handling: true,
+                        ..default()
+                    }),
+                    ..default()
+                })
+                .set(AssetPlugin {
+                    // We ship no .meta files. On the web each would cost an extra request, and dev
+                    // servers (trunk) answer the missing .meta with index.html, which breaks the load.
+                    meta_check: bevy::asset::AssetMetaCheck::Never,
                     ..default()
                 }),
-                ..default()
-            }),
             EguiPlugin::default(),
             second_person::gameplay,
             second_person::presentation,

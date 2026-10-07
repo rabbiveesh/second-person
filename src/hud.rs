@@ -8,7 +8,9 @@ use crate::{
     radar::{RadarMode, RadarRect},
     round::{GameState, TargetMobile},
     shooter::{SHOOTER_MAX_HP, Shooter, Stunned},
+    start::Started,
     target::{Activity, Suspicion, TARGET_MAX_HP, Target},
+    touch::{TouchControls, TouchWhistle},
 };
 
 /// Screen flashes: red when you're hit, white when the target is hit.
@@ -35,6 +37,8 @@ fn spawn_hud_camera(mut commands: Commands) {
             ..default()
         },
         PrimaryEguiContext,
+        // bevy_ui (the touch stick) draws here too, above every game viewport.
+        IsDefaultUiCamera,
     ));
 }
 
@@ -59,8 +63,12 @@ fn track_flashes(
 fn draw_hud(
     mut contexts: EguiContexts,
     state: Res<State<GameState>>,
-    mobile: Res<TargetMobile>,
-    radar_mode: Res<RadarMode>,
+    mut mobile: ResMut<TargetMobile>,
+    mut radar_mode: ResMut<RadarMode>,
+    mut next: ResMut<NextState<GameState>>,
+    touch: Res<TouchControls>,
+    started: Res<Started>,
+    mut whistle: ResMut<TouchWhistle>,
     flashes: Res<Flashes>,
     radar: Res<RadarRect>,
     shooter: Option<Single<(&Shooter, &Stunned)>>,
@@ -117,22 +125,68 @@ fn draw_hud(
                         if suspicion.sees_shooter { " · sees you" } else { "" }
                     ));
                 }
+                // No keyboard on a phone: the meta keys become buttons. They sit on the left
+                // half, where a tap only wakes the drive stick, never fires.
+                if touch.0 {
+                    ui.add_space(6.0);
+                    ui.horizontal(|ui| {
+                        if ui.button(format!("radar: {:?}", *radar_mode)).clicked() {
+                            *radar_mode = radar_mode.next();
+                        }
+                        if ui.button(format!("he walks: {}", if mobile.0 { "on" } else { "off" })).clicked() {
+                            mobile.0 = !mobile.0;
+                        }
+                    });
+                }
             });
         });
 
-    egui::Area::new("help".into())
-        .anchor(egui::Align2::LEFT_BOTTOM, [16.0, -16.0])
-        .show(ctx, |ui| {
-            ui.label(
-                egui::RichText::new(format!(
-                    "Up/Down move   Left/Right turn   Space fire   W whistle   M target walks: {}   Tab radar: {:?}   F1 inspector",
-                    if mobile.0 { "on" } else { "off" },
-                    *radar_mode
-                ))
-                .color(egui::Color32::WHITE)
-                .background_color(egui::Color32::from_black_alpha(140)),
-            );
-        });
+    // Whistle for thumbs: a big round button on the right, just above the radar. Taps on it
+    // don't fire (see `touch::TouchWhistle`).
+    if touch.0 {
+        let above_radar = if radar.0.height() > 0.0 { ctx.content_rect().height() - radar.0.min.y } else { 0.0 };
+        let response = egui::Area::new("whistle".into())
+            .anchor(egui::Align2::RIGHT_BOTTOM, [-24.0, -above_radar - 16.0])
+            .show(ctx, |ui| {
+                // `add_sized` lays the button out centred-and-justified, so the label sits in the middle.
+                ui.add_sized(
+                    [84.0, 84.0],
+                    egui::Button::new(egui::RichText::new("whistle").size(18.0))
+                        .corner_radius(42.0)
+                        .fill(egui::Color32::from_black_alpha(150))
+                        .stroke(egui::Stroke::new(2.0, egui::Color32::from_rgb(80, 220, 120))),
+                )
+            })
+            .inner;
+        if response.clicked() {
+            whistle.pressed = true;
+        }
+        let r = response.rect;
+        whistle.button = Rect::new(r.min.x, r.min.y, r.max.x, r.max.y);
+    } else {
+        whistle.button = Rect::default();
+    }
+
+    // Key hints, only in keyboard mode. Skip the area entirely in touch mode: drawn empty, egui
+    // remembers it as zero-width and the hints wrap into a one-letter column when they come back.
+    if !touch.0 {
+        egui::Area::new("help".into())
+            .anchor(egui::Align2::LEFT_BOTTOM, [16.0, -16.0])
+            .show(ctx, |ui| {
+                ui.add(
+                    egui::Label::new(
+                        egui::RichText::new(format!(
+                            "Up/Down move   Left/Right turn   Space fire   W whistle   M target walks: {}   Tab radar: {:?}   F1 inspector",
+                            if mobile.0 { "on" } else { "off" },
+                            *radar_mode
+                        ))
+                        .color(egui::Color32::WHITE)
+                        .background_color(egui::Color32::from_black_alpha(140)),
+                    )
+                    .extend(),
+                );
+            });
+    }
 
     // Frame + label for the radar viewport.
     let r = radar.0;
@@ -176,8 +230,33 @@ fn draw_hud(
                 egui::Frame::popup(ui.style()).show(ui, |ui| {
                     ui.vertical_centered(|ui| {
                         ui.label(egui::RichText::new(text).size(36.0).color(colour).strong());
-                        ui.label(egui::RichText::new("press R to go again").size(18.0));
+                        if touch.0 {
+                            if ui.button(egui::RichText::new("go again").size(22.0)).clicked() {
+                                next.set(GameState::Playing);
+                            }
+                        } else {
+                            ui.label(egui::RichText::new("press R to go again").size(18.0));
+                        }
                     });
+                });
+            });
+    }
+    if !started.0 {
+        let painter = ctx.layer_painter(egui::LayerId::new(egui::Order::Middle, "start dim".into()));
+        painter.rect_filled(screen, 0.0, egui::Color32::from_black_alpha(170));
+        egui::Area::new("start".into())
+            .order(egui::Order::Foreground)
+            .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
+            .show(ctx, |ui| {
+                ui.vertical_centered(|ui| {
+                    ui.label(egui::RichText::new("SECOND PERSON SHOOTER").size(28.0).color(egui::Color32::WHITE).strong());
+                    ui.label(egui::RichText::new("You see through his eyes. Hunt him down.").color(egui::Color32::LIGHT_GRAY));
+                    ui.add_space(18.0);
+                    ui.label(egui::RichText::new("tap to play").size(36.0).color(egui::Color32::from_rgb(90, 230, 110)).strong());
+                    ui.label(egui::RichText::new("or press any key").size(18.0).color(egui::Color32::WHITE));
+                    ui.add_space(18.0);
+                    ui.label(egui::RichText::new("touch: left thumb drives · tap right to fire · whistle button").color(egui::Color32::LIGHT_GRAY));
+                    ui.label(egui::RichText::new("keys: arrows drive · Space fires · W whistles").color(egui::Color32::LIGHT_GRAY));
                 });
             });
     }
