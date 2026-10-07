@@ -489,7 +489,8 @@ fn suspicious_target_fires_warning_shots_that_miss() {
 fn grapple_pulls_you_in_hammers_stuns_and_he_runs() {
     use second_person::{combat::Grapple, shooter::Stunned};
     let mut app = app();
-    let shooter_pos = Vec3::new(0.0, 0.9, -12.0);
+    // Close enough that the cover he picks (off to the side) keeps you within grapple range.
+    let shooter_pos = Vec3::new(0.0, 0.9, -10.0);
     stage(&mut app, shooter_pos, shooter_pos);
     let target = single::<Target>(&mut app);
     let shooter = single::<Shooter>(&mut app);
@@ -639,4 +640,93 @@ fn bullet_magnetism_does_not_bend_around_cover() {
     let open = Vec3::new(0.0, 1.0, 12.0);
     let fwd = Quat::from_rotation_y(8f32.to_radians()) * (Vec3::new(0.0, 0.9, 0.0) - open).normalize();
     assert_ne!(magnetised(open, fwd, Vec3::new(0.0, 0.9, 0.0)), fwd);
+}
+
+/// Him at `him`, the shooter at `shooter_pos`, both on the ground plane (XZ). Engages him, then
+/// runs frames while he's running for cover; `each` sees the app every frame of the run.
+fn run_for_cover(him: Vec2, shooter_pos: Vec2, mut each: impl FnMut(&mut App, Entity, Entity)) {
+    let (him, shooter_pos) = (Vec3::new(him.x, 0.9, him.y), Vec3::new(shooter_pos.x, 0.9, shooter_pos.y));
+    let mut app = app();
+    let target = single::<Target>(&mut app);
+    let shooter = single::<Shooter>(&mut app);
+    place(&mut app, target, him, yaw_towards(him, shooter_pos));
+    place(&mut app, shooter, shooter_pos, yaw_towards(shooter_pos, him));
+    app.update();
+    app.world_mut().get_mut::<Shooter>(shooter).unwrap().hp = 1e6;
+    {
+        let mut s = app.world_mut().get_mut::<Suspicion>(target).unwrap();
+        s.bump(1.0);
+        s.last_known = Some(shooter_pos);
+    }
+    let running = |app: &App| app.world().get::<Activity>(target) == Some(&Activity::TakingCover);
+    for _ in 0..(1.0 / DT) as usize {
+        app.update();
+        if running(&app) {
+            break;
+        }
+    }
+    assert!(running(&app), "never ran for cover from {shooter_pos}");
+    for _ in 0..(8.0 / DT) as usize {
+        if !running(&app) {
+            break;
+        }
+        each(&mut app, target, shooter);
+        app.update();
+    }
+}
+
+/// (him, shooter): spots where the nearest cover is straight along the line of fire, away from
+/// or towards the shooter, so a plain nearest-cover dash would be a shooting-gallery run.
+const COVER_RUNS: [(Vec2, Vec2); 4] = [
+    (Vec2::new(24.0, 0.0), Vec2::new(24.0, -12.0)),
+    (Vec2::new(20.0, -8.0), Vec2::new(20.0, 4.0)),
+    (Vec2::new(24.0, 4.0), Vec2::new(24.0, 16.0)),
+    (Vec2::new(20.0, 8.0), Vec2::new(11.5, -0.5)),
+];
+
+#[test]
+fn running_for_cover_moves_across_your_line_of_fire() {
+    let (mut tangential, mut total) = (0.0, 0.0);
+    for (him, shooter_pos) in COVER_RUNS {
+        run_for_cover(him, shooter_pos, |app, target, _| {
+            let w = app.world();
+            let v = w.get::<LinearVelocity>(target).unwrap().0.xz();
+            let line = (w.get::<Transform>(target).unwrap().translation.xz() - shooter_pos).normalize();
+            tangential += v.perp_dot(line).abs();
+            total += v.length();
+        });
+    }
+    let share = tangential / total.max(1e-6);
+    assert!(total > 0.0, "never moved");
+    assert!(share > 0.4, "mostly along the line of fire: tangential share {share:.2}");
+}
+
+#[test]
+fn magnetised_fire_down_the_line_misses_most_shots_on_a_cover_run() {
+    let (mut shots, mut hits) = (0, 0);
+    for (him, shooter_pos) in COVER_RUNS {
+        let shooter_at = Vec3::new(shooter_pos.x, 0.9, shooter_pos.y);
+        let mut since = 1.0;
+        let (mut shots_seen, mut hits_seen) = (0, 0);
+        run_for_cover(him, shooter_pos, |app, target, shooter| {
+            // He can take it: we're counting hits, not ending the round.
+            app.world_mut().get_mut::<Target>(target).unwrap().hp = 1000;
+            // Keep the gun on him (magnetism does the rest) and fire as fast as allowed.
+            let at = app.world().get::<Transform>(target).unwrap().translation;
+            place(app, shooter, shooter_at, yaw_towards(shooter_at, at));
+            since += DT;
+            if since >= 0.3 {
+                since = 0.0;
+                KeyCode::Space.press(app.world_mut());
+            } else {
+                KeyCode::Space.release(app.world_mut());
+            }
+            let (s, h) = (counted::<Gunshot>(app), counted::<TargetHit>(app));
+            shots += s - shots_seen;
+            hits += h - hits_seen;
+            (shots_seen, hits_seen) = (s, h);
+        });
+    }
+    assert!(shots >= 8, "too few shots: {shots}");
+    assert!(hits * 2 < shots, "{hits} of {shots} shots hit");
 }

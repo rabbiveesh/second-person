@@ -63,7 +63,9 @@ Fyrox (small ecosystem), macroquad/three-d (too thin, would mean rolling our own
 - `arena.rs`: static ground, walls, crates and pillars (hand-placed, reproducible).
 - `target.rs`: target entity → Head (pitch) → `MainCamera`. Behaviour tree:
   `Selector[engaged→(TakeCover, Fight), alerted→Investigate, mobile→Wander, Scan]`.
-  Engaged means he runs to cover (`arena::find_cover`, no shooting while running), then fights from it: hide, then
+  Engaged means he runs to cover (`arena::find_cover`, no shooting while running), preferring cover he reaches by
+  running *across* your line of fire (`RADIAL_RUN_PENALTY`) and zig-zagging any leg that runs along it (`nav::Evade`,
+  `nav::weave`), because magnetised shots (`combat::magnetised`) barely miss a man running straight down the line. then fights from it: hide, then
   strafe out to a peek spot (random side, random length, sometimes a quick glance), then duck back.
   After 1-3 peeks, or when hit, he `Relocate`s to a *different* cover (`arena::find_cover_avoiding`).
   Grappling hook (`combat::grapple`, `Grapple` on the target): while fighting and seeing you at 6-20m, he reels
