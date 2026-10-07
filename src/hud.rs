@@ -34,6 +34,7 @@ const DEATH_BANNERS: &[&str] = &[
     "Snake? Snake?! SNAAAKE!",
     "Game over, man! Game over!",
     "You have died of dysentery.",
+    "You tried to ford the river.",
     "Mission failed. We'll get 'em next time.",
     "Turns out he shoots back.",
     "The hunter became the hunted.",
@@ -48,6 +49,7 @@ const WIN_BANNERS: &[&str] = &[
     "Mission accomplished.",
     "You have slain the target.",
     "And stay down.",
+    "YEEEEEEHAWWW!",
 ];
 
 /// Won without taking a scratch.
