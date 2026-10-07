@@ -23,10 +23,10 @@ const TURN_SPEED: f32 = 2.4;
 
 #[derive(Actionlike, PartialEq, Eq, Clone, Copy, Hash, Debug, Reflect)]
 pub enum ShooterAction {
-    Forward,
-    Back,
-    TurnLeft,
-    TurnRight,
+    /// x: turn (right positive), y: throttle (forward positive). Analog, so a touch stick or
+    /// gamepad gives partial speed; arrow keys drive it as a d-pad.
+    #[actionlike(DualAxis)]
+    Drive,
     Fire,
     Whistle,
 }
@@ -113,14 +113,10 @@ fn spawn_shooter(
         RoundEntity,
         Shooter { hp: SHOOTER_MAX_HP },
         (Stagger::default(), Stunned::default()),
-        InputMap::new([
-            (ShooterAction::Forward, KeyCode::ArrowUp),
-            (ShooterAction::Back, KeyCode::ArrowDown),
-            (ShooterAction::TurnLeft, KeyCode::ArrowLeft),
-            (ShooterAction::TurnRight, KeyCode::ArrowRight),
-            (ShooterAction::Fire, KeyCode::Space),
-            (ShooterAction::Whistle, KeyCode::KeyW),
-        ]),
+        InputMap::default()
+            .with_dual_axis(ShooterAction::Drive, VirtualDPad::arrow_keys())
+            .with(ShooterAction::Fire, KeyCode::Space)
+            .with(ShooterAction::Whistle, KeyCode::KeyW),
         RigidBody::Dynamic,
         Collider::capsule(RADIUS, 1.0),
         LockedAxes::ROTATION_LOCKED,
@@ -205,12 +201,10 @@ fn drive(
             *step = 0.0;
             continue;
         }
-        let turn = actions.pressed(&ShooterAction::TurnLeft) as i8 as f32
-            - actions.pressed(&ShooterAction::TurnRight) as i8 as f32;
-        rot.0 = Quat::from_rotation_y(turn * TURN_SPEED * time.delta_secs()) * rot.0;
+        let input = actions.clamped_axis_pair(&ShooterAction::Drive);
+        rot.0 = Quat::from_rotation_y(-input.x * TURN_SPEED * time.delta_secs()) * rot.0;
 
-        let throttle = actions.pressed(&ShooterAction::Forward) as i8 as f32
-            - actions.pressed(&ShooterAction::Back) as i8 as f32;
+        let throttle = input.y;
         let forward = rot.0 * Vec3::NEG_Z;
         if stagger.left > 0.0 {
             stagger.left -= time.delta_secs();
@@ -222,7 +216,7 @@ fn drive(
         let planar = forward * throttle * MOVE_SPEED;
         vel.0 = Vec3::new(planar.x, vel.0.y, planar.z);
 
-        if throttle != 0.0 {
+        if throttle.abs() > 0.1 {
             *step -= time.delta_secs();
             if *step <= 0.0 {
                 *step = STEP_INTERVAL;

@@ -1,7 +1,11 @@
 //! Stages the juice moments and screenshots them: the target's hit flinch, his death fall,
 //! and the shooter's death, as seen from the target's eyes.
 //!
-//!     xvfb-run -a -s "-screen 0 1280x720x24" cargo run --example juice_shots -- <out dir>
+//!     scripts/shots <out dir> 1280x720 390x844:touch 844x390:touch
+//!     cargo run --example juice_shots -- <out dir> [--size WxH] [--touch]
+//!
+//! `--size` is the window in logical pixels (a phone's CSS viewport, e.g. 390x844), and
+//! `--touch` turns on the touch UI and fires by tapping, like a phone.
 //!
 //! Time advances a fixed 1/60s per frame, so the shots land on the same moments however
 //! slowly the frames render (e.g. under software Vulkan).
@@ -16,11 +20,17 @@ use bevy::{
 };
 use bevy_egui::{EguiGlobalSettings, EguiPlugin};
 use leafwing_input_manager::prelude::*;
+use bevy::{
+    input::touch::{TouchInput, TouchPhase},
+    window::PrimaryWindow,
+};
 use second_person::{
     combat::{ShooterHit, TargetHit},
     round::GameState,
     shooter::Shooter,
+    start::Started,
     target::{MainCamera, Target},
+    touch::TouchControls,
 };
 
 const TARGET_AT: Vec3 = Vec3::new(0.0, 0.9, 0.0);
@@ -33,10 +43,31 @@ struct Out(PathBuf);
 #[derive(Resource, Default)]
 struct LastHit(Option<u32>);
 
+/// Fire by tapping the right half of the screen instead of pressing Space.
+#[derive(Resource)]
+struct Touch(bool);
+
 fn main() {
-    let out = PathBuf::from(std::env::args().nth(1).unwrap_or_else(|| "juice_shots".into()));
+    let mut args = std::env::args().skip(1);
+    let mut out = PathBuf::from("juice_shots");
+    let (mut size, mut touch) = (UVec2::new(1280, 720), false);
+    while let Some(arg) = args.next() {
+        match arg.as_str() {
+            "--touch" => touch = true,
+            "--size" => {
+                let s = args.next().expect("--size WxH");
+                let (w, h) = s.split_once('x').expect("--size WxH");
+                size = UVec2::new(w.parse().unwrap(), h.parse().unwrap());
+            }
+            dir => out = dir.into(),
+        }
+    }
     std::fs::create_dir_all(&out).unwrap();
     App::new()
+        // Skip the start screen; pick the control scheme up front (plugins only init these).
+        .insert_resource(Started(true))
+        .insert_resource(TouchControls(touch))
+        .insert_resource(Touch(touch))
         .insert_resource(EguiGlobalSettings {
             auto_create_primary_context: false,
             ..default()
@@ -47,7 +78,8 @@ fn main() {
         .add_plugins((
             DefaultPlugins.set(WindowPlugin {
                 primary_window: Some(Window {
-                    resolution: (1280, 720).into(),
+                    resolution: (size.x, size.y).into(),
+                    resizable: false,
                     ..default()
                 }),
                 ..default()
@@ -73,9 +105,9 @@ fn script(world: &mut World, mut frame: Local<u32>) {
         30..=89 => stage(world),
         90 => {
             stage(world);
-            KeyCode::Space.press(world);
+            fire(world, true);
         }
-        91 => KeyCode::Space.release(world),
+        91 => fire(world, false),
         // Hold him still while the bullet is in flight.
         92..=120 | 212..=240 if hit.is_none() => stage(world),
         // Scene 2: the killing shot.
@@ -87,11 +119,11 @@ fn script(world: &mut World, mut frame: Local<u32>) {
         }
         210 => {
             stage(world);
-            KeyCode::Space.press(world);
+            fire(world, true);
         }
         211 => {
             stage(world);
-            KeyCode::Space.release(world);
+            fire(world, false);
         }
         // Scene 3: restart, then the target's killing shot on the shooter.
         400 => world.resource_mut::<NextState<GameState>>().set(GameState::Playing),
@@ -136,6 +168,26 @@ fn script(world: &mut World, mut frame: Local<u32>) {
         let path = world.resource::<Out>().0.join(format!("{name}.png"));
         world.spawn(Screenshot::primary_window()).observe(save_to_disk(path));
     }
+}
+
+/// Press (or release) fire: Space, or a tap on the right side of the screen in touch mode.
+fn fire(world: &mut World, down: bool) {
+    if !world.resource::<Touch>().0 {
+        if down { KeyCode::Space.press(world) } else { KeyCode::Space.release(world) }
+        return;
+    }
+    let (window, size) = {
+        let mut q = world.query_filtered::<(Entity, &Window), With<PrimaryWindow>>();
+        let (e, w) = q.single(world).unwrap();
+        (e, w.size())
+    };
+    world.write_message(TouchInput {
+        phase: if down { TouchPhase::Started } else { TouchPhase::Ended },
+        position: size * Vec2::new(0.75, 0.3),
+        window,
+        force: None,
+        id: 1,
+    });
 }
 
 /// Target at the origin facing the shooter, who faces him from a few metres ahead.

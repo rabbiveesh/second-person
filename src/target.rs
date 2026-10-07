@@ -23,7 +23,7 @@ use crate::{
     combat::Grapple,
     Layer,
     arena::{self, ARENA_HALF, Cover},
-    nav::{MoveTo, Route},
+    nav::{Evade, MoveTo, Route},
     radar::{LiveBlip, RADAR_LAYER, RadarContact},
     round::{GameState, RoundEntity, SpawnRound, TargetMobile},
     shooter::Shooter,
@@ -316,7 +316,7 @@ fn take_cover_listeners() -> Listeners {
     l.push((
         TaskEvent::Exit,
         listener(|In(e): In<Entity>, mut commands: Commands| {
-            commands.entity(e).try_remove::<MoveTo>();
+            commands.entity(e).try_remove::<(MoveTo, Evade)>();
         }),
     ));
     l
@@ -336,6 +336,7 @@ fn plan_cover(
     commands.entity(e).try_remove::<Relocate>();
     commands.entity(e).insert((
         CoverPlan(cover),
+        Evade(threat),
         MoveTo {
             dest: cover.spot.extend(BODY_CENTER).xzy(),
             speed: RUN_SPEED,
@@ -720,7 +721,11 @@ fn walk(
         }
         look.point = Vec3::new(w.x, t.translation.y + EYE_OFFSET, w.y);
         look.turn_speed = 7.0;
-        v.0 = if t.forward().angle_between(d3) < 0.5 { d3.normalize() * m.speed } else { Vec3::ZERO };
+        // Full speed once facing the waypoint; keep going, slower, through a swerve (e.g. a weave)
+        // rather than stopping dead to turn; stop only to turn right round.
+        let off = t.forward().angle_between(d3);
+        let pace = if off < 0.5 { 1.0 } else if off < 1.2 { 0.5 } else { 0.0 };
+        v.0 = d3.normalize() * m.speed * pace;
     }
 }
 

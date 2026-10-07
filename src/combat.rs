@@ -16,6 +16,10 @@ use crate::{
 
 const BULLET_SPEED: f32 = 45.0;
 const FIRE_COOLDOWN: f32 = 0.3;
+/// Bullet magnetism: a shot fired within this angle of him (and in range, with a clear line)
+/// is bent to his centre. No lock-on, nothing that leaks where he is when you're not on him.
+pub const MAGNET_CONE: f32 = 12.0_f32.to_radians();
+pub const MAGNET_RANGE: f32 = 30.0;
 const HEARING_RANGE: f32 = 18.0;
 const NEAR_MISS_RANGE: f32 = 7.0;
 const RETURN_FIRE_INTERVAL: f32 = 0.8;
@@ -163,8 +167,9 @@ fn fire(
     }
     cooldown.reset();
 
-    let forward = t.forward();
     let muzzle = t.translation + t.rotation * Vec3::new(0.3, 0.15, -0.9);
+    let (target_e, target_t, mut suspicion) = target.into_inner();
+    let forward = magnetised(muzzle, *t.forward(), target_t.translation);
     commands.spawn((
         Name::new("Bullet"),
         RoundEntity,
@@ -180,14 +185,26 @@ fn fire(
         MeshMaterial3d(assets.material.clone()),
         Transform::from_translation(muzzle),
     ));
-    gunshots.write(Gunshot { muzzle, dir: *forward });
+    gunshots.write(Gunshot { muzzle, dir: forward });
 
     // Gunshots are loud.
-    let (target_e, target_t, mut suspicion) = target.into_inner();
     if target_t.translation.distance(t.translation) < HEARING_RANGE {
         suspicion.bump(0.25);
         suspicion.last_known = Some(t.translation);
         commands.entity(target_e).insert(Alert::new(t.translation, 3.0));
+    }
+}
+
+/// The direction a shot from `muzzle` actually flies: straight along `forward`, unless the target
+/// is within `MAGNET_CONE` of it, within `MAGNET_RANGE`, and not behind cover; then straight at him.
+pub fn magnetised(muzzle: Vec3, forward: Vec3, target: Vec3) -> Vec3 {
+    let to_target = target - muzzle;
+    let flat = |v: Vec3| v.xz().normalize_or_zero();
+    let on_him = flat(forward).angle_to(flat(to_target)).abs() <= MAGNET_CONE;
+    if on_him && to_target.length() <= MAGNET_RANGE && !arena::los_blocked(muzzle.xz(), target.xz()) {
+        to_target.normalize()
+    } else {
+        forward
     }
 }
 
