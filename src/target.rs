@@ -34,7 +34,7 @@ const BODY_CENTER: f32 = 0.9;
 const EYE_OFFSET: f32 = 0.7;
 pub const TARGET_MAX_HP: u32 = 3;
 
-const VIEW_RANGE: f32 = 40.0;
+pub const VIEW_RANGE: f32 = 40.0;
 const VIEW_HALF_ANGLE: f32 = 0.6; // ~34°, a bit narrower than the camera so "seen" means clearly on screen
 const WALK_SPEED: f32 = 2.2;
 const RUN_SPEED: f32 = 5.5;
@@ -645,7 +645,12 @@ fn perceive(
     }
 
     let dt = time.delta_secs();
-    if sees {
+    if sees && suspicion.engaged {
+        // Mid-fight, any sighting is contact: he knows exactly where you are, so it re-arms the
+        // full engagement. Otherwise a still shooter at range only trickles suspicion back in on
+        // each peek, the hides drain it faster, and he talks himself out of a fight he's winning.
+        suspicion.level = 1.0;
+    } else if sees {
         let closeness = 1.0 - dist / VIEW_RANGE;
         let centred = 1.0 - angle / VIEW_HALF_ANGLE;
         let moving = if shooter_v.length() > 0.5 { 1.0 } else { 0.25 };
