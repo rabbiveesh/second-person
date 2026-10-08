@@ -3,7 +3,7 @@
 use avian3d::prelude::*;
 use bevy::{camera::visibility::RenderLayers, prelude::*};
 
-use crate::{nav::NavObstacle, radar::WORLD_AND_RADAR};
+use crate::{nav::NavObstacle, radar::WORLD_AND_RADAR, target::VIEW_RANGE};
 
 pub const ARENA_HALF: f32 = 30.0;
 
@@ -229,31 +229,45 @@ pub fn cover_blocks() -> impl Iterator<Item = (Vec2, f32)> {
         .chain(PILLARS.iter().map(|&(x, z)| (Vec2::new(x, z), PILLAR_HALF)))
 }
 
-/// Does any cover block sit between `a` and `b` (top-down)? Slab test against each block's square.
+/// Does any cover block sit between `a` and `b` (top-down)?
 pub fn los_blocked(a: Vec2, b: Vec2) -> bool {
-    let d = b - a;
+    cover_blocks().any(|(c, half)| segment_hits_box(a, b, c - half, c + half))
+}
+
+/// [`los_blocked`] with slack: every block is grown by `margin`, so the line stays clear even if
+/// either end shifts by up to `margin` (a peek he arrives at slightly off, a target knocked back
+/// a step). A block closer than that to an end only grows by half the gap, or a threat standing
+/// next to a pillar would hide from every angle.
+pub fn los_blocked_with_margin(a: Vec2, b: Vec2, margin: f32) -> bool {
     cover_blocks().any(|(c, half)| {
-        let (lo, hi) = (c - half, c + half);
-        let (mut t0, mut t1) = (0.0f32, 1.0f32);
-        for i in 0..2 {
-            if d[i].abs() < 1e-6 {
-                if a[i] < lo[i] || a[i] > hi[i] {
-                    return false;
-                }
-            } else {
-                let (mut ta, mut tb) = ((lo[i] - a[i]) / d[i], (hi[i] - a[i]) / d[i]);
-                if ta > tb {
-                    std::mem::swap(&mut ta, &mut tb);
-                }
-                t0 = t0.max(ta);
-                t1 = t1.min(tb);
-                if t0 > t1 {
-                    return false;
-                }
+        let gap = |p: Vec2| ((p - c).abs() - Vec2::splat(half)).max_element();
+        let grow = margin.min(gap(a) * 0.5).min(gap(b) * 0.5).max(0.0);
+        segment_hits_box(a, b, c - half - grow, c + half + grow)
+    })
+}
+
+/// Slab test: does the segment `a`→`b` touch the axis-aligned box `lo`..`hi`?
+fn segment_hits_box(a: Vec2, b: Vec2, lo: Vec2, hi: Vec2) -> bool {
+    let d = b - a;
+    let (mut t0, mut t1) = (0.0f32, 1.0f32);
+    for i in 0..2 {
+        if d[i].abs() < 1e-6 {
+            if a[i] < lo[i] || a[i] > hi[i] {
+                return false;
+            }
+        } else {
+            let (mut ta, mut tb) = ((lo[i] - a[i]) / d[i], (hi[i] - a[i]) / d[i]);
+            if ta > tb {
+                std::mem::swap(&mut ta, &mut tb);
+            }
+            t0 = t0.max(ta);
+            t1 = t1.min(tb);
+            if t0 > t1 {
+                return false;
             }
         }
-        true
-    })
+    }
+    true
 }
 
 /// A place to hide from a threat, plus a spot to peek out from.
@@ -265,6 +279,13 @@ pub struct Cover {
     /// The other side, if that one also works (else same as `peek`).
     pub alt_peek: Vec2,
 }
+
+/// How far past the edge of cover he steps out to peek, nearest first.
+const PEEK_STEPS: [f32; 3] = [1.0, 1.5, 2.0];
+/// Slack on a peek's sightline, for him and the threat each being a little off their marks.
+const PEEK_SLACK: f32 = 0.5;
+/// A peek has to be well inside his eyesight, or he steps out and sees nothing.
+const PEEK_RANGE: f32 = VIEW_RANGE - 5.0;
 
 /// Nearest spot (to `from`) that's hidden from `threat` behind some block.
 pub fn find_cover(from: Vec2, threat: Vec2) -> Option<Cover> {
@@ -284,11 +305,16 @@ pub fn find_cover_avoiding(from: Vec2, threat: Vec2, avoid: Option<Vec2>) -> Opt
             {
                 return None;
             }
-            // Step sideways out of cover to see the threat again.
-            let side = away.perp() * (half + 1.0);
-            let mut peeks = [spot + side, spot - side]
-                .into_iter()
-                .filter(|&p| is_clear(p, 0.5) && !los_blocked(threat, p));
+            // Step sideways out of cover to see the threat again, far enough that the sightline
+            // doesn't just graze a corner: he stops near the spot rather than on it, and the
+            // threat rarely stays exactly where he was last seen.
+            let mut peeks = [1.0, -1.0].into_iter().filter_map(|sign| {
+                PEEK_STEPS.iter().map(|step| spot + away.perp() * sign * (half + step)).find(|&p| {
+                    is_clear(p, PEEK_SLACK)
+                        && p.distance(threat) < PEEK_RANGE
+                        && !los_blocked_with_margin(threat, p, PEEK_SLACK)
+                })
+            });
             // Cover he can't shoot back from is no use to him.
             let peek = peeks.next()?;
             let alt_peek = peeks.next().unwrap_or(peek);
