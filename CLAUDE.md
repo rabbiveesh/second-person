@@ -77,6 +77,8 @@ Fyrox (small ecosystem), macroquad/three-d (too thin, would mean rolling our own
   Tasks only set intent (`LookGoal`, `MoveTo`, `Activity`). Systems `perceive` → `gaze` → `walk`
   do the work. Use the shared `ARRIVE` constant for every arrival check, because mismatched thresholds deadlock tasks. Lower branches **fail** when a higher-priority condition appears (that's preemption).
   `Suspicion` fills while the shooter is in the view cone with line of sight; at 1.0 he's engaged.
+  While engaged, any sighting tops it back up to 1.0 (contact); out of sight it drains, and at 0 he lets go.
+  Peek spots keep `PEEK_SLACK` clear of every corner and stay inside his `VIEW_RANGE`, or peeks see nothing and the fight stalls.
   The engine supports a moving target: the camera is parented to him, and walking is just velocity on a kinematic body.
 - `nav.rs`: vleue_navigator navmesh, built synchronously from `NavObstacle` colliders (the arena blocks).
   `MoveTo { dest, speed, strafe }` is planned into a `Route` and followed by `target::walk`. With `strafe` he moves
