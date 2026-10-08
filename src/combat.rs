@@ -73,6 +73,8 @@ pub struct BulletImpact {
 #[derive(Message, Clone, Copy)]
 pub struct TargetHit {
     pub at: Vec3,
+    /// Which way the bullet was travelling (unit, horizontal-ish).
+    pub dir: Vec3,
 }
 
 /// The target fired a deliberate miss near where he thinks you are: a warning, no damage.
@@ -235,7 +237,8 @@ fn bullet_hits(
             suspicion.bump(0.6);
             suspicion.last_known = Some(bullet.origin);
             commands.entity(other).insert(Alert::new(bullet.origin, 3.0));
-            hits.write(TargetHit { at: target_t.translation });
+            let dir = (target_t.translation - bullet.origin).normalize_or_zero();
+            hits.write(TargetHit { at: target_t.translation, dir });
         } else {
             impacts.write(BulletImpact { at: bullet_t.translation });
             // Near miss: he hears the impact and looks toward where it came from.

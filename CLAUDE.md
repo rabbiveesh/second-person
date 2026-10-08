@@ -25,6 +25,8 @@ controlling the **shooter** hunting him. A corner radar shows the whole arena.
    - `scripts/brp world.query '{"data":{"components":["second_person::target::Suspicion"]},"filter":{}}'`
    - `scripts/brp brp_extras/send_keys '{"keys":["Space"],"duration_ms":60}'`
    - `scripts/brp brp_extras/screenshot '{"path":"<scratchpad>/shot.png"}'`
+   - `scripts/shots <out dir> 1280x720 390x844:touch 844x390:touch` screenshots the staged juice moments
+     (`examples/juice_shots`) at any sizes (logical px; `:touch` = touch UI, fires by tapping). Check mobile with it.
    Gameplay components derive `Reflect` + `#[reflect(Component)]` (auto-registered) so they're queryable.
    `.mcp.json` also registers `bevy_brp_mcp` for MCP-native access.
 
@@ -114,6 +116,9 @@ Fyrox (small ecosystem), macroquad/three-d (too thin, would mean rolling our own
   WebGL2 (it bound a multisampled dummy depth texture, which WebGL2 can't create). Drop the patch once upstream fixes it.
 - `fx.rs`: bevy_firework particle bursts (muzzle, impacts, hits), a muzzle point light (lights up the area
   around the shooter even when he's off-screen), and return-fire tracers.
+- `juice.rs`: transform-only feel, so it runs headless and is tested: the eyes flinch along the bullet
+  (spring + shake on `CameraJuice`, layered on the `MainCamera`, which the AI never moves), drop and roll to the
+  floor when he dies (`OnEnter(Won)`), and the shooter topples when killed (`OnEnter(Lost)`). Part of `presentation`.
 - `audio.rs`: bevy_kira_audio with our own spatial mix (`audio::mix`, not kira's spatial plugin): pan capped
   at ±0.3 (one-earbud friendly), inverse-distance falloff, and a low-passed `_muffled` twin crossfaded in for
   sounds behind the listener or behind cover. The listener is the target's head (`MainCamera`). SFX come from
@@ -121,7 +126,8 @@ Fyrox (small ecosystem), macroquad/three-d (too thin, would mean rolling our own
 - Combat emits messages (`Gunshot`, `BulletImpact`, `TargetHit`, `ShooterHit`, shooter `Footstep`); fx, audio
   and radar subscribe to them. Add new feedback by subscribing, not by calling across modules.
 - `hud.rs`: egui on a dedicated `Camera2d` overlay (`PrimaryEguiContext`; auto-context disabled
-  because game cameras respawn each round). Bars, activity, flashes, radar frame, end banner.
+  because game cameras respawn each round). Bars, activity, flashes, hit marker,
+  wound vignette, radar frame, end banner (held back `BANNER_DELAY` so the deaths play out).
 
 ## Tuning knobs
 Suspicion rates in `target::perceive`. `VIEW_HALF_ANGLE`/`VIEW_RANGE` in `target.rs`. Return fire
