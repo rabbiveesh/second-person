@@ -104,7 +104,12 @@ Fyrox (small ecosystem), macroquad/three-d (too thin, would mean rolling our own
   a clear line straight at him, the only aim assist: no lock-on, nothing that leaks where he is), hearing (shots and near misses raise `Alert` +
   suspicion), target hitscan return fire while engaged, warning shots (`WarningShot`, deliberate misses near
   `last_known`) while suspicious but not engaged, win/lose check.
-- `radar.rs`: ortho top-down camera in a bottom-right viewport (layers 0+1). `RadarMode` is the difficulty knob
+- `layout.rs` (presentation): `ScreenLayout` (view, deck, radar rects) refit from the window every frame, so
+  rotation and resizes just work. Landscape: full-window view, radar in the corner over it. Portrait (h ≥ 1.3w): a
+  deck below the view holds the radar and whistle, and the left thumb drives from it. FOV is Hor+ with a floor:
+  `BASE_VFOV` vertical until the view shows less than `MIN_HFOV` across, then the vertical opens up to `MAX_VFOV`.
+  egui draws after every camera, so HUD fills must leave holes for camera viewports (see `hud::fill_around`).
+- `radar.rs`: ortho top-down camera in the viewport `layout` gives it (layers 0+1). `RadarMode` is the difficulty knob
   (Tab cycles; init'd in `round` so it exists headless):
   - Full: live `LiveBlip`s, heading arrow and view cone.
   - Sonar (default): a sweep every 2s spawns fading contacts at each `RadarContact`, and gunshots ping too.
@@ -132,3 +137,4 @@ Fyrox (small ecosystem), macroquad/three-d (too thin, would mean rolling our own
 ## Tuning knobs
 Suspicion rates in `target::perceive`. `VIEW_HALF_ANGLE`/`VIEW_RANGE` in `target.rs`. Return fire
 damage/interval, bullet magnetism (`MAGNET_CONE`, `MAGNET_RANGE`), hearing range and near-miss range in `combat.rs`.
+Field of view and the portrait threshold in `layout.rs`.
