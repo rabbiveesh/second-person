@@ -14,6 +14,8 @@
 //! - lag compensation for projectiles: the server tests bullets against where the victim was
 //!   in the shooter's (interpolated) view, capped at MAX_LAG_COMP_TICKS
 //! - link conditioner (`--lag <rtt ms>`) to feel it on localhost
+//! - simulation contract (`SimSet`/`AuthoritySet`), enforced by `cargo test --example net_spike`
+//! - liveness: the server exits when nobody is playing (`MATCH_*_S` env overrides)
 
 use std::{collections::VecDeque, net::SocketAddr, time::Duration};
 
@@ -93,6 +95,11 @@ impl Diffable for Pose {
     }
 }
 
+/// Whether this body may act this tick. Dead or between rounds = false. Predicted, because
+/// movement reads it: the server decides it, the client learns it through rollback.
+#[derive(Component, Serialize, Deserialize, Clone, Copy, Debug, PartialEq)]
+struct Active(bool);
+
 #[derive(Component, Serialize, Deserialize, Clone, Copy, Debug, PartialEq)]
 struct Hp(f32);
 
@@ -148,11 +155,8 @@ fn protocol(app: &mut App) {
         },
     });
     app.component::<PlayerId>().replicate();
-    app.component::<Pose>()
-        .replicate()
-        .predict()
-        .add_linear_interpolation()
-        .add_correction();
+    sim_component::<Pose>(app).add_linear_interpolation().add_correction();
+    sim_component::<Active>(app);
     app.component::<Hp>().replicate();
     app.component::<Score>().replicate();
     app.component::<Eyelids>().replicate();
@@ -164,6 +168,55 @@ fn protocol(app: &mut App) {
         ..default()
     })
     .add_direction(NetworkDirection::ServerToClient);
+}
+
+// ---------------------------------------------------------------- simulation contract
+//
+// The client predicts its own body by re-running the server's simulation. That only works if
+// the simulation is a pure function of predicted state + inputs. The contract:
+//
+// - Predicted state implements `Simulated` and is registered through `sim_component`, which
+//   turns on prediction (the trait bounds are what rollback needs, so it won't compile otherwise).
+// - `SimSet` (FixedUpdate, both apps, re-run on rollback) advances it, reading only predicted
+//   state and inputs.
+// - `AuthoritySet` (server only) may overrule it: damage, death, respawn. Clients pick those
+//   up as a misprediction and roll back.
+//
+// `arch` tests at the bottom walk every schedule's system access and fail on any breach.
+
+trait Simulated: Component<Mutability = bevy::ecs::component::Mutable> + Clone + PartialEq + std::fmt::Debug {}
+impl Simulated for Pose {}
+impl Simulated for Active {}
+
+#[derive(SystemSet, Clone, Debug, PartialEq, Eq, Hash)]
+struct SimSet;
+
+#[derive(SystemSet, Clone, Debug, PartialEq, Eq, Hash)]
+struct AuthoritySet;
+
+/// Components registered as predicted simulation state, plus what the sim may read besides them.
+#[derive(Resource, Default)]
+struct SimRegistry {
+    state: Vec<bevy::ecs::component::ComponentId>,
+}
+
+fn sim_component<T>(app: &mut App) -> lightyear::prediction::registry::PredictedComponentRegistration<'_, T>
+where
+    T: Simulated + Serialize + serde::de::DeserializeOwned,
+{
+    let id = app.world_mut().register_component::<T>();
+    app.world_mut().get_resource_or_init::<SimRegistry>().state.push(id);
+    app.component::<T>().replicate().predict()
+}
+
+/// The one movement system: the server runs it authoritatively, the client runs it for its own
+/// (predicted) body and re-runs it during rollback. Interpolated opponents are only displayed.
+fn sim_move(mut q: Query<(&mut Pose, &ActionState<Inputs>, &Active), Without<Interpolated>>) {
+    for (mut pose, input, active) in &mut q {
+        if active.0 {
+            step(&mut pose, &input.0);
+        }
+    }
 }
 
 // ---------------------------------------------------------------- shared sim
@@ -226,7 +279,9 @@ fn main() {
     match args.get(1).map(String::as_str) {
         Some("server") => {
             app.add_plugins((
-                MinimalPlugins.set(bevy::app::ScheduleRunnerPlugin::run_loop(Duration::from_millis(2))),
+                MinimalPlugins.set(bevy::app::ScheduleRunnerPlugin::run_loop(Duration::from_millis(
+                    std::env::var("SPIKE_LOOP_MS").ok().and_then(|s| s.parse().ok()).unwrap_or(2),
+                ))),
                 bevy::log::LogPlugin::default(),
                 bevy::state::app::StatesPlugin,
             ));
@@ -322,9 +377,92 @@ fn server_plugin(app: &mut App, lag: u64) {
         .add_observer(on_connected)
         .add_systems(
             FixedUpdate,
-            (server_move, record_history, server_eyelids, server_fire, server_bullets, server_round).chain(),
+            (
+                sim_move.in_set(SimSet),
+                record_history,
+                server_eyelids,
+                server_fire,
+                (server_bullets, server_round).chain().in_set(AuthoritySet),
+            )
+                .chain(),
         )
-        .add_systems(Update, server_log);
+        .init_resource::<Liveness>()
+        .add_systems(Update, (server_log, liveness));
+}
+
+// ---------------------------------------------------------------- liveness
+//
+// A match server costs money for as long as it runs, so it must end itself. Exiting the process
+// stops the Fly Machine (restart policy "no"). Each limit can be overridden with an env var.
+
+fn env_secs(name: &str, default: f32) -> f32 {
+    std::env::var(name).ok().and_then(|s| s.parse().ok()).unwrap_or(default)
+}
+
+#[derive(Resource)]
+struct Liveness {
+    /// Waiting for a second player (at start, or after one left).
+    wait_for_players: f32,
+    /// Neither player has touched a control.
+    afk: f32,
+    /// Everyone left; a short grace for reconnects.
+    empty: f32,
+    /// Ceiling no matter what, in case the other checks have a bug.
+    max_match: f32,
+    /// Last time both players were in / somebody pressed something / anyone was connected.
+    last_full: f32,
+    last_input: f32,
+    last_connected: Option<f32>,
+}
+
+impl Default for Liveness {
+    fn default() -> Self {
+        Self {
+            wait_for_players: env_secs("MATCH_WAIT_S", 120.0),
+            afk: env_secs("MATCH_AFK_S", 60.0),
+            empty: env_secs("MATCH_EMPTY_S", 10.0),
+            max_match: env_secs("MATCH_MAX_S", 900.0),
+            last_full: 0.0,
+            last_input: 0.0,
+            last_connected: None,
+        }
+    }
+}
+
+fn liveness(
+    time: Res<Time<Real>>,
+    mut l: ResMut<Liveness>,
+    clients: Query<(), (With<ClientOf>, With<Connected>)>,
+    players: Query<&ActionState<Inputs>, With<PlayerId>>,
+    mut exit: MessageWriter<AppExit>,
+) {
+    let now = time.elapsed_secs();
+    let connected = clients.iter().count();
+    if connected > 0 {
+        l.last_connected = Some(now);
+    }
+    // The AFK clock only runs while both players are in.
+    if connected < 2 || players.iter().any(|a| a.0 != Inputs::default()) {
+        l.last_input = now;
+    }
+    if connected >= 2 {
+        l.last_full = now;
+    }
+    let reason = if l.last_connected.is_some_and(|t| now - t > l.empty) {
+        Some("everyone left")
+    } else if now - l.last_full > l.wait_for_players {
+        Some("no opponent")
+    } else if now - l.last_input > l.afk {
+        Some("nobody is playing")
+    } else if now > l.max_match {
+        Some("match hit the time limit")
+    } else {
+        None
+    };
+    if let Some(reason) = reason {
+        info!("LIVENESS: shutting down after {now:.0}s: {reason}");
+        exit.write(AppExit::Success);
+    }
 }
 
 fn on_connected(
@@ -344,6 +482,7 @@ fn on_connected(
     commands.spawn((
         PlayerId(id),
         pose,
+        Active(true),
         Hp(MAX_HP),
         Score(0),
         Eyelids::default(),
@@ -355,17 +494,6 @@ fn on_connected(
         InterpolationTarget::to_clients(NetworkTarget::AllExceptSingle(id)),
         ControlledBy { owner: t.entity, lifetime: Default::default() },
     ));
-}
-
-fn server_move(round: Res<RoundState>, mut q: Query<(&mut Pose, &ActionState<Inputs>, &Hp)>) {
-    if round.respawn_in.is_some() {
-        return;
-    }
-    for (mut pose, input, hp) in &mut q {
-        if hp.0 > 0.0 {
-            step(&mut pose, &input.0);
-        }
-    }
 }
 
 #[derive(Component)]
@@ -518,18 +646,23 @@ fn server_log(time: Res<Time>, mut t: Local<f32>, q: Query<(&PlayerId, &Pose, &H
     }
 }
 
-fn server_round(mut round: ResMut<RoundState>, mut q: Query<(&mut Pose, &mut Hp)>) {
+/// Freezes both bodies between a kill and the next round, then respawns them.
+fn server_round(mut round: ResMut<RoundState>, mut q: Query<(&mut Pose, &mut Hp, &mut Active)>) {
     let Some(n) = round.respawn_in.as_mut() else { return };
     *n -= 1;
+    for (_, _, mut active) in &mut q {
+        active.set_if_neq(Active(false));
+    }
     if *n > 0 {
         return;
     }
     round.respawn_in = None;
     let mut first = None;
-    for (mut pose, mut hp) in &mut q {
+    for (mut pose, mut hp, mut active) in &mut q {
         *pose = random_spawn(first);
         first = Some(pose.pos);
         hp.0 = MAX_HP;
+        *active = Active(true);
     }
     info!("new round");
 }
@@ -604,17 +737,20 @@ fn client_plugin(app: &mut App, id: u64, server: SocketAddr, lag: u64, bot: bool
             }
         })
         .add_systems(FixedPreUpdate, write_inputs.in_set(InputSystems::WriteClientInputs))
-        .add_systems(FixedUpdate, predict_move)
+        .add_systems(FixedUpdate, sim_move.in_set(SimSet))
         .add_systems(Update, (receive_events, log_state));
     if !headless {
-        app.add_systems(Startup, setup_view)
-            .add_plugins(arena::plugin)
-            .add_systems(FixedUpdate, local_fire_fx.after(predict_move).run_if(not(is_in_rollback)))
-            .add_systems(
-                Update,
-                (dress_players, dress_bullets, sync_transforms, eyes_follow_opponent, tick_fx, hud_title, shots),
-            );
+        app.add_systems(Startup, setup_view).add_plugins(arena::plugin);
+        client_view_systems(app);
     }
+}
+
+fn client_view_systems(app: &mut App) {
+    app.add_systems(FixedUpdate, local_fire_fx.after(SimSet).run_if(not(is_in_rollback)))
+        .add_systems(
+            Update,
+            (dress_players, dress_bullets, sync_transforms, eyes_follow_opponent, tick_fx, hud_title, shots),
+        );
 }
 
 /// Your inputs: arrows + space, or the bot. The bot "cheats" the way any client could:
@@ -686,14 +822,6 @@ fn write_inputs(
         i.blink = k.pressed(KeyCode::ShiftLeft) || k.pressed(KeyCode::KeyC);
     }
     action.0 = i;
-}
-
-fn predict_move(mut q: Query<(&mut Pose, &ActionState<Inputs>, &Hp), With<Predicted>>) {
-    for (mut pose, input, hp) in &mut q {
-        if hp.0 > 0.0 {
-            step(&mut pose, &input.0);
-        }
-    }
 }
 
 fn receive_events(
@@ -971,4 +1099,219 @@ fn shots(time: Res<Time>, mut t: Local<f32>, mut n: Local<u32>, mut commands: Co
     commands
         .spawn(Screenshot::primary_window())
         .observe(save_to_disk(format!("{dir}/shot{}.png", *n)));
+}
+
+// ---------------------------------------------------------------- architecture tests
+
+#[cfg(test)]
+mod arch {
+    use super::*;
+    use bevy::ecs::{
+        component::ComponentId,
+        query::ComponentAccessKind,
+        schedule::{InternedSystemSet, NodeId, SystemKey, graph::Direction},
+        system::System,
+    };
+    use std::collections::HashSet;
+
+    /// One system's place in the contract and what it touches.
+    struct Sys {
+        name: String,
+        schedule: String,
+        sim: bool,
+        authority: bool,
+        reads: Vec<ComponentId>,
+        writes: Vec<ComponentId>,
+    }
+
+    fn server_app() -> App {
+        let mut app = App::new();
+        app.add_plugins((MinimalPlugins, bevy::state::app::StatesPlugin));
+        app.add_plugins(ServerPlugins { tick_duration: Duration::from_secs_f64(1.0 / TICK_HZ) });
+        protocol(&mut app);
+        server_plugin(&mut app, 0);
+        app
+    }
+
+    fn client_app() -> App {
+        let mut app = App::new();
+        app.add_plugins((
+            MinimalPlugins,
+            TransformPlugin,
+            bevy::input::InputPlugin,
+            bevy::state::app::StatesPlugin,
+        ));
+        app.add_plugins(ClientPlugins { tick_duration: Duration::from_secs_f64(1.0 / TICK_HZ) });
+        protocol(&mut app);
+        client_plugin(&mut app, 1, SocketAddr::from(([127, 0, 0, 1], PORT)), 0, false, true);
+        // The windowed client's systems too, minus the parts that need a renderer to build.
+        client_view_systems(&mut app);
+        app
+    }
+
+    /// Every system we wrote, in every schedule, with its set membership and data access.
+    /// Systems are initialized but never run, so nothing binds a socket.
+    fn survey(app: &mut App) -> Vec<Sys> {
+        let world = app.world_mut();
+        let mut schedules = world.remove_resource::<Schedules>().unwrap();
+        let mut out = vec![];
+        for (label, schedule) in schedules.iter_mut() {
+            let graph = schedule.graph_mut();
+            let members = |set: InternedSystemSet| -> HashSet<SystemKey> {
+                let mut found = HashSet::new();
+                let Some(root) = graph.system_sets.get_key(set) else { return found };
+                let mut stack = vec![NodeId::Set(root)];
+                while let Some(n) = stack.pop() {
+                    for child in graph.hierarchy().graph().neighbors_directed(n, Direction::Outgoing) {
+                        match child {
+                            NodeId::System(k) => {
+                                found.insert(k);
+                            }
+                            set => stack.push(set),
+                        }
+                    }
+                }
+                found
+            };
+            let sim = members(SimSet.intern());
+            let authority = members(AuthoritySet.intern());
+            let keys: Vec<SystemKey> = graph.systems.iter().map(|(k, ..)| k).collect();
+            for key in keys {
+                let system = graph.systems.get_mut(key).unwrap();
+                let name = system.name().to_string();
+                if !name.starts_with("net_spike::") {
+                    continue; // engine / lightyear internals (rollback, interpolation) are trusted
+                }
+                let access = System::initialize(system, world);
+                let mut sys = Sys {
+                    name,
+                    schedule: format!("{label:?}"),
+                    sim: sim.contains(&key),
+                    authority: authority.contains(&key),
+                    reads: vec![],
+                    writes: vec![],
+                };
+                let all = access.combined_access().try_iter_access().unwrap_or_else(|_| {
+                    panic!("{} has unbounded world access (exclusive system?)", sys.name)
+                });
+                for kind in all {
+                    match kind {
+                        ComponentAccessKind::Shared(id) => sys.reads.push(id),
+                        ComponentAccessKind::Exclusive(id) => sys.writes.push(id),
+                        ComponentAccessKind::Archetypal(_) => {} // With/Without/Has: no data flows
+                    }
+                }
+                out.push(sys);
+            }
+        }
+        world.insert_resource(schedules);
+        out
+    }
+
+    /// The contract, as a list of human-readable breaches.
+    fn violations(app: &mut App, server: bool) -> Vec<String> {
+        let systems = survey(app);
+        let world = app.world();
+        let state: HashSet<ComponentId> = world.resource::<SimRegistry>().state.iter().copied().collect();
+        let inputs = world.components().component_id::<ActionState<Inputs>>().unwrap();
+        let name = |id: ComponentId| {
+            world.components().get_name(id).map(|n| n.shortname().to_string()).unwrap_or_default()
+        };
+        let mut v = vec![];
+        for s in &systems {
+            let who = format!("{} ({})", s.name, s.schedule);
+            if s.sim {
+                if s.schedule != "FixedUpdate" {
+                    v.push(format!("{who} is in SimSet but not FixedUpdate, so rollback won't re-run it"));
+                }
+                for &id in s.reads.iter().chain(&s.writes) {
+                    if !state.contains(&id) && id != inputs {
+                        v.push(format!(
+                            "{who} is simulation but depends on {}, which isn't predicted: \
+                             make it Simulated or move the logic out of SimSet",
+                            name(id)
+                        ));
+                    }
+                }
+            }
+            if s.authority && !server {
+                v.push(format!("{who}: AuthoritySet is server-only"));
+            }
+            if !s.sim && !s.authority {
+                for &id in &s.writes {
+                    if state.contains(&id) {
+                        v.push(format!(
+                            "{who} writes predicted {} outside SimSet/AuthoritySet: \
+                             the client can't reproduce it, so it will mispredict",
+                            name(id)
+                        ));
+                    }
+                }
+            }
+        }
+        v
+    }
+
+    fn assert_clean(v: Vec<String>) {
+        assert!(v.is_empty(), "simulation contract broken:\n  {}", v.join("\n  "));
+    }
+
+    #[test]
+    fn server_respects_simulation_contract() {
+        assert_clean(violations(&mut server_app(), true));
+    }
+
+    #[test]
+    fn client_respects_simulation_contract() {
+        assert_clean(violations(&mut client_app(), false));
+    }
+
+    #[test]
+    fn sim_runs_on_both_sides() {
+        for (mut app, side) in [(server_app(), "server"), (client_app(), "client")] {
+            let names: Vec<String> = survey(&mut app).into_iter().filter(|s| s.sim).map(|s| s.name).collect();
+            assert!(names.iter().any(|n| n.ends_with("sim_move")), "{side} doesn't run sim_move: {names:?}");
+        }
+    }
+
+    // The checker itself: the bugs it exists to catch.
+
+    fn predicts_from_hp(mut q: Query<(&mut Pose, &ActionState<Inputs>, &Hp)>) {
+        for (mut pose, input, hp) in &mut q {
+            if hp.0 > 0.0 {
+                step(&mut pose, &input.0);
+            }
+        }
+    }
+
+    fn knockback(mut q: Query<&mut Pose>) {
+        for mut pose in &mut q {
+            pose.pos.x += 1.0;
+        }
+    }
+
+    fn frozen_by_round(round: Res<RoundState>, mut q: Query<(&mut Pose, &ActionState<Inputs>)>) {
+        if round.respawn_in.is_none() {
+            for (mut pose, input) in &mut q {
+                step(&mut pose, &input.0);
+            }
+        }
+    }
+
+    #[test]
+    fn catches_known_mispredictions() {
+        let mut app = client_app();
+        app.init_resource::<RoundState>().add_systems(
+            FixedUpdate,
+            (predicts_from_hp.in_set(SimSet), frozen_by_round.in_set(SimSet), knockback),
+        );
+        app.add_systems(Update, sim_move.in_set(SimSet)).add_systems(Update, server_round.in_set(AuthoritySet));
+        let v = violations(&mut app, false);
+        let hit = |needle: &str| v.iter().any(|m| m.contains(needle));
+        assert!(hit("predicts_from_hp") && hit("Hp"), "{v:#?}");
+        assert!(hit("frozen_by_round") && hit("RoundState"), "{v:#?}");
+        assert!(hit("knockback") && hit("outside SimSet"), "{v:#?}");
+        assert!(hit("not FixedUpdate"), "{v:#?}");
+        assert!(hit("server_round") && hit("server-only"), "{v:#?}");
+    }
 }
