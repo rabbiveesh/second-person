@@ -5,6 +5,7 @@ use bevy_egui::{EguiContexts, EguiPrimaryContextPass, PrimaryEguiContext, egui};
 use rand::seq::IndexedRandom;
 
 use crate::{
+    arena::Layout,
     combat::{ShooterHit, TargetHit},
     layout::ScreenLayout,
     radar::RadarMode,
@@ -121,6 +122,7 @@ fn draw_hud(
     touch: Res<TouchControls>,
     started: Res<Started>,
     mut whistle: ResMut<TouchWhistle>,
+    arena: Res<Layout>,
     flashes: Res<Flashes>,
     layout: Res<ScreenLayout>,
     shooter: Option<Single<(&Shooter, &Stunned)>>,
@@ -255,9 +257,10 @@ fn draw_hud(
                 ui.add(
                     egui::Label::new(
                         egui::RichText::new(format!(
-                            "Up/Down move   Left/Right turn   Space fire   W whistle   M target walks: {}   Tab radar: {:?}   F1 inspector",
+                            "Up/Down move   Left/Right turn   Space fire   W whistle   M target walks: {}   Tab radar: {:?}   L arena: {}   F1 inspector",
                             if mobile.0 { "on" } else { "off" },
-                            *radar_mode
+                            *radar_mode,
+                            arena.name,
                         ))
                         .color(egui::Color32::WHITE)
                         .background_color(egui::Color32::from_black_alpha(140)),

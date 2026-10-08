@@ -10,6 +10,7 @@ use bevy::{
 use bevy::ecs::system::RunSystemOnce;
 use leafwing_input_manager::prelude::*;
 use second_person::{
+    arena::{ArenaMode, Layout},
     combat::{Bullet, Gunshot, ShooterHit, TargetHit},
     round::GameState,
     arena::{Floor, Floors},
@@ -20,11 +21,19 @@ use second_person::{
 const DT: f32 = 1.0 / 60.0;
 
 fn app() -> App {
-    app_with(|_| {})
+    app_cfg(ArenaMode::Classic, |_| {})
 }
 
 /// `app()` plus extra plugins, which must go in before `finish`.
 fn app_with(extra: impl FnOnce(&mut App)) -> App {
+    app_cfg(ArenaMode::Classic, extra)
+}
+
+fn app_in(arena: ArenaMode) -> App {
+    app_cfg(arena, |_| {})
+}
+
+fn app_cfg(arena: ArenaMode, extra: impl FnOnce(&mut App)) -> App {
     let mut app = App::new();
     app.add_plugins((
         MinimalPlugins,
@@ -36,7 +45,8 @@ fn app_with(extra: impl FnOnce(&mut App)) -> App {
     ))
     .init_asset::<StandardMaterial>()
     .insert_resource(TimeUpdateStrategy::ManualDuration(Duration::from_secs_f32(DT)))
-    .add_plugins((second_person::gameplay, second_person::juice::plugin));
+    .add_plugins((second_person::gameplay, second_person::juice::plugin))
+    .insert_resource(arena);
     extra(&mut app);
     count::<Gunshot>(&mut app);
     count::<TargetHit>(&mut app);
@@ -251,7 +261,7 @@ fn engaged_target_runs_for_cover() {
         app.update();
         took_cover |= app.world().get::<Activity>(target) == Some(&Activity::TakingCover);
         let p = app.world().get::<Transform>(target).unwrap().translation;
-        hidden |= second_person::arena::los_blocked(shooter_pos.xz(), p.xz());
+        hidden |= Layout::classic().los_blocked(shooter_pos.xz(), p.xz());
     }
     assert!(took_cover, "never ran for cover");
     assert!(hidden, "never got out of the shooter's line of sight");
@@ -307,11 +317,11 @@ fn engaged_target_eventually_kills_an_exposed_shooter_then_r_restarts() {
 
 #[test]
 fn cover_spots_hide_from_the_threat() {
-    use second_person::arena::{find_cover, is_clear, los_blocked};
+    let layout = Layout::classic();
     for threat in [Vec2::new(0.0, -12.0), Vec2::new(15.0, 15.0), Vec2::new(-20.0, 0.0)] {
-        let cover = find_cover(Vec2::ZERO, threat).expect("some cover exists");
-        assert!(los_blocked(threat, cover.spot), "{cover:?} visible from {threat}");
-        assert!(is_clear(cover.spot, 0.5));
+        let cover = layout.find_cover(Vec2::ZERO, threat).expect("some cover exists");
+        assert!(layout.los_blocked(threat, cover.spot), "{cover:?} visible from {threat}");
+        assert!(layout.is_clear(cover.spot, 0.5));
     }
 }
 
@@ -319,22 +329,22 @@ fn cover_spots_hide_from_the_threat() {
 /// peek whose sightline grazes a corner sees nothing but crate and the fight stalls.
 #[test]
 fn peeks_see_the_threat_with_some_slack() {
-    use second_person::arena::{find_cover, is_clear, los_blocked};
+    let layout = Layout::classic();
     let ring: Vec<Vec2> = (0..8).map(|i| Vec2::from_angle(i as f32 * TAU / 8.0) * 0.45).chain([Vec2::ZERO]).collect();
     let mut checked = 0;
     for x in (-26..=26).step_by(4) {
         for z in (-26..=26).step_by(4) {
             let threat = Vec2::new(x as f32, z as f32);
-            if !is_clear(threat, 1.0) {
+            if !layout.is_clear(threat, 1.0) {
                 continue;
             }
             for from in [Vec2::ZERO, Vec2::new(15.0, -15.0), Vec2::new(-15.0, 15.0)] {
-                let Some(cover) = find_cover(from, threat) else { continue };
+                let Some(cover) = layout.find_cover(from, threat) else { continue };
                 for peek in [cover.peek, cover.alt_peek] {
                     assert!(peek.distance(threat) < VIEW_RANGE - 1.0, "{cover:?}: peek out of eyesight of {threat}");
                     for (&him, &you) in ring.iter().flat_map(|a| ring.iter().map(move |b| (a, b))) {
                         assert!(
-                            !los_blocked(peek + him, threat + you),
+                            !layout.los_blocked(peek + him, threat + you),
                             "{cover:?}: peek {} can't see {}",
                             peek + him,
                             threat + you
@@ -363,7 +373,7 @@ fn navmesh_routes_around_cover() {
     for w in path {
         for i in 0..=20 {
             let p = prev.lerp(w.xz(), i as f32 / 20.0);
-            assert!(second_person::arena::is_clear(p, 0.3), "path passes through cover at {p}");
+            assert!(Layout::classic().is_clear(p, 0.3), "path passes through cover at {p}");
         }
         prev = w.xz();
     }
@@ -373,11 +383,14 @@ fn navmesh_routes_around_cover() {
 fn random_starts_are_clear_of_cover_and_the_target() {
     use rand::SeedableRng;
     let mut rng = rand::rngs::StdRng::seed_from_u64(42);
-    for _ in 0..500 {
-        let t = second_person::shooter::random_start(&mut rng);
-        let p = t.translation.xz();
-        assert!(p.length() >= second_person::shooter::MIN_START_DISTANCE, "{p}");
-        assert!(second_person::arena::is_clear(p, 0.35), "{p} overlaps cover");
+    let layouts = std::iter::once(Layout::classic()).chain((0..40).map(Layout::random));
+    for layout in layouts {
+        for _ in 0..50 {
+            let t = second_person::shooter::random_start(&mut rng, &layout);
+            let p = t.translation.xz();
+            assert!(p.length() >= second_person::shooter::MIN_START_DISTANCE, "{p} in {}", layout.name);
+            assert!(layout.is_clear(p, 0.35), "{p} overlaps cover in {}", layout.name);
+        }
     }
 }
 
@@ -437,6 +450,119 @@ fn at_most_one_directional_light_with_presentation() {
     assert_eq!(n, 1, "WebGL2 supports one directional light");
 }
 
+/// The first seed whose generated layout has each shape.
+fn seed_per_shape() -> Vec<u64> {
+    let mut seen = std::collections::HashSet::new();
+    (0..500)
+        .filter(|&seed| seen.insert(Layout::random(seed).name.split(' ').next().unwrap().to_owned()))
+        .collect()
+}
+
+#[test]
+fn generated_layouts_are_sound() {
+    use rand::SeedableRng;
+    assert_eq!(seed_per_shape().len(), 6, "every shape shows up");
+    for seed in 0..300 {
+        let layout = Layout::random(seed);
+        let name = &layout.name;
+        assert_eq!(Layout::random(seed).outline, layout.outline, "{name} is not reproducible");
+        assert!(layout.area() > 400.0, "{name} too small: {}", layout.area());
+        assert!(layout.is_clear(Vec2::ZERO, 3.0), "{name}: the target's spawn is blocked");
+        assert!(layout.blocks.len() >= 3, "{name}: only {} blocks", layout.blocks.len());
+        for (i, a) in layout.blocks.iter().enumerate() {
+            assert!(layout.contains(a.center), "{name}: block outside the walls");
+            for b in &layout.blocks[i + 1..] {
+                let gap = ((a.center - b.center).abs() - (a.half + b.half)).max_element();
+                assert!(gap > 2.0, "{name}: blocks {a:?} and {b:?} leave no room to pass");
+            }
+        }
+        // Somewhere to hide from a shooter standing in the open.
+        let threat = layout
+            .random_point(&mut rand::rngs::StdRng::seed_from_u64(seed), 1.0, |p| p.length() > 10.0)
+            .unwrap();
+        assert!(layout.find_cover(Vec2::ZERO, threat).is_some(), "{name}: no cover from {threat}");
+    }
+}
+
+#[test]
+fn walls_block_line_of_sight_round_corners() {
+    // Notch: the bitten-out side blocks the view across it.
+    let layout = Layout {
+        name: "test".into(),
+        outline: vec![
+            Vec2::new(-20.0, -20.0),
+            Vec2::new(20.0, -20.0),
+            Vec2::new(20.0, 20.0),
+            Vec2::new(5.0, 20.0),
+            Vec2::new(5.0, 5.0),
+            Vec2::new(-5.0, 5.0),
+            Vec2::new(-5.0, 20.0),
+            Vec2::new(-20.0, 20.0),
+        ],
+        blocks: vec![],
+    };
+    assert!(layout.los_blocked(Vec2::new(-12.0, 15.0), Vec2::new(12.0, 15.0)));
+    assert!(!layout.los_blocked(Vec2::new(-12.0, 0.0), Vec2::new(12.0, 0.0)));
+    assert!(!layout.contains(Vec2::new(0.0, 10.0)));
+    assert!(!layout.is_clear(Vec2::new(0.0, 4.5), 1.0), "too close to the notch wall");
+}
+
+#[test]
+fn every_generated_shape_is_walkable_end_to_end() {
+    use rand::SeedableRng;
+    use second_person::nav::Nav;
+    for seed in seed_per_shape() {
+        let mut app = app_in(ArenaMode::Seed(seed));
+        // The navmesh picks up the new arena's obstacles a few frames in.
+        step(&mut app, 0.2);
+        let layout = app.world().resource::<Layout>().clone();
+        assert_eq!(layout.name, Layout::random(seed).name);
+        let mut rng = rand::rngs::StdRng::seed_from_u64(seed);
+        for _ in 0..25 {
+            let to = layout.random_point(&mut rng, 1.0, |_| true).unwrap();
+            let (a, b) = (Vec3::new(0.0, 0.9, 0.0), Vec3::new(to.x, 0.9, to.y));
+            let path = app
+                .world_mut()
+                .run_system_once(move |nav: Nav| nav.path(a, b))
+                .unwrap()
+                .unwrap_or_else(|| panic!("{}: no path to {to}", layout.name));
+            let mut prev = a.xz();
+            for w in path {
+                for i in 0..=20 {
+                    let p = prev.lerp(w.xz(), i as f32 / 20.0);
+                    assert!(layout.is_clear(p, 0.3), "{}: path to {to} clips {p}", layout.name);
+                }
+                prev = w.xz();
+            }
+        }
+    }
+}
+
+#[test]
+fn l_switches_arena_and_rebuilds_it() {
+    let mut app = app();
+    let walls = |app: &mut App| {
+        app.world_mut()
+            .query::<&Name>()
+            .iter(app.world())
+            .filter(|n| n.as_str() == "Wall")
+            .count()
+    };
+    assert_eq!(walls(&mut app), 4);
+    assert_eq!(app.world().resource::<Layout>().name, "Classic");
+
+    press(&mut app, KeyCode::KeyL);
+    assert_eq!(*app.world().resource::<ArenaMode>(), ArenaMode::Random);
+    let layout = app.world().resource::<Layout>().clone();
+    assert_ne!(layout.name, "Classic");
+    assert_eq!(walls(&mut app), layout.outline.len(), "old walls despawned, new ones spawned");
+    assert_eq!(app.world_mut().query::<&Shooter>().iter(app.world()).count(), 1);
+    assert_eq!(app.world_mut().query::<&Target>().iter(app.world()).count(), 1);
+
+    press(&mut app, KeyCode::KeyL);
+    assert_eq!(app.world().resource::<Layout>().name, "Classic");
+    assert_eq!(walls(&mut app), 4);
+}
 #[test]
 fn arrow_keys_drive_the_shooter_like_a_tank() {
     let mut app = app();
@@ -731,11 +857,11 @@ fn bullet_magnetism_does_not_bend_around_cover() {
     let muzzle = Vec3::new(-9.0, 1.0, -12.0);
     let to_him = (Vec3::new(0.0, 0.9, 0.0) - muzzle).normalize();
     let forward = Quat::from_rotation_y(8f32.to_radians()) * to_him;
-    assert_eq!(magnetised(muzzle, forward, Vec3::new(0.0, 0.9, 0.0)), forward);
+    assert_eq!(magnetised(&Layout::classic(), muzzle, forward, Vec3::new(0.0, 0.9, 0.0)), forward);
     // Same angle in the open does bend.
     let open = Vec3::new(0.0, 1.0, 12.0);
     let fwd = Quat::from_rotation_y(8f32.to_radians()) * (Vec3::new(0.0, 0.9, 0.0) - open).normalize();
-    assert_ne!(magnetised(open, fwd, Vec3::new(0.0, 0.9, 0.0)), fwd);
+    assert_ne!(magnetised(&Layout::classic(), open, fwd, Vec3::new(0.0, 0.9, 0.0)), fwd);
 }
 
 /// Him at `him`, the shooter at `shooter_pos`, both on the ground plane (XZ). Engages him, then

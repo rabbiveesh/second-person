@@ -43,6 +43,7 @@ controlling the **shooter** hunting him. A corner radar shows the whole arena.
 | sfxr + hound (dev-deps) | procedural SFX generation |
 | bevy_brp_extras 0.22 | BRP + screenshots/key input for agents (`brp` feature) |
 | rand 0.9 | randomness |
+| earcut 0.4 | triangulates arena floor polygons (already in the tree via vleue_navigator) |
 | virtual_joystick 2.8 | on-screen touch stick (bevy_ui) |
 | vleue_navigator 0.16 (`avian3d`) | navmesh pathfinding (polyanya), built from avian colliders, WASM-safe |
 
@@ -62,7 +63,11 @@ Fyrox (small ecosystem), macroquad/three-d (too thin, would mean rolling our own
 - `round.rs`: `GameState` (Playing/Won/Lost). Per-round entities get `RoundEntity` and are
   despawned on `OnEnter(Playing)` before the `SpawnRound` set. Physics pauses outside Playing.
   `MetaAction` (R restart, M toggle target walking). `TargetMobile` resource.
-- `arena.rs`: static ground, walls, crates and pillars (hand-placed, reproducible).
+- `arena.rs`: `Layout` resource (floor outline polygon + axis-aligned cover `Block`s), respawned every round
+  (`RoundEntity`). `ArenaMode` picks it: `Classic` (the original hand-placed arena), `Random` (default; new
+  `Layout::random(seed)` each round: yard, hall, L, cross, octagon or notch, rotated, with scattered cover), or
+  `Seed(n)`. L cycles Classic/Random and restarts. Generated cover keeps `COVER_GAP` from walls and other cover so the
+  free space stays connected, and keeps the origin (the target's spawn) open. The floor mesh is triangulated with `earcut`.
 - `target.rs`: target entity → Head (pitch) → `MainCamera`. Behaviour tree:
   `Selector[engaged→(TakeCover, Fight), alerted→Investigate, mobile→Wander, Scan]`.
   Engaged means he runs to cover (`arena::find_cover`, no shooting while running), preferring cover he reaches by
@@ -80,11 +85,12 @@ Fyrox (small ecosystem), macroquad/three-d (too thin, would mean rolling our own
   While engaged, any sighting tops it back up to 1.0 (contact); out of sight it drains, and at 0 he lets go.
   Peek spots keep `PEEK_SLACK` clear of every corner and stay inside his `VIEW_RANGE`, or peeks see nothing and the fight stalls.
   The engine supports a moving target: the camera is parented to him, and walking is just velocity on a kinematic body.
-- `nav.rs`: vleue_navigator navmesh, built synchronously from `NavObstacle` colliders (the arena blocks).
+- `nav.rs`: vleue_navigator navmesh, built synchronously from `NavObstacle` colliders (the arena blocks) inside the
+  layout's outline (`fit_navmesh` updates it each round).
   `MoveTo { dest, speed, strafe }` is planned into a `Route` and followed by `target::walk`. With `strafe` he moves
   without turning, so he can watch a threat while side-stepping.
-- `arena.rs` also has the pure geometry helpers `is_clear`, `los_blocked` (top-down; all cover is taller than eyes)
-  and `find_cover`. They're unit-testable without an app.
+- `Layout` also has the pure geometry helpers `is_clear`, `los_blocked` (top-down, cover and walls; all cover is taller
+  than eyes), `find_cover` and `random_point`. They're unit-testable without an app; read the layout via `Res<Layout>`.
 - `shooter.rs`: random start via `random_start` (clear of cover, ≥12m from the target).
 - `shooter.rs`: dynamic capsule, rotation locked, tank controls relative to its own facing. One analog
   `ShooterAction::Drive` dual axis (x turn, y throttle); arrows bind to it as a virtual d-pad.
@@ -97,7 +103,7 @@ Fyrox (small ecosystem), macroquad/three-d (too thin, would mean rolling our own
   until the first touch/key/click (`Started`). Then `TouchControls` follows the last input (touch on, key/click
   off), and the stick spawns/despawns with it. `scripts/headless-run` starts on this overlay: send any key over BRP.
 - `arena.rs` floor zones: the `Floors` resource (base `Floor` + rect `FloorZone`s, later ones win; `Floors::at`).
-  Classic = wood plaza, gravel, metal, grass. Each floor has its own
+  Classic = wood plaza, gravel, metal, grass; random layouts get a random base and up to 3 zones that fit (`Floors::random`). Each floor has its own
   footstep sounds and a `hearing_range`; `combat::hear_movement` turns nearby steps, bumps and whistles
   (W, the shooter's "where am I?" sound, heard by him from 28m) into suspicion.
 - `combat.rs`: bullets (CCD, collision events; `magnetised` bends a shot within `MAGNET_CONE`/`MAGNET_RANGE` of him with
@@ -109,7 +115,7 @@ Fyrox (small ecosystem), macroquad/three-d (too thin, would mean rolling our own
   deck below the view holds the radar and whistle, and the left thumb drives from it. FOV is Hor+ with a floor:
   `BASE_VFOV` vertical until the view shows less than `MIN_HFOV` across, then the vertical opens up to `MAX_VFOV`.
   egui draws after every camera, so HUD fills must leave holes for camera viewports (see `hud::fill_around`).
-- `radar.rs`: ortho top-down camera in the viewport `layout` gives it (layers 0+1). `RadarMode` is the difficulty knob
+- `radar.rs`: ortho top-down camera in the viewport `layout` gives it (layers 0+1), framed on the layout's bounds. `RadarMode` is the difficulty knob
   (Tab cycles; init'd in `round` so it exists headless):
   - Full: live `LiveBlip`s, heading arrow and view cone.
   - Sonar (default): a sweep every 2s spawns fading contacts at each `RadarContact`, and gunshots ping too.

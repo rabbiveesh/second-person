@@ -13,7 +13,7 @@ use bevy::{
 };
 
 use crate::{
-    arena::ARENA_HALF,
+    arena::Layout,
     combat::Gunshot,
     round::{GameState, RoundEntity},
 };
@@ -75,7 +75,7 @@ struct RadarAssets {
 pub fn plugin(app: &mut App) {
     app.init_resource::<RadarMode>()
         .add_systems(Startup, spawn_radar)
-        .add_systems(Update, (apply_mode, fade))
+        .add_systems(Update, (apply_mode, fade, frame_layout.run_if(resource_changed::<Layout>)))
         .add_systems(Update, (sonar_sweep, gunshot_pings).run_if(in_state(GameState::Playing)));
 }
 
@@ -94,9 +94,8 @@ fn spawn_radar(mut commands: Commands, mut meshes: ResMut<Assets<Mesh>>) {
             ..default()
         },
         Projection::Orthographic(OrthographicProjection {
-            scaling_mode: ScalingMode::FixedVertical {
-                viewport_height: ARENA_HALF * 2.0 + 2.0,
-            },
+            // Fitted to the arena by `frame_layout`.
+            scaling_mode: ScalingMode::FixedVertical { viewport_height: 62.0 },
             ..OrthographicProjection::default_3d()
         }),
         // North (-Z) is up on the radar.
@@ -110,6 +109,18 @@ fn spawn_radar(mut commands: Commands, mut meshes: ResMut<Assets<Mesh>>) {
             ..default()
         },
     ));
+}
+
+/// Centre the radar on the arena and zoom so the whole floor fits.
+fn frame_layout(layout: Res<Layout>, mut camera: Single<(&mut Projection, &mut Transform), With<RadarCamera>>) {
+    let bounds = layout.bounds();
+    let (projection, transform) = &mut *camera;
+    if let Projection::Orthographic(ortho) = &mut **projection {
+        let side = bounds.size().max_element() + 2.0;
+        ortho.scaling_mode = ScalingMode::FixedVertical { viewport_height: side };
+    }
+    let c = bounds.center();
+    **transform = Transform::from_xyz(c.x, 60.0, c.y).looking_at(Vec3::new(c.x, 0.0, c.y), Vec3::NEG_Z);
 }
 
 fn apply_mode(
@@ -134,6 +145,7 @@ fn sonar_sweep(
     mode: Res<RadarMode>,
     mut timer: Local<Option<Timer>>,
     assets: Res<RadarAssets>,
+    layout: Res<Layout>,
     mut materials: ResMut<Assets<StandardMaterial>>,
     contacts: Query<(&GlobalTransform, &RadarContact)>,
 ) {
@@ -144,21 +156,22 @@ fn sonar_sweep(
     for (t, contact) in &contacts {
         spawn_contact(&mut commands, &assets, &mut materials, t.translation(), contact.0);
     }
-    // Sweep ring from the centre of the arena.
+    // Sweep ring from the centre of the arena out to its corners.
+    let bounds = layout.bounds();
     let material = fading_material(&mut materials, Color::srgb(0.3, 1.0, 0.5), 0.6);
     commands.spawn((
         Name::new("Sonar sweep"),
         RoundEntity,
         Mesh3d(assets.ring.clone()),
         MeshMaterial3d(material.clone()),
-        Transform::from_xyz(0.0, BLIP_HEIGHT, 0.0)
+        Transform::from_xyz(bounds.center().x, BLIP_HEIGHT, bounds.center().y)
             .with_rotation(Quat::from_rotation_x(-std::f32::consts::FRAC_PI_2)),
         RenderLayers::layer(RADAR_LAYER),
         Fading {
             timer: Timer::from_seconds(0.9, TimerMode::Once),
             material,
             base_alpha: 0.6,
-            grow_to: Some(ARENA_HALF * 1.45),
+            grow_to: Some(bounds.half_size().length() * 1.03),
         },
     ));
 }

@@ -7,7 +7,10 @@ use avian3d::prelude::*;
 use bevy::{ecs::system::SystemParam, prelude::*};
 use vleue_navigator::prelude::*;
 
-use crate::arena::{self, ARENA_HALF};
+use crate::{
+    arena::{self, Layout},
+    round::{GameState, SpawnRound},
+};
 
 /// Marks colliders the navmesh should route around.
 #[derive(Component, Default)]
@@ -49,27 +52,28 @@ pub fn plugin(app: &mut App) {
         VleueNavigatorPlugin,
         NavmeshUpdaterPlugin::<Collider, NavObstacle>::default(),
     ))
-    .add_systems(Startup, spawn_navmesh)
+    .add_systems(OnEnter(GameState::Playing), fit_navmesh.in_set(SpawnRound).after(arena::spawn_arena))
     .add_systems(Update, (clear_routes, plan_routes).chain());
 }
 
-fn spawn_navmesh(mut commands: Commands) {
-    let h = ARENA_HALF - 0.5;
+/// Walkable area = the round's floor outline. Changed settings trigger a rebuild. The first
+/// round starts before `Startup`, so the navmesh is spawned here too.
+fn fit_navmesh(mut commands: Commands, layout: Res<Layout>, mut navmesh: Query<&mut NavMeshSettings>) {
+    let fixed = Triangulation::from_outer_edges(&layout.outline);
+    if let Ok(mut settings) = navmesh.single_mut() {
+        settings.fixed = fixed;
+        return;
+    }
     commands.spawn((
         Name::new("Navmesh"),
         ManagedNavMesh::single(),
         NavMeshSettings {
-            fixed: Triangulation::from_outer_edges(&[
-                Vec2::new(-h, -h),
-                Vec2::new(h, -h),
-                Vec2::new(h, h),
-                Vec2::new(-h, h),
-            ]),
+            fixed,
             agent_radius: 0.6,
             simplify: 0.01,
             ..default()
         },
-        // The arena is static: build synchronously whenever obstacles change (i.e. once).
+        // The arena is static within a round: build synchronously whenever it changes.
         NavMeshUpdateMode::Direct,
         NavMeshUpdateModeBlocking,
         // Navmesh lives in its local XY plane; lay it on the ground (XZ).
@@ -99,13 +103,14 @@ impl Nav<'_, '_> {
 fn plan_routes(
     mut commands: Commands,
     nav: Nav,
+    layout: Res<Layout>,
     q: Query<(Entity, &Transform, &MoveTo, Option<&Evade>), Changed<MoveTo>>,
 ) {
     for (e, t, m, evade) in &q {
         // Fall back to a straight line if the mesh isn't ready or the point is off-mesh.
         let mut route = nav.path(t.translation, m.dest).unwrap_or_else(|| vec![m.dest]);
         if let Some(Evade(threat)) = evade {
-            route = weave(t.translation, &route, *threat);
+            route = weave(&layout, t.translation, &route, *threat);
         }
         commands.entity(e).insert(Route(route));
     }
@@ -114,7 +119,7 @@ fn plan_routes(
 /// Breaks up legs that run along the line of fire from `threat` into swerves either side of it,
 /// so he never holds a straight line a shooter can just keep firing down. Swerves that would
 /// leave the arena, clip cover or cut behind a block are skipped (that stretch stays straight).
-pub fn weave(from: Vec3, route: &[Vec3], threat: Vec2) -> Vec<Vec3> {
+pub fn weave(layout: &Layout, from: Vec3, route: &[Vec3], threat: Vec2) -> Vec<Vec3> {
     let mut out = Vec::with_capacity(route.len());
     let mut a = from.xz();
     let mut side = 1.0;
@@ -129,7 +134,7 @@ pub fn weave(from: Vec3, route: &[Vec3], threat: Vec2) -> Vec<Vec3> {
             let swerves = (len / WEAVE_STEP) as usize;
             for i in 1..swerves {
                 let p = a + dir * (i as f32 * WEAVE_STEP) + dir.perp() * WEAVE_SIDE * side;
-                if arena::is_clear(p, 0.6) && !arena::los_blocked(prev, p) && !arena::los_blocked(p, b) {
+                if layout.is_clear(p, 0.6) && !layout.los_blocked(prev, p) && !layout.los_blocked(p, b) {
                     out.push(p.extend(w.y).xzy());
                     prev = p;
                     side = -side;

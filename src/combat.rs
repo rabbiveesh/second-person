@@ -152,6 +152,7 @@ fn fire(
     mut cooldown: Local<Option<Timer>>,
     shooter: Single<(&ActionState<ShooterAction>, &Transform, &Stunned), With<Shooter>>,
     target: Single<(Entity, &Transform, &mut Suspicion), With<Target>>,
+    layout: Res<arena::Layout>,
     mut gunshots: MessageWriter<Gunshot>,
 ) {
     let cooldown = cooldown.get_or_insert_with(|| {
@@ -169,7 +170,7 @@ fn fire(
 
     let muzzle = t.translation + t.rotation * Vec3::new(0.3, 0.15, -0.9);
     let (target_e, target_t, mut suspicion) = target.into_inner();
-    let forward = magnetised(muzzle, *t.forward(), target_t.translation);
+    let forward = magnetised(&layout, muzzle, *t.forward(), target_t.translation);
     commands.spawn((
         Name::new("Bullet"),
         RoundEntity,
@@ -197,11 +198,11 @@ fn fire(
 
 /// The direction a shot from `muzzle` actually flies: straight along `forward`, unless the target
 /// is within `MAGNET_CONE` of it, within `MAGNET_RANGE`, and not behind cover; then straight at him.
-pub fn magnetised(muzzle: Vec3, forward: Vec3, target: Vec3) -> Vec3 {
+pub fn magnetised(layout: &arena::Layout, muzzle: Vec3, forward: Vec3, target: Vec3) -> Vec3 {
     let to_target = target - muzzle;
     let flat = |v: Vec3| v.xz().normalize_or_zero();
     let on_him = flat(forward).angle_to(flat(to_target)).abs() <= MAGNET_CONE;
-    if on_him && to_target.length() <= MAGNET_RANGE && !arena::los_blocked(muzzle.xz(), target.xz()) {
+    if on_him && to_target.length() <= MAGNET_RANGE && !layout.los_blocked(muzzle.xz(), target.xz()) {
         to_target.normalize()
     } else {
         forward

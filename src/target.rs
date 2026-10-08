@@ -22,7 +22,7 @@ use rand::Rng;
 use crate::{
     combat::Grapple,
     Layer,
-    arena::{self, ARENA_HALF, Cover},
+    arena::{Cover, Layout},
     nav::{Evade, MoveTo, Route},
     radar::{LiveBlip, RADAR_LAYER, RadarContact},
     round::{GameState, RoundEntity, SpawnRound, TargetMobile},
@@ -325,13 +325,15 @@ fn take_cover_listeners() -> Listeners {
 fn plan_cover(
     In(e): In<Entity>,
     mut commands: Commands,
+    layout: Res<Layout>,
     q: Query<(&Transform, &Suspicion, Option<&Relocate>)>,
 ) {
     let Ok((t, s, relocate)) = q.get(e) else { return };
     let here = t.translation.xz();
     let threat = s.last_known.map_or(here + t.forward().xz() * 10.0, |p| p.xz());
-    let cover = arena::find_cover_avoiding(here, threat, relocate.map(|r| r.0))
-        .or_else(|| arena::find_cover(here, threat))
+    let cover = layout
+        .find_cover_avoiding(here, threat, relocate.map(|r| r.0))
+        .or_else(|| layout.find_cover(here, threat))
         .unwrap_or(Cover { spot: here, peek: here, alt_peek: here });
     commands.entity(e).try_remove::<Relocate>();
     commands.entity(e).insert((
@@ -479,6 +481,7 @@ fn investigate(
     In(e): In<Entity>,
     time: Res<Time>,
     mut commands: Commands,
+    layout: Res<Layout>,
     mut q: Query<(&Transform, &Suspicion, &mut Alert, &mut LookGoal, Has<MoveTo>)>,
 ) -> TaskStatus {
     let Ok((t, suspicion, mut alert, mut goal, moving)) = q.get_mut(e) else {
@@ -488,12 +491,12 @@ fn investigate(
         return FAILURE;
     }
     let (here, there) = (t.translation.xz(), alert.at.xz());
-    if arena::los_blocked(here, there) && here.distance(there) > 3.0 {
+    if layout.los_blocked(here, there) && here.distance(there) > 3.0 {
         if !moving {
             // Head for a clear spot near the noise (it's often right up against cover).
             let dest = (0..=20)
                 .map(|i| there.lerp(here, i as f32 / 20.0))
-                .find(|&p| arena::is_clear(p, 0.8))
+                .find(|&p| layout.is_clear(p, 0.8))
                 .unwrap_or(here);
             commands.entity(e).insert(MoveTo {
                 dest: dest.extend(BODY_CENTER).xzy(),
@@ -564,10 +567,10 @@ fn wander_listeners() -> Listeners {
     let mut l = insert_while_running(Activity::Wandering);
     l.push((
         TaskEvent::Enter,
-        listener(|In(e): In<Entity>, mut commands: Commands| {
-            let mut rng = rand::rng();
-            let r = ARENA_HALF - 4.0;
-            let dest = Vec3::new(rng.random_range(-r..r), BODY_CENTER, rng.random_range(-r..r));
+        listener(|In(e): In<Entity>, mut commands: Commands, layout: Res<Layout>, q: Query<&Transform>| {
+            let here = q.get(e).map_or(Vec2::ZERO, |t| t.translation.xz());
+            let spot = layout.random_point(&mut rand::rng(), 1.5, |_| true).unwrap_or(here);
+            let dest = spot.extend(BODY_CENTER).xzy();
             commands.entity(e).insert(MoveTo {
                 dest,
                 speed: WALK_SPEED,

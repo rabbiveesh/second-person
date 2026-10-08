@@ -14,7 +14,7 @@ use bevy_kira_audio::prelude::*;
 use rand::Rng;
 
 use crate::{
-    arena::{self, Floor, Floors},
+    arena::{Floor, Floors, Layout},
     combat::{BulletImpact, GrappleFired, Gunshot, ShooterHit, TargetHit, WarningShot},
     round::{GameState, RoundEntity},
     shooter::{Bump, Footstep, Whistle},
@@ -128,7 +128,7 @@ fn to_db(amp: f32) -> f32 {
 }
 
 /// Mix for a sound at `src`, heard by a listener at `ear` (only its yaw matters).
-pub fn mix(ear: &GlobalTransform, src: Vec3, db: f32, range: f32, rolloff: f32) -> Mix {
+pub fn mix(layout: &Layout, ear: &GlobalTransform, src: Vec3, db: f32, range: f32, rolloff: f32) -> Mix {
     let (here, there) = (ear.translation().xz(), src.xz());
     let to = there - here;
     let dist = to.length();
@@ -141,7 +141,7 @@ pub fn mix(ear: &GlobalTransform, src: Vec3, db: f32, range: f32, rolloff: f32) 
     let mut amp = (REF_DIST / dist.max(REF_DIST)).powf(rolloff) * fade * fade * (3.0 - 2.0 * fade);
 
     let behind = (-dir.dot(fwd)).max(0.0);
-    let occluded = dist > 0.5 && arena::los_blocked(here, there);
+    let occluded = dist > 0.5 && layout.los_blocked(here, there);
     let mut muffle = behind * BEHIND_MUFFLE;
     let mut extra_db = behind * BEHIND_DB;
     if occluded {
@@ -172,6 +172,7 @@ fn play_events(
     mut warnings: MessageReader<WarningShot>,
     mut grapples: MessageReader<GrappleFired>,
     floors: Res<Floors>,
+    layout: Res<Layout>,
     mut steps: MessageReader<Footstep>,
     mut bumps: MessageReader<Bump>,
     mut whistles: MessageReader<Whistle>,
@@ -179,7 +180,7 @@ fn play_events(
     let Ok(ear) = ear.single() else { return };
     let mut rng = rand::rng();
     let mut play = |sound: &Sound, at: Vec3, db: f32, range: f32, rolloff: f32, rate: f64| {
-        let m = mix(ear, at, db, range, rolloff);
+        let m = mix(&layout, ear, at, db, range, rolloff);
         let start = |source: &Handle<AudioSource>, vol: f32| {
             audio.play(source.clone()).with_volume(vol).with_panning(m.pan).with_playback_rate(rate).handle()
         };
@@ -233,12 +234,13 @@ fn play_events(
 /// Keep the mix right as the listener turns or walks while a sound is still playing.
 fn remix(
     ear: Query<&GlobalTransform, With<MainCamera>>,
+    layout: Res<Layout>,
     emitters: Query<(&Transform, &Emitter)>,
     mut instances: ResMut<Assets<AudioInstance>>,
 ) {
     let Ok(ear) = ear.single() else { return };
     for (t, e) in &emitters {
-        let m = mix(ear, t.translation, e.db, e.range, e.rolloff);
+        let m = mix(&layout, ear, t.translation, e.db, e.range, e.rolloff);
         for (handle, db) in [(&e.dry, m.dry_db), (&e.muffled, m.muffled_db)] {
             if let Some(mut i) = instances.get_mut(handle) {
                 i.set_decibels(db, AudioTween::default());
@@ -267,25 +269,25 @@ mod tests {
 
     #[test]
     fn pan_is_capped_so_both_ears_hear_it() {
-        let m = mix(&ear(), Vec3::new(5.0, 0.0, 0.0), 0.0, 50.0, 1.0);
+        let m = mix(&Layout::classic(), &ear(), Vec3::new(5.0, 0.0, 0.0), 0.0, 50.0, 1.0);
         assert!((m.pan - MAX_PAN).abs() < 1e-4, "{m:?}");
-        let m = mix(&ear(), Vec3::new(-5.0, 0.0, 0.0), 0.0, 50.0, 1.0);
+        let m = mix(&Layout::classic(), &ear(), Vec3::new(-5.0, 0.0, 0.0), 0.0, 50.0, 1.0);
         assert!((m.pan + MAX_PAN).abs() < 1e-4, "{m:?}");
     }
 
     #[test]
     fn farther_is_quieter_and_out_of_range_is_silent() {
-        let near = mix(&ear(), Vec3::new(0.0, 0.0, -4.0), 0.0, 30.0, 1.0);
-        let far = mix(&ear(), Vec3::new(0.0, 0.0, -16.0), 0.0, 30.0, 1.0);
+        let near = mix(&Layout::classic(), &ear(), Vec3::new(0.0, 0.0, -4.0), 0.0, 30.0, 1.0);
+        let far = mix(&Layout::classic(), &ear(), Vec3::new(0.0, 0.0, -16.0), 0.0, 30.0, 1.0);
         assert!(near.dry_db > far.dry_db + 10.0, "{near:?} {far:?}");
-        let gone = mix(&ear(), Vec3::new(0.0, 0.0, -31.0), 0.0, 30.0, 1.0);
+        let gone = mix(&Layout::classic(), &ear(), Vec3::new(0.0, 0.0, -31.0), 0.0, 30.0, 1.0);
         assert_eq!(gone.dry_db, SILENCE_DB);
     }
 
     #[test]
     fn behind_is_muffled() {
-        let front = mix(&ear(), Vec3::new(0.0, 0.0, -4.0), 0.0, 30.0, 1.0);
-        let back = mix(&ear(), Vec3::new(0.0, 0.0, 4.0), 0.0, 30.0, 1.0);
+        let front = mix(&Layout::classic(), &ear(), Vec3::new(0.0, 0.0, -4.0), 0.0, 30.0, 1.0);
+        let back = mix(&Layout::classic(), &ear(), Vec3::new(0.0, 0.0, 4.0), 0.0, 30.0, 1.0);
         assert!(front.dry_db > front.muffled_db + 20.0, "{front:?}");
         assert!(back.muffled_db > back.dry_db + 10.0, "{back:?}");
     }
