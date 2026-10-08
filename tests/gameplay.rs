@@ -15,7 +15,7 @@ use second_person::{
     round::GameState,
     arena::{Floor, Floors},
     shooter::{Bump, SHOOTER_MAX_HP, Shooter},
-    target::{Activity, Alert, Suspicion, TARGET_MAX_HP, Target, VIEW_RANGE},
+    target::{Activity, Alert, MainCamera, Suspicion, TARGET_MAX_HP, Target, VIEW_RANGE},
 };
 
 const DT: f32 = 1.0 / 60.0;
@@ -45,7 +45,7 @@ fn app_cfg(arena: ArenaMode, extra: impl FnOnce(&mut App)) -> App {
     ))
     .init_asset::<StandardMaterial>()
     .insert_resource(TimeUpdateStrategy::ManualDuration(Duration::from_secs_f32(DT)))
-    .add_plugins(second_person::gameplay)
+    .add_plugins((second_person::gameplay, second_person::juice::plugin))
     .insert_resource(arena);
     extra(&mut app);
     count::<Gunshot>(&mut app);
@@ -149,6 +149,62 @@ fn shooting_the_target_hurts_and_alerts_him() {
     let target = single::<Target>(&mut app);
     assert_eq!(app.world().get::<Target>(target).unwrap().hp, TARGET_MAX_HP - 1);
     assert!(app.world().get::<Suspicion>(target).unwrap().level > 0.5);
+}
+
+/// The eyes' local offset angle from rest (the AI only turns the body and head).
+fn flinch_angle(app: &mut App) -> f32 {
+    let cam = single::<MainCamera>(app);
+    app.world().get::<Transform>(cam).unwrap().rotation.angle_between(Quat::IDENTITY)
+}
+
+#[test]
+fn getting_shot_jolts_his_view_then_it_settles() {
+    let mut app = app();
+    stage(&mut app, Vec3::new(0.0, 0.9, 6.0), Vec3::new(0.0, 0.9, -10.0));
+    press(&mut app, KeyCode::Space);
+    let mut peak: f32 = 0.0;
+    for _ in 0..30 {
+        app.update();
+        peak = peak.max(flinch_angle(&mut app));
+    }
+    assert_eq!(counted::<TargetHit>(&app), 1);
+    assert!(peak > 0.1, "view should visibly snap, peaked at {peak}");
+    step(&mut app, 1.5);
+    assert!(flinch_angle(&mut app) < 0.01, "view should settle back");
+}
+
+#[test]
+fn killing_him_drops_his_view_to_the_floor() {
+    let mut app = app();
+    stage(&mut app, Vec3::new(0.0, 0.9, 6.0), Vec3::new(0.0, 0.9, -10.0));
+    let target = single::<Target>(&mut app);
+    app.world_mut().get_mut::<Target>(target).unwrap().hp = 1;
+    press(&mut app, KeyCode::Space);
+    step(&mut app, 0.5);
+    assert_eq!(*app.world().resource::<State<GameState>>().get(), GameState::Won);
+    step(&mut app, 1.5);
+    let cam = single::<MainCamera>(&mut app);
+    let eyes = app.world().get::<GlobalTransform>(cam).unwrap().compute_transform();
+    assert!(eyes.translation.y < 0.5, "eyes at {} should be near the floor", eyes.translation.y);
+    // Lying on his side: the view's up is mostly sideways.
+    assert!(eyes.up().y.abs() < 0.4, "view up {:?} should be tipped over", eyes.up());
+}
+
+#[test]
+fn the_shooter_falls_over_when_killed() {
+    let mut app = app();
+    stage(&mut app, Vec3::new(0.0, 0.9, 6.0), Vec3::new(0.0, 0.9, -10.0));
+    let shooter = single::<Shooter>(&mut app);
+    let floor = app.world().get::<Transform>(shooter).unwrap().translation.y - 0.85;
+    app.world_mut().get_mut::<Shooter>(shooter).unwrap().hp = 0.0;
+    // check_outcome queues the state change; it applies on the next frame.
+    app.update();
+    app.update();
+    assert_eq!(*app.world().resource::<State<GameState>>().get(), GameState::Lost);
+    step(&mut app, 1.5);
+    let t = app.world().get::<Transform>(shooter).unwrap();
+    assert!(t.up().y.abs() < 0.1, "shooter should be lying down, up = {:?}", t.up());
+    assert!((t.translation.y - floor - 0.35).abs() < 0.1, "should rest on the floor, at {}", t.translation.y);
 }
 
 #[test]

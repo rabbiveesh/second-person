@@ -197,7 +197,7 @@ fn spawn_target(
                         ..default()
                     },
                     Projection::Perspective(PerspectiveProjection {
-                        fov: 70f32.to_radians(),
+                        fov: crate::layout::BASE_VFOV,
                         ..default()
                     }),
                 )],

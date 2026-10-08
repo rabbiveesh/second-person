@@ -36,6 +36,8 @@ pub struct TouchWhistle {
     pub button: Rect,
 }
 
+/// Diameter of the HUD's round whistle button.
+pub const WHISTLE_SIZE: f32 = 84.0;
 const STICK_SIZE: f32 = 150.0;
 const KNOB_SIZE: f32 = 70.0;
 /// Stick travel (0..1) below which it does nothing.

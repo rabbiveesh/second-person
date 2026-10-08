@@ -2,7 +2,7 @@
 //! The muzzle flash is a navigation aid: it lights up the shooter's surroundings even
 //! when he's off-screen.
 
-use bevy::prelude::*;
+use bevy::{light::NotShadowCaster, prelude::*};
 use bevy_firework::{
     bevy_utilitarian::prelude::{RandF32, RandVec3},
     core::{
@@ -25,6 +25,10 @@ use crate::{
 #[derive(Component)]
 struct Ttl(Timer);
 
+/// Thins out over its `Ttl` (the lingering tracer of the killing shot).
+#[derive(Component)]
+struct Thin;
+
 #[derive(Component)]
 struct Tracer {
     from: Vec3,
@@ -33,7 +37,7 @@ struct Tracer {
 
 pub fn plugin(app: &mut App) {
     app.add_plugins(ParticleSystemPlugin::default())
-        .add_systems(Update, (muzzle_flash, impact_sparks, target_hit, return_fire, expire, draw_tracers, spawn_hook, fly_hook));
+        .add_systems(Update, (muzzle_flash, impact_sparks, target_hit, return_fire, thin, expire, draw_tracers, spawn_hook, fly_hook));
 }
 
 fn muzzle_flash(mut commands: Commands, mut shots: MessageReader<Gunshot>) {
@@ -100,15 +104,74 @@ fn return_fire(
     mut commands: Commands,
     mut hits: MessageReader<ShooterHit>,
     mut warnings: MessageReader<WarningShot>,
+    shooter: Option<Single<&Shooter>>,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut materials: ResMut<Assets<StandardMaterial>>,
 ) {
-    let shots = hits.read().map(|h| (h.from, h.to)).chain(warnings.read().map(|w| (w.from, w.to)));
-    for (from, to) in shots {
+    let dead = shooter.is_some_and(|s| s.hp <= 0.0);
+    let hits = hits.read().map(|h| (h.from, h.to, true));
+    let shots = hits.chain(warnings.read().map(|w| (w.from, w.to, false)));
+    for (from, to, hit) in shots {
         commands.spawn((
             Name::new("Tracer"),
             RoundEntity,
             Tracer { from, to },
             Ttl(Timer::from_seconds(0.12, TimerMode::Once)),
         ));
+        if !(hit && dead) {
+            continue;
+        }
+        // The killing shot: a thick beam that hangs in the air, and a big burst where it lands.
+        // It starts a little way out so it doesn't fill his view up close.
+        let dir = (to - from).normalize_or(Vec3::Y);
+        let from = from + dir * 1.5;
+        let span = to - from;
+        commands.spawn((
+            Name::new("Killing tracer"),
+            RoundEntity,
+            Mesh3d(meshes.add(Cylinder::new(0.035, span.length()))),
+            MeshMaterial3d(materials.add(StandardMaterial {
+                base_color: Color::srgb(1.0, 0.35, 0.2),
+                emissive: LinearRgba::rgb(10.0, 2.0, 1.0),
+                unlit: true,
+                ..default()
+            })),
+            NotShadowCaster,
+            Transform::from_translation(from + span / 2.0)
+                .with_rotation(Quat::from_rotation_arc(Vec3::Y, span.normalize_or(Vec3::Y))),
+            Thin,
+            Ttl(Timer::from_seconds(1.5, TimerMode::Once)),
+        ));
+        commands.spawn((
+            Name::new("Killing light"),
+            RoundEntity,
+            PointLight {
+                color: Color::srgb(1.0, 0.4, 0.3),
+                intensity: 3_000_000.0,
+                range: 10.0,
+                ..default()
+            },
+            Transform::from_translation(to),
+            Ttl(Timer::from_seconds(0.15, TimerMode::Once)),
+        ));
+        burst(
+            &mut commands,
+            "Shooter down",
+            to,
+            span.normalize_or(Vec3::Y),
+            1.4,
+            48,
+            (3.0, 9.0),
+            LinearRgba::rgb(8.0, 1.0, 0.4),
+            0.7,
+        );
+    }
+}
+
+fn thin(mut q: Query<(&mut Transform, &Ttl), With<Thin>>) {
+    for (mut t, ttl) in &mut q {
+        let left = 1.0 - ttl.0.fraction();
+        t.scale = Vec3::new(left, 1.0, left);
     }
 }
 
