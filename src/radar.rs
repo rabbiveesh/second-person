@@ -8,9 +8,8 @@
 //! - `Off`: no radar.
 
 use bevy::{
-    camera::{ScalingMode, Viewport, visibility::RenderLayers},
+    camera::{ScalingMode, visibility::RenderLayers},
     prelude::*,
-    window::PrimaryWindow,
 };
 
 use crate::{
@@ -24,9 +23,6 @@ pub const RADAR_LAYER: usize = 1;
 /// radar can never see them directly — only via blips/contacts.
 pub const WORLD_AND_RADAR: &[usize] = &[0, RADAR_LAYER];
 
-/// Fraction of the window's shorter side that the radar occupies.
-const RADAR_FRACTION: f32 = 0.34;
-const RADAR_MARGIN: f32 = 16.0;
 const SONAR_PERIOD: f32 = 2.0;
 const CONTACT_FADE: f32 = 1.8;
 const BLIP_HEIGHT: f32 = 4.0;
@@ -57,8 +53,9 @@ pub struct LiveBlip;
 #[derive(Component)]
 pub struct RadarContact(pub Color);
 
+/// Laid out by `layout::ScreenLayout`.
 #[derive(Component)]
-struct RadarCamera;
+pub struct RadarCamera;
 
 /// A fading sonar contact or sweep ring.
 #[derive(Component)]
@@ -75,17 +72,11 @@ struct RadarAssets {
     ring: Handle<Mesh>,
 }
 
-/// Where the radar is on screen, in logical pixels, so the HUD can frame it.
-#[derive(Resource, Default)]
-pub struct RadarRect(pub Rect);
-
 pub fn plugin(app: &mut App) {
-    app.init_resource::<RadarRect>()
-        .init_resource::<RadarMode>()
+    app.init_resource::<RadarMode>()
         .add_systems(Startup, spawn_radar)
         .add_systems(Update, (apply_mode, fade, frame_layout.run_if(resource_changed::<Layout>)))
-        .add_systems(Update, (sonar_sweep, gunshot_pings).run_if(in_state(GameState::Playing)))
-        .add_systems(PostUpdate, fit_viewport);
+        .add_systems(Update, (sonar_sweep, gunshot_pings).run_if(in_state(GameState::Playing)));
 }
 
 fn spawn_radar(mut commands: Commands, mut meshes: ResMut<Assets<Mesh>>) {
@@ -252,33 +243,5 @@ fn fade(
         if f.timer.is_finished() {
             commands.entity(e).despawn();
         }
-    }
-}
-
-/// Keep the radar square in the bottom-right corner, whatever the window size.
-fn fit_viewport(
-    window: Single<&Window, With<PrimaryWindow>>,
-    mut camera: Single<&mut Camera, With<RadarCamera>>,
-    mut rect: ResMut<RadarRect>,
-) {
-    let scale = window.scale_factor();
-    let (w, h) = (window.width(), window.height());
-    let side = w.min(h) * RADAR_FRACTION;
-    if side < 1.0 {
-        return;
-    }
-    let min = Vec2::new(w - side - RADAR_MARGIN, h - side - RADAR_MARGIN);
-    rect.0 = Rect::from_corners(min, min + side);
-
-    let viewport = Viewport {
-        physical_position: (min * scale).as_uvec2(),
-        physical_size: UVec2::splat((side * scale) as u32),
-        ..default()
-    };
-    let unchanged = camera.viewport.as_ref().is_some_and(|v| {
-        v.physical_position == viewport.physical_position && v.physical_size == viewport.physical_size
-    });
-    if !unchanged {
-        camera.viewport = Some(viewport);
     }
 }

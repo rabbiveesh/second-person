@@ -2,12 +2,17 @@
 <html lang="en">
   <head>
     <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover" />
     <title>Second Person Shooter</title>
     <link data-trunk rel="rust" data-cargo-no-default-features data-cargo-profile="wasm-release" data-wasm-opt="z" />
+    <link data-trunk rel="copy-dir" href="assets" />
     <style>
       html, body { margin: 0; height: 100%; background: #0b120e; overflow: hidden; }
-      canvas#game { width: 100%; height: 100%; display: block; outline: none; }
+      /* The game owns every touch: no scroll, pinch-zoom, pull-to-refresh, long-press menu or text selection. */
+      html, body { overscroll-behavior: none; -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; }
+      canvas#game { width: 100%; height: 100%; display: block; outline: none; touch-action: none; }
       #loading {
         position: fixed; inset: 0; display: grid; place-items: center;
         color: #8fe3a8; font: 18px/1.4 ui-monospace, monospace; pointer-events: none;
@@ -15,8 +20,20 @@
     </style>
   </head>
   <body>
-    <div id="loading">loading… (click the game to focus, then arrows + space)</div>
+    <div id="loading">loading… (keyboard: click, then arrows + space · touch: left thumb drives, tap right to fire)</div>
     <canvas id="game" tabindex="0"></canvas>
+    <script>
+      // Browsers keep audio suspended until a user gesture, and cpal only calls resume() at
+      // startup, so the game would stay silent. Track every AudioContext and resume them all
+      // on the first touch, click or key.
+      const audioContexts = [];
+      window.AudioContext = new Proxy(window.AudioContext, {
+        construct(target, args) { const ctx = new target(...args); audioContexts.push(ctx); return ctx; },
+      });
+      for (const ev of ["pointerdown", "touchend", "keydown"]) {
+        document.addEventListener(ev, () => audioContexts.forEach((c) => c.state !== "running" && c.resume()), { capture: true });
+      }
+    </script>
     <script>
       // Hide the loading note once Bevy starts drawing, and keep keyboard focus on the canvas.
       const canvas = document.getElementById("game");

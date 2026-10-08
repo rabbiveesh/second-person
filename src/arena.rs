@@ -17,6 +17,7 @@ use crate::{
     nav::NavObstacle,
     radar::WORLD_AND_RADAR,
     round::{GameState, RoundEntity, SpawnRound},
+    target::VIEW_RANGE,
 };
 
 /// Half-size of the classic square arena (to the middle of its walls).
@@ -56,6 +57,112 @@ pub enum BlockKind {
     Crate,
     Pillar,
     Barrier,
+}
+
+/// What the floor is made of. Footsteps sound different on each, so you can tell where you are
+/// by ear. Grass is the base ground; the others are painted zones (also visible on the radar).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Reflect)]
+pub enum Floor {
+    Grass,
+    Gravel,
+    Metal,
+    Wood,
+}
+
+impl Floor {
+    pub const ALL: [Floor; 4] = [Floor::Grass, Floor::Gravel, Floor::Metal, Floor::Wood];
+
+    /// How far away he can hear your footsteps on this floor.
+    pub fn hearing_range(self) -> f32 {
+        match self {
+            Floor::Grass => 4.0,
+            Floor::Wood => 7.0,
+            Floor::Gravel => 8.0,
+            Floor::Metal => 10.0,
+        }
+    }
+
+    /// How it's painted (the base floor is the ground itself, which is grass-green).
+    pub fn color(self) -> Color {
+        match self {
+            Floor::Grass => Color::srgb(0.32, 0.45, 0.28),
+            Floor::Gravel => Color::srgb(0.55, 0.52, 0.47),
+            Floor::Metal => Color::srgb(0.38, 0.42, 0.47),
+            Floor::Wood => Color::srgb(0.4, 0.26, 0.17),
+        }
+    }
+
+    pub fn name(self) -> &'static str {
+        match self {
+            Floor::Grass => "grass",
+            Floor::Gravel => "gravel",
+            Floor::Metal => "metal",
+            Floor::Wood => "wood",
+        }
+    }
+}
+
+/// A patch of floor. Later zones paint over earlier ones.
+#[derive(Clone, Copy, Debug, Reflect)]
+pub struct FloorZone {
+    /// Axis-aligned, in XZ.
+    pub area: Rect,
+    pub floor: Floor,
+}
+
+/// What the arena's floor is made of: a base material plus painted zones. Chosen with the
+/// `Layout` each round; `classic()` is the hand-made one.
+#[derive(Resource, Clone, Debug, Reflect)]
+#[reflect(Resource)]
+pub struct Floors {
+    pub base: Floor,
+    pub zones: Vec<FloorZone>,
+}
+
+impl Default for Floors {
+    fn default() -> Self {
+        Self::classic()
+    }
+}
+
+impl Floors {
+    /// Wooden plaza in the middle; the far half (-Z) split into gravel (+X) and metal (-X); grass elsewhere.
+    pub fn classic() -> Self {
+        let h = CLASSIC_HALF;
+        let zone = |min: Vec2, max: Vec2, floor| FloorZone { area: Rect::from_corners(min, max), floor };
+        Self {
+            base: Floor::Grass,
+            zones: vec![
+                zone(Vec2::new(0.0, -h), Vec2::new(h, 0.0), Floor::Gravel),
+                zone(Vec2::new(-h, -h), Vec2::new(0.0, 0.0), Floor::Metal),
+                zone(Vec2::splat(-7.0), Vec2::splat(7.0), Floor::Wood),
+            ],
+        }
+    }
+
+    /// A few random patches that fit inside `layout`'s walls.
+    pub fn random(layout: &Layout, rng: &mut impl Rng) -> Self {
+        let bounds = layout.bounds();
+        let mut zones = vec![];
+        for _ in 0..200 {
+            if zones.len() >= 3 {
+                break;
+            }
+            let size = Vec2::new(rng.random_range(6.0..18.0), rng.random_range(6.0..18.0));
+            let room = (bounds.size() - size).max(Vec2::splat(0.1));
+            let min = bounds.min + Vec2::new(rng.random_range(0.0..room.x), rng.random_range(0.0..room.y));
+            let area = Rect::from_corners(min, min + size);
+            if layout.contains_rect(area) {
+                let floor = [Floor::Gravel, Floor::Metal, Floor::Wood][rng.random_range(0..3)];
+                zones.push(FloorZone { area, floor });
+            }
+        }
+        Self { base: Floor::Grass, zones }
+    }
+
+    pub fn at(&self, p: Vec2) -> Floor {
+        self.zones.iter().rev().find(|z| z.area.contains(p)).map_or(self.base, |z| z.floor)
+    }
 }
 
 /// An axis-aligned block of cover. All cover is taller than eye height.
@@ -197,6 +304,12 @@ impl Layout {
             == 1
     }
 
+    /// Is the whole rectangle inside the walls? (All corners inside and no wall corner within it.)
+    pub fn contains_rect(&self, r: Rect) -> bool {
+        let corners = [r.min, Vec2::new(r.max.x, r.min.y), r.max, Vec2::new(r.min.x, r.max.y)];
+        corners.iter().all(|&c| self.contains(c)) && !self.outline.iter().any(|&v| r.inflate(-1e-3).contains(v))
+    }
+
     fn wall_distance(&self, p: Vec2) -> f32 {
         self.edges()
             .map(|(a, b)| {
@@ -220,30 +333,62 @@ impl Layout {
     /// Does any cover or wall sit between `a` and `b` (top-down)?
     pub fn los_blocked(&self, a: Vec2, b: Vec2) -> bool {
         self.blocks.iter().any(|block| segment_hits_box(a, b, block.center - block.half, block.center + block.half))
-            || self.edges().any(|(c, d)| segments_cross(a, b, c, d))
+            || self.walls_block(a, b)
     }
 
-    /// Nearest spot (to `from`) that's hidden from `threat` behind some block, plus a spot
-    /// to peek out from.
+    fn walls_block(&self, a: Vec2, b: Vec2) -> bool {
+        self.edges().any(|(c, d)| segments_cross(a, b, c, d))
+    }
+
+    /// [`Self::los_blocked`] with slack: every block is grown by `margin`, so the line stays clear
+    /// even if either end shifts by up to `margin` (a peek he arrives at slightly off, a target
+    /// knocked back a step). A block closer than that to an end only grows by half the gap, or a
+    /// threat standing next to a pillar would hide from every angle.
+    pub fn los_blocked_with_margin(&self, a: Vec2, b: Vec2, margin: f32) -> bool {
+        self.blocks.iter().any(|block| {
+            let gap = |p: Vec2| ((p - block.center).abs() - block.half).max_element();
+            let grow = margin.min(gap(a) * 0.5).min(gap(b) * 0.5).max(0.0);
+            segment_hits_box(a, b, block.center - block.half - grow, block.center + block.half + grow)
+        }) || self.walls_block(a, b)
+    }
+
+    /// Nearest spot (to `from`) that's hidden from `threat` behind some block.
     pub fn find_cover(&self, from: Vec2, threat: Vec2) -> Option<Cover> {
+        self.find_cover_avoiding(from, threat, None)
+    }
+
+    /// Like [`Self::find_cover`], but not within a few metres of `avoid` (the cover he's leaving).
+    pub fn find_cover_avoiding(&self, from: Vec2, threat: Vec2, avoid: Option<Vec2>) -> Option<Cover> {
         self.blocks
             .iter()
             .filter_map(|block| {
                 let away = (block.center - threat).normalize_or_zero();
                 let spot = block.center + away * (block.support(away) + 0.9);
-                if !self.is_clear(spot, 0.5) || !self.los_blocked(threat, spot) || spot.distance(threat) < 5.0 {
+                if !self.is_clear(spot, 0.5)
+                    || !self.los_blocked(threat, spot)
+                    || spot.distance(threat) < 5.0
+                    || avoid.is_some_and(|a| a.distance(spot) < 3.0)
+                {
                     return None;
                 }
-                // Step sideways out of cover to see the threat again.
-                let perp = away.perp();
-                let side = perp * (block.support(perp) + 1.0);
-                let peek = [spot + side, spot - side]
-                    .into_iter()
-                    .find(|&p| self.is_clear(p, 0.5) && !self.los_blocked(threat, p))
-                    .unwrap_or(spot);
-                Some(Cover { spot, peek })
+                // Step sideways out of cover to see the threat again, far enough that the sightline
+                // doesn't just graze a corner: he stops near the spot rather than on it, and the
+                // threat rarely stays exactly where he was last seen.
+                let side = away.perp();
+                let half = block.support(side);
+                let mut peeks = [1.0, -1.0].into_iter().filter_map(|sign| {
+                    PEEK_STEPS.iter().map(|step| spot + side * sign * (half + step)).find(|&p| {
+                        self.is_clear(p, PEEK_SLACK)
+                            && p.distance(threat) < PEEK_RANGE
+                            && !self.los_blocked_with_margin(threat, p, PEEK_SLACK)
+                    })
+                });
+                // Cover he can't shoot back from is no use to him.
+                let peek = peeks.next()?;
+                let alt_peek = peeks.next().unwrap_or(peek);
+                Some(Cover { spot, peek, alt_peek })
             })
-            .min_by(|a, b| from.distance(a.spot).total_cmp(&from.distance(b.spot)))
+            .min_by(|a, b| cover_cost(from, threat, a.spot).total_cmp(&cover_cost(from, threat, b.spot)))
     }
 
     /// A random point where a circle of `radius` is clear and `accept` holds, if one turns up.
@@ -259,7 +404,28 @@ impl Layout {
 #[derive(Clone, Copy, Debug, Reflect)]
 pub struct Cover {
     pub spot: Vec2,
+    /// Where to step out to see the threat again.
     pub peek: Vec2,
+    /// The other side, if that one also works (else same as `peek`).
+    pub alt_peek: Vec2,
+}
+
+/// How far past the edge of cover he steps out to peek, nearest first.
+const PEEK_STEPS: [f32; 3] = [1.0, 1.5, 2.0];
+/// Slack on a peek's sightline, for him and the threat each being a little off their marks.
+const PEEK_SLACK: f32 = 0.5;
+/// A peek has to be well inside his eyesight, or he steps out and sees nothing.
+const PEEK_RANGE: f32 = VIEW_RANGE - 5.0;
+
+/// How much a run along the line of fire (straight away from or towards the threat) costs, over
+/// a run across it. Magnetised shots barely miss a man running down the line.
+const RADIAL_RUN_PENALTY: f32 = 2.0;
+
+/// Distance to `spot`, scaled up the more the run lines up with the threat's line of fire.
+fn cover_cost(from: Vec2, threat: Vec2, spot: Vec2) -> f32 {
+    let run = (spot - from).normalize_or_zero();
+    let radial = run.dot((from - threat).normalize_or_zero());
+    from.distance(spot) * (1.0 + RADIAL_RUN_PENALTY * radial * radial)
 }
 
 fn rect(hx: f32, hz: f32) -> Vec<Vec2> {
@@ -414,6 +580,7 @@ pub fn plugin(app: &mut App) {
     app.insert_resource(ClearColor(Color::srgb(0.55, 0.7, 0.85)))
         .init_resource::<ArenaMode>()
         .init_resource::<Layout>()
+        .init_resource::<Floors>()
         .add_systems(Startup, spawn_lighting)
         .add_systems(
             OnEnter(GameState::Playing),
@@ -421,13 +588,20 @@ pub fn plugin(app: &mut App) {
         );
 }
 
-pub(crate) fn choose_layout(mode: Res<ArenaMode>, mut layout: ResMut<Layout>) {
-    *layout = match *mode {
-        ArenaMode::Classic => Layout::classic(),
+pub(crate) fn choose_layout(mode: Res<ArenaMode>, mut layout: ResMut<Layout>, mut floors: ResMut<Floors>) {
+    let seed = match *mode {
+        ArenaMode::Classic => {
+            *layout = Layout::classic();
+            *floors = Floors::classic();
+            return;
+        }
         // Short seeds read better on the HUD.
-        ArenaMode::Random => Layout::random(rand::rng().random_range(0..100_000)),
-        ArenaMode::Seed(seed) => Layout::random(seed),
+        ArenaMode::Random => rand::rng().random_range(0..100_000),
+        ArenaMode::Seed(seed) => seed,
     };
+    *layout = Layout::random(seed);
+    // Floors draw from their own stream, so they don't change any seed's layout.
+    *floors = Floors::random(&layout, &mut StdRng::seed_from_u64(seed ^ 0xF100_F100));
 }
 
 fn spawn_lighting(mut commands: Commands) {
@@ -450,6 +624,7 @@ fn spawn_lighting(mut commands: Commands) {
 pub(crate) fn spawn_arena(
     mut commands: Commands,
     layout: Res<Layout>,
+    floors: Res<Floors>,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
 ) {
@@ -467,10 +642,24 @@ pub(crate) fn spawn_arena(
         Name::new("Floor"),
         RoundEntity,
         Mesh3d(meshes.add(floor_mesh(&layout.outline))),
-        MeshMaterial3d(materials.add(Color::srgb(0.32, 0.45, 0.28))),
+        MeshMaterial3d(materials.add(floors.base.color())),
         Transform::default(),
         RenderLayers::from_layers(WORLD_AND_RADAR),
     ));
+
+    // Floor zones: thin painted slabs on the ground, visual only (`Floors::at` is the truth).
+    // Each sits a hair above the last, so later zones paint over earlier ones.
+    for (i, zone) in floors.zones.iter().enumerate() {
+        let (c, size) = (zone.area.center(), zone.area.size());
+        commands.spawn((
+            Name::new(format!("Floor: {}", zone.floor.name())),
+            RoundEntity,
+            Mesh3d(meshes.add(Cuboid::new(size.x, 0.01, size.y))),
+            MeshMaterial3d(materials.add(zone.floor.color())),
+            Transform::from_xyz(c.x, 0.005 + 0.004 * i as f32, c.y),
+            RenderLayers::from_layers(WORLD_AND_RADAR),
+        ));
+    }
 
     let wall_mat = materials.add(Color::srgb(0.5, 0.5, 0.55));
     let n = layout.outline.len();

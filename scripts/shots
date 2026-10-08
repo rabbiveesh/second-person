@@ -1,0 +1,21 @@
+#!/usr/bin/env bash
+# Screenshot the staged juice moments (examples/juice_shots) at any screen sizes, headlessly
+# (Xvfb + software Vulkan, like scripts/headless-run). Each size gets its own subfolder.
+#   scripts/shots <out dir> [WxH[:touch] ...]
+# Sizes are logical px, e.g. a phone's CSS viewport; ":touch" shows the touch UI and fires by tapping.
+# Default: desktop, then a phone in portrait and landscape.
+set -euo pipefail
+out=${1:?usage: scripts/shots <out dir> [WxH[:touch] ...]}; shift
+sizes=("$@"); [[ ${#sizes[@]} -gt 0 ]] || sizes=(1280x720 390x844:touch 844x390:touch)
+export ALSA_CONFIG_PATH="$(cd "$(dirname "$0")" && pwd)/alsa-null.conf"
+for icd in /usr/share/vulkan/icd.d/lvp_icd.x86_64.json /usr/share/vulkan/icd.d/lvp_icd.json; do
+  [[ -f $icd ]] && export VK_ICD_FILENAMES=$icd && break
+done
+cargo build -q --example juice_shots
+for spec in "${sizes[@]}"; do
+  size=${spec%%:*}; flags=(--size "$size")
+  [[ $spec == *:touch ]] && flags+=(--touch)
+  echo "shots: $spec" >&2
+  BRP_EXTRAS_PORT=${BRP_PORT:-15799} xvfb-run -a -s "-screen 0 2560x2560x24" \
+    cargo run -q --example juice_shots -- "$out/${spec/:/-}" "${flags[@]}"
+done

@@ -26,6 +26,16 @@ pub struct MoveTo {
     pub strafe: bool,
 }
 
+/// Zig-zag across the line of fire from this threat (XZ) on legs that run along it. Goes with a
+/// `MoveTo`, e.g. while running for cover.
+#[derive(Component, Reflect, Clone, Copy)]
+#[reflect(Component)]
+pub struct Evade(pub Vec2);
+
+/// Zig-zag: distance between swerves, and how far to each side.
+const WEAVE_STEP: f32 = 2.5;
+const WEAVE_SIDE: f32 = 1.4;
+
 /// Remaining waypoints (XZ; y is ignored) for the current `MoveTo`.
 #[derive(Component, Reflect, Default)]
 #[reflect(Component)]
@@ -90,12 +100,51 @@ impl Nav<'_, '_> {
     }
 }
 
-fn plan_routes(mut commands: Commands, nav: Nav, q: Query<(Entity, &Transform, &MoveTo), Changed<MoveTo>>) {
-    for (e, t, m) in &q {
+fn plan_routes(
+    mut commands: Commands,
+    nav: Nav,
+    layout: Res<Layout>,
+    q: Query<(Entity, &Transform, &MoveTo, Option<&Evade>), Changed<MoveTo>>,
+) {
+    for (e, t, m, evade) in &q {
         // Fall back to a straight line if the mesh isn't ready or the point is off-mesh.
-        let route = nav.path(t.translation, m.dest).unwrap_or_else(|| vec![m.dest]);
+        let mut route = nav.path(t.translation, m.dest).unwrap_or_else(|| vec![m.dest]);
+        if let Some(Evade(threat)) = evade {
+            route = weave(&layout, t.translation, &route, *threat);
+        }
         commands.entity(e).insert(Route(route));
     }
+}
+
+/// Breaks up legs that run along the line of fire from `threat` into swerves either side of it,
+/// so he never holds a straight line a shooter can just keep firing down. Swerves that would
+/// leave the arena, clip cover or cut behind a block are skipped (that stretch stays straight).
+pub fn weave(layout: &Layout, from: Vec3, route: &[Vec3], threat: Vec2) -> Vec<Vec3> {
+    let mut out = Vec::with_capacity(route.len());
+    let mut a = from.xz();
+    let mut side = 1.0;
+    for &w in route {
+        let b = w.xz();
+        let leg = b - a;
+        let len = leg.length();
+        let dir = leg / len.max(1e-6);
+        let along_fire = dir.dot((a - threat).normalize_or_zero()).abs() > 0.6;
+        if along_fire && len > WEAVE_STEP * 1.5 {
+            let mut prev = a;
+            let swerves = (len / WEAVE_STEP) as usize;
+            for i in 1..swerves {
+                let p = a + dir * (i as f32 * WEAVE_STEP) + dir.perp() * WEAVE_SIDE * side;
+                if layout.is_clear(p, 0.6) && !layout.los_blocked(prev, p) && !layout.los_blocked(p, b) {
+                    out.push(p.extend(w.y).xzy());
+                    prev = p;
+                    side = -side;
+                }
+            }
+        }
+        out.push(w);
+        a = b;
+    }
+    out
 }
 
 fn clear_routes(
