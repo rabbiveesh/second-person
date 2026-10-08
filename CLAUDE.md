@@ -42,9 +42,12 @@ controlling the **shooter** hunting him. A corner radar shows the whole arena.
 | bevy_brp_extras 0.22 | BRP + screenshots/key input for agents (`brp` feature) |
 | rand 0.9 | randomness |
 | earcut 0.4 | triangulates arena floor polygons (already in the tree via vleue_navigator) |
+| virtual_joystick 2.8 | on-screen touch stick (bevy_ui) |
 | vleue_navigator 0.16 (`avian3d`) | navmesh pathfinding (polyanya), built from avian colliders, WASM-safe |
 
 Dev builds: `dev` feature = `bevy/dynamic_linking` + `inspector`; mold via `.cargo/config.toml`; deps at opt-level 3.
+Machine-local cargo settings (e.g. `rustc-wrapper = "kache"`, a shared build cache across worktrees) go in the
+gitignored `.cargo/config.local.toml`, which `.cargo/config.toml` includes if present.
 Web/Pages: `trunk build --release` uses the `wasm-release` profile, which uses **fat LTO on purpose**.
 Deploys are slower (~6 min warm vs ~3 for thin), but the download is ~3MB smaller, and the dev loop never uses that profile.
 System deps (Ubuntu): `libudev-dev`, `libasound2-dev`, `libwayland-dev`, `libxkbcommon-dev`.
@@ -65,12 +68,20 @@ Fyrox (small ecosystem), macroquad/three-d (too thin, would mean rolling our own
   free space stays connected, and keeps the origin (the target's spawn) open. The floor mesh is triangulated with `earcut`.
 - `target.rs`: target entity → Head (pitch) → `MainCamera`. Behaviour tree:
   `Selector[engaged→(TakeCover, Fight), alerted→Investigate, mobile→Wander, Scan]`.
-  Engaged means he runs to cover (`arena::find_cover`, no shooting while running), then fights from it: hide, then
-  strafe out to a peek spot (shooting if he sees you), then duck back. Getting hit makes him re-plan cover.
+  Engaged means he runs to cover (`arena::find_cover`, no shooting while running), preferring cover he reaches by
+  running *across* your line of fire (`RADIAL_RUN_PENALTY`) and zig-zagging any leg that runs along it (`nav::Evade`,
+  `nav::weave`), because magnetised shots (`combat::magnetised`) barely miss a man running straight down the line. then fights from it: hide, then
+  strafe out to a peek spot (random side, random length, sometimes a quick glance), then duck back.
+  After 1-3 peeks, or when hit, he `Relocate`s to a *different* cover (`arena::find_cover_avoiding`).
+  Grappling hook (`combat::grapple`, `Grapple` on the target): while fighting and seeing you at 6-20m, he reels
+  you in (shooter `Stunned { pull_to }`), fires a point-blank burst, leaves you stunned, then `Relocate`s.
+  Investigating a noise he can't see (cover in the way) makes him walk toward it until he can.
   `Suspicion.last_known` is where he last saw or heard you (no omniscience).
   Tasks only set intent (`LookGoal`, `MoveTo`, `Activity`). Systems `perceive` → `gaze` → `walk`
   do the work. Use the shared `ARRIVE` constant for every arrival check, because mismatched thresholds deadlock tasks. Lower branches **fail** when a higher-priority condition appears (that's preemption).
   `Suspicion` fills while the shooter is in the view cone with line of sight; at 1.0 he's engaged.
+  While engaged, any sighting tops it back up to 1.0 (contact); out of sight it drains, and at 0 he lets go.
+  Peek spots keep `PEEK_SLACK` clear of every corner and stay inside his `VIEW_RANGE`, or peeks see nothing and the fight stalls.
   The engine supports a moving target: the camera is parented to him, and walking is just velocity on a kinematic body.
 - `nav.rs`: vleue_navigator navmesh, built synchronously from `NavObstacle` colliders (the arena blocks) inside the
   layout's outline (`fit_navmesh` updates it each round).
@@ -79,9 +90,24 @@ Fyrox (small ecosystem), macroquad/three-d (too thin, would mean rolling our own
 - `Layout` also has the pure geometry helpers `is_clear`, `los_blocked` (top-down, cover and walls; all cover is taller
   than eyes), `find_cover` and `random_point`. They're unit-testable without an app; read the layout via `Res<Layout>`.
 - `shooter.rs`: random start via `random_start` (clear of cover, ≥12m from the target).
-- `shooter.rs`: dynamic capsule, rotation locked, tank controls (arrows), relative to its own facing.
-- `combat.rs`: bullets (CCD, collision events), hearing (shots and near misses raise `Alert` +
-  suspicion), target hitscan return fire while engaged, win/lose check.
+- `shooter.rs`: dynamic capsule, rotation locked, tank controls relative to its own facing. One analog
+  `ShooterAction::Drive` dual axis (x turn, y throttle); arrows bind to it as a virtual d-pad.
+  Walking into the world emits `Bump` and a `Stagger` knockback (can't walk, only turn); his laser staggers you too.
+- `touch.rs`: phone controls, spawned on the first touch. A floating `virtual_joystick` stick (left half,
+  snapped to 8 arrow-key directions by `snap_8way`) and tap-right-to-fire write the shooter's `ActionState` in
+  leafwing's `ManualControl` set. The HUD swaps the R/M/Tab hints for egui buttons once touch is on, plus a big
+  whistle button above the radar (`TouchWhistle` keeps its rect so taps on it don't fire).
+- `start.rs` (presentation): "tap to play" overlay. `Time<Virtual>` is paused and the shooter's actions disabled
+  until the first touch/key/click (`Started`). Then `TouchControls` follows the last input (touch on, key/click
+  off), and the stick spawns/despawns with it. `scripts/headless-run` starts on this overlay: send any key over BRP.
+- `arena.rs` floor zones: the `Floors` resource (base `Floor` + rect `FloorZone`s, later ones win; `Floors::at`).
+  Classic = wood plaza, gravel, metal, grass; random layouts get a random base and up to 3 zones that fit (`Floors::random`). Each floor has its own
+  footstep sounds and a `hearing_range`; `combat::hear_movement` turns nearby steps, bumps and whistles
+  (W, the shooter's "where am I?" sound, heard by him from 28m) into suspicion.
+- `combat.rs`: bullets (CCD, collision events; `magnetised` bends a shot within `MAGNET_CONE`/`MAGNET_RANGE` of him with
+  a clear line straight at him, the only aim assist: no lock-on, nothing that leaks where he is), hearing (shots and near misses raise `Alert` +
+  suspicion), target hitscan return fire while engaged, warning shots (`WarningShot`, deliberate misses near
+  `last_known`) while suspicious but not engaged, win/lose check.
 - `radar.rs`: ortho top-down camera in a bottom-right viewport (layers 0+1), reframed to the layout's bounds. `RadarMode` is the difficulty knob
   (Tab cycles; init'd in `round` so it exists headless):
   - Full: live `LiveBlip`s, heading arrow and view cone.
@@ -94,7 +120,9 @@ Fyrox (small ecosystem), macroquad/three-d (too thin, would mean rolling our own
   WebGL2 (it bound a multisampled dummy depth texture, which WebGL2 can't create). Drop the patch once upstream fixes it.
 - `fx.rs`: bevy_firework particle bursts (muzzle, impacts, hits), a muzzle point light (lights up the area
   around the shooter even when he's off-screen), and return-fire tracers.
-- `audio.rs`: bevy_kira_audio spatial one-shots. The listener is the target's head (`MainCamera`). SFX come from
+- `audio.rs`: bevy_kira_audio with our own spatial mix (`audio::mix`, not kira's spatial plugin): pan capped
+  at ±0.3 (one-earbud friendly), inverse-distance falloff, and a low-passed `_muffled` twin crossfaded in for
+  sounds behind the listener or behind cover. The listener is the target's head (`MainCamera`). SFX come from
   `cargo run --example gen_sfx` (sfxr, fixed seeds) and are written to `assets/sfx/`.
 - Combat emits messages (`Gunshot`, `BulletImpact`, `TargetHit`, `ShooterHit`, shooter `Footstep`); fx, audio
   and radar subscribe to them. Add new feedback by subscribing, not by calling across modules.
@@ -103,4 +131,4 @@ Fyrox (small ecosystem), macroquad/three-d (too thin, would mean rolling our own
 
 ## Tuning knobs
 Suspicion rates in `target::perceive`. `VIEW_HALF_ANGLE`/`VIEW_RANGE` in `target.rs`. Return fire
-damage/interval, hearing range and near-miss range in `combat.rs`.
+damage/interval, bullet magnetism (`MAGNET_CONE`, `MAGNET_RANGE`), hearing range and near-miss range in `combat.rs`.
