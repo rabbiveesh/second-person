@@ -95,6 +95,8 @@ Fyrox (small ecosystem), macroquad/three-d (too thin, would mean rolling our own
 - `shooter.rs`: dynamic capsule, rotation locked, tank controls relative to its own facing. One analog
   `ShooterAction::Drive` dual axis (x turn, y throttle); arrows bind to it as a virtual d-pad.
   Walking into the world emits `Bump` and a `Stagger` knockback (can't walk, only turn); his laser staggers you too.
+  `Sidestep`: a double-tap straight left/right on `Drive` (arrows, or a double flick of the stick, since both feed the same
+  axis) hops 2.4m sideways with the facing restored to before the taps; the landing writes a `Footstep`. Stagger cuts it.
 - `touch.rs`: phone controls, spawned on the first touch. A floating `virtual_joystick` stick (left half,
   snapped to 8 arrow-key directions by `snap_8way`) and tap-right-to-fire write the shooter's `ActionState` in
   leafwing's `ManualControl` set. The HUD swaps the R/M/Tab hints for egui buttons once touch is on, plus a big
