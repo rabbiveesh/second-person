@@ -711,12 +711,20 @@ pub struct Roll {
 
 pub const ROLL_SECS: f32 = 0.4;
 
-fn roll(mut commands: Commands, time: Res<Time>, mut q: Query<(Entity, &mut Roll, &mut LinearVelocity)>) {
-    for (e, mut roll, mut v) in &mut q {
+fn roll(
+    mut commands: Commands,
+    time: Res<Time>,
+    mut q: Query<(Entity, &mut Roll, &mut LinearVelocity, Option<&MoveTo>)>,
+) {
+    for (e, mut roll, mut v, moving) in &mut q {
         roll.t += time.delta_secs();
         if roll.t >= ROLL_SECS {
             v.0 = Vec3::ZERO;
             commands.entity(e).remove::<Roll>();
+            // Re-plan from where he landed, or he'd walk back to the waypoint he dived away from.
+            if let Some(&m) = moving {
+                commands.entity(e).insert(m);
+            }
         } else {
             v.0 = roll.velocity;
         }

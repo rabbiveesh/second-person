@@ -640,10 +640,11 @@ fn he_dodge_rolls_your_first_shot_but_not_the_second() {
     let cam = single::<MainCamera>(&mut app);
     let (_, _, lean) = app.world().get::<Transform>(cam).unwrap().rotation.to_euler(EulerRot::YXZ);
     assert!(lean.abs() > 0.2, "view didn't lean: {lean}");
-    step(&mut app, 0.4);
+    step(&mut app, 0.2);
+    let landed = app.world().get::<Transform>(target).unwrap().translation;
+    assert!((landed.x - start.x).abs() > 1.5, "didn't dive sideways: {start} -> {landed}");
+    step(&mut app, 0.3);
     assert_eq!(counted::<TargetHit>(&app), 0, "the dodged shot hit");
-    let moved = app.world().get::<Transform>(target).unwrap().translation;
-    assert!((moved.x - start.x).abs() > 1.5, "didn't dive sideways: {start} -> {moved}");
 
     // Still on cooldown: the follow-up isn't dodged.
     press(&mut app, KeyCode::Space);
