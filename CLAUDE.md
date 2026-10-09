@@ -78,6 +78,9 @@ Fyrox (small ecosystem), macroquad/three-d (too thin, would mean rolling our own
   Grappling hook (`combat::grapple`, `Grapple` on the target): while fighting and seeing you at 6-20m, he reels
   you in (shooter `Stunned { pull_to }`), fires a point-blank burst, leaves you stunned, then `Relocate`s.
   Investigating a noise he can't see (cover in the way) makes him walk toward it until he can.
+  Dodge roll (`combat::dodge`, `Roll`): when he sees you fire straight at him from beyond `ROLL_MIN_RANGE`, he dives
+  `ROLL_DISTANCE` across the line of fire (never into cover), then `ROLL_COOLDOWN` before the next, so a second shot
+  lands. No return fire mid-roll. `juice` leans and dips his view with it, capped at `ROLL_TILT` because it's your screen.
   `Suspicion.last_known` is where he last saw or heard you (no omniscience).
   Tasks only set intent (`LookGoal`, `MoveTo`, `Activity`). Systems `perceive` → `gaze` → `walk`
   do the work. Use the shared `ARRIVE` constant for every arrival check, because mismatched thresholds deadlock tasks. Lower branches **fail** when a higher-priority condition appears (that's preemption).

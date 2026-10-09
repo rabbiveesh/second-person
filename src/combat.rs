@@ -11,7 +11,7 @@ use crate::{
     round::{GameState, RoundEntity},
     nav::MoveTo,
     shooter::{Bump, Footstep, Whistle, Shooter, ShooterAction, Stagger, Stunned},
-    target::{Activity, Alert, MainCamera, Relocate, Suspicion, Target},
+    target::{Activity, Alert, MainCamera, ROLL_SECS, Relocate, Roll, Suspicion, Target},
 };
 
 const BULLET_SPEED: f32 = 45.0;
@@ -27,6 +27,11 @@ const RETURN_FIRE_DAMAGE: f32 = 8.0;
 /// How long he keeps his aim on the spot where you ducked out of sight, how close to it you have
 /// to reappear to walk into it, and how fast he fires when you do.
 const HOLD_ANGLE_SECS: f32 = 1.5;
+/// His dodge roll: how far he dives, how long before he can again, and how close a shot can be
+/// fired before he can't react in time.
+const ROLL_DISTANCE: f32 = 2.2;
+const ROLL_COOLDOWN: f32 = 2.5;
+const ROLL_MIN_RANGE: f32 = 5.0;
 const HOLD_ANGLE_RADIUS: f32 = 3.0;
 const REACQUIRE_SECS: f32 = 0.25;
 /// His laser shoves you back, and you can't walk until it wears off.
@@ -129,7 +134,7 @@ pub fn plugin(app: &mut App) {
         .add_systems(Startup, load_assets)
         .add_systems(
             Update,
-            (fire, bullet_hits, hear_movement, warning_fire, grapple, return_fire, check_outcome)
+            (fire, dodge, bullet_hits, hear_movement, warning_fire, grapple, return_fire, check_outcome)
                 .chain()
                 .run_if(in_state(GameState::Playing)),
         );
@@ -389,6 +394,42 @@ fn grapple(
     }
 }
 
+/// He sees you fire straight at him: he dives sideways out of the line of fire. Bullets fly at
+/// `BULLET_SPEED`, so beyond `ROLL_MIN_RANGE` he's clear before it arrives. Only the first shot;
+/// the cooldown is your window for the second. He won't roll into cover or through a wall.
+fn dodge(
+    mut commands: Commands,
+    time: Res<Time>,
+    mut cooldown: Local<f32>,
+    layout: Res<arena::Layout>,
+    mut shots: MessageReader<Gunshot>,
+    target: Single<(Entity, &Transform, &Suspicion, Has<Grapple>, Has<Roll>), With<Target>>,
+) {
+    *cooldown -= time.delta_secs();
+    let (e, t, suspicion, grappling, rolling) = *target;
+    for shot in shots.read() {
+        let to_him = t.translation - shot.muzzle;
+        let aimed = shot.dir.angle_between(to_him) < 0.1;
+        if !aimed || !suspicion.sees_shooter || grappling || rolling || *cooldown > 0.0 {
+            continue;
+        }
+        if to_him.length() < ROLL_MIN_RANGE {
+            continue;
+        }
+        let here = t.translation.xz();
+        let across = shot.dir.xz().perp().normalize_or_zero();
+        let first = if rand::rng().random_bool(0.5) { 1.0 } else { -1.0 };
+        let clear = |sign: f32| {
+            let dest = here + across * sign * ROLL_DISTANCE;
+            (layout.is_clear(dest, 0.5) && !layout.los_blocked(here, dest)).then_some(sign)
+        };
+        let Some(sign) = clear(first).or_else(|| clear(-first)) else { continue };
+        *cooldown = ROLL_COOLDOWN;
+        let velocity = (across * sign * ROLL_DISTANCE / ROLL_SECS).extend(0.0).xzy();
+        commands.entity(e).insert(Roll { t: 0.0, velocity });
+    }
+}
+
 /// Return fire's aim: how charged the next shot is, and where he last lost sight of you.
 #[derive(Default)]
 struct Aim {
@@ -433,14 +474,17 @@ fn return_fire(
     time: Res<Time>,
     mut aim: Local<Aim>,
     eyes: Single<&GlobalTransform, With<MainCamera>>,
-    target: Single<(&Suspicion, Option<&Activity>, Has<Grapple>), With<Target>>,
+    target: Single<(&Suspicion, Option<&Activity>, Has<Grapple>, Has<Roll>), With<Target>>,
     mut shooter: Single<(&mut Shooter, &Transform, &mut Stagger)>,
     mut hits: MessageWriter<ShooterHit>,
 ) {
-    let (suspicion, activity, grappling) = *target;
+    let (suspicion, activity, grappling, rolling) = *target;
     if activity != Some(&Activity::Engaging) || grappling {
         *aim = Aim::default();
         return;
+    }
+    if rolling {
+        return; // no shooting mid-dive; his aim picks up again after
     }
     let (ref mut s, t, ref mut stagger) = *shooter;
     if aim.step(time.elapsed_secs(), time.delta_secs(), suspicion.sees_shooter, t.translation.xz()) {

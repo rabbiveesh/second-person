@@ -622,6 +622,35 @@ fn double_tapping_a_turn_key_hops_sideways_without_turning() {
 }
 
 #[test]
+fn he_dodge_rolls_your_first_shot_but_not_the_second() {
+    use second_person::target::Roll;
+    let mut app = app();
+    let shooter_pos = Vec3::new(0.0, 0.9, -12.0);
+    stage(&mut app, shooter_pos, shooter_pos);
+    let target = single::<Target>(&mut app);
+    app.world_mut().get_mut::<Suspicion>(target).unwrap().bump(1.0);
+    step(&mut app, 0.1);
+    assert!(app.world().get::<Suspicion>(target).unwrap().sees_shooter);
+    let start = app.world().get::<Transform>(target).unwrap().translation;
+
+    press(&mut app, KeyCode::Space);
+    assert!(app.world().get::<Roll>(target).is_some(), "no roll");
+    // Mid-dive his view leans over.
+    step(&mut app, 0.2);
+    let cam = single::<MainCamera>(&mut app);
+    let (_, _, lean) = app.world().get::<Transform>(cam).unwrap().rotation.to_euler(EulerRot::YXZ);
+    assert!(lean.abs() > 0.2, "view didn't lean: {lean}");
+    step(&mut app, 0.4);
+    assert_eq!(counted::<TargetHit>(&app), 0, "the dodged shot hit");
+    let moved = app.world().get::<Transform>(target).unwrap().translation;
+    assert!((moved.x - start.x).abs() > 1.5, "didn't dive sideways: {start} -> {moved}");
+
+    // Still on cooldown: the follow-up isn't dodged.
+    press(&mut app, KeyCode::Space);
+    assert!(app.world().get::<Roll>(target).is_none(), "rolled again");
+}
+
+#[test]
 fn walking_into_a_wall_thuds_and_knocks_you_back() {
     let mut app = app();
     let shooter = single::<Shooter>(&mut app);
