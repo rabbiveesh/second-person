@@ -24,10 +24,9 @@ const SPRING_DAMPING: f32 = 14.0;
 /// Camera shake: trauma is set to 1 on a hit and decays; shake scales with trauma².
 const SHAKE_ANGLE: f32 = 0.04;
 const TRAUMA_DECAY: f32 = 2.5;
-/// His dodge roll tilts the view this far (rad) and dips it this much (m) at its peak. Kept small:
-/// his eyes are the player's screen.
-const ROLL_TILT: f32 = 0.45;
-const ROLL_DIP: f32 = 0.5;
+/// His dodge roll barrel-rolls the view a full turn about the line of sight and drops it this much
+/// (m) at the bottom of the tumble.
+const ROLL_DIP: f32 = 0.8;
 /// Shooter capsule: half its height (centre to feet) and its radius.
 const SHOOTER_HALF_HEIGHT: f32 = 0.85;
 const SHOOTER_RADIUS: f32 = 0.35;
@@ -122,13 +121,14 @@ fn camera_juice(
         * j.trauma
         * Vec3::new((c * 37.0).sin(), (c * 29.0 + 1.3).sin(), (c * 23.0 + 2.1).sin());
     let mut a = j.angle + shake;
-    // Dodge roll: lean into the dive and duck, out and back over the roll.
+    // Dodge roll: a full tumble towards the dive, eased in and out so it lands level, ducking to
+    // the floor on the way through.
     let mut dip = 0.0;
     if let Some(roll) = roll {
         let side = roll.velocity.dot(*head.right()).signum();
-        let arc = (std::f32::consts::PI * (roll.t / ROLL_SECS).clamp(0.0, 1.0)).sin();
-        a.z -= side * ROLL_TILT * arc;
-        dip = ROLL_DIP * arc;
+        let u = (roll.t / ROLL_SECS).clamp(0.0, 1.0);
+        a.z -= side * std::f32::consts::TAU * smoothstep(u);
+        dip = ROLL_DIP * (std::f32::consts::PI * u).sin();
     }
     let flinch = Quat::from_euler(EulerRot::YXZ, a.y, a.x, a.z);
 

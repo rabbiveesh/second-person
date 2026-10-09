@@ -635,11 +635,11 @@ fn he_dodge_rolls_your_first_shot_but_not_the_second() {
 
     press(&mut app, KeyCode::Space);
     assert!(app.world().get::<Roll>(target).is_some(), "no roll");
-    // Mid-dive his view leans over.
+    // Mid-dive his view is upside down.
     step(&mut app, 0.2);
     let cam = single::<MainCamera>(&mut app);
-    let (_, _, lean) = app.world().get::<Transform>(cam).unwrap().rotation.to_euler(EulerRot::YXZ);
-    assert!(lean.abs() > 0.2, "view didn't lean: {lean}");
+    let up = app.world().get::<Transform>(cam).unwrap().rotation * Vec3::Y;
+    assert!(up.y < -0.5, "view didn't tumble: up is {up}");
     step(&mut app, 0.2);
     let landed = app.world().get::<Transform>(target).unwrap().translation;
     assert!((landed.x - start.x).abs() > 1.5, "didn't dive sideways: {start} -> {landed}");
