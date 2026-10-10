@@ -11,7 +11,7 @@ use crate::{
     Layer,
     arena::Layout,
     radar::{LiveBlip, RADAR_LAYER, RadarContact},
-    round::{GameState, RoundEntity, SpawnRound},
+    round::{Attract, GameState, RoundEntity, SpawnRound},
 };
 
 pub const SHOOTER_MAX_HP: f32 = 100.0;
@@ -115,7 +115,7 @@ pub fn plugin(app: &mut App) {
         .add_message::<Footstep>()
         .add_message::<Bump>()
         .add_message::<Whistle>()
-        .add_systems(OnEnter(GameState::Playing), spawn_shooter.in_set(SpawnRound))
+        .add_systems(OnEnter(GameState::Playing), spawn_shooter.in_set(SpawnRound).run_if(|attract: Res<Attract>| !attract.0))
         .add_systems(Update, ((drive, bump).chain(), whistle).run_if(in_state(GameState::Playing)));
 }
 

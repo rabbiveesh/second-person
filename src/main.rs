@@ -14,7 +14,7 @@ fn main() {
             DefaultPlugins
                 .set(WindowPlugin {
                     primary_window: Some(Window {
-                        title: "Second Person Shooter".into(),
+                        title: "HIM · a second person shooter".into(),
                         // Web: render into the page's canvas and keep arrows/space from scrolling it.
                         canvas: Some("#game".into()),
                         fit_canvas_to_parent: true,

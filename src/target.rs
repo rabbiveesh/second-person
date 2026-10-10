@@ -26,7 +26,7 @@ use crate::{
     arena::{Cover, Layout},
     nav::{Evade, MoveTo, Route},
     radar::{LiveBlip, RADAR_LAYER, RadarContact},
-    round::{GameState, RoundEntity, SpawnRound, TargetMobile},
+    round::{Attract, GameState, RoundEntity, SpawnRound, TargetMobile},
     shooter::Shooter,
 };
 
@@ -306,8 +306,8 @@ fn is_alerted(In(e): In<Entity>, q: Query<(), With<Alert>>) -> bool {
     q.contains(e)
 }
 
-fn is_mobile(In(_): In<Entity>, mobile: Res<TargetMobile>) -> bool {
-    mobile.0
+fn is_mobile(In(_): In<Entity>, mobile: Res<TargetMobile>, attract: Res<Attract>) -> bool {
+    mobile.0 || attract.0
 }
 
 /// True if a higher-priority branch wants control.
@@ -595,6 +595,7 @@ fn wander_listeners() -> Listeners {
 fn wander(
     In(e): In<Entity>,
     mobile: Res<TargetMobile>,
+    attract: Res<Attract>,
     suspicion: Query<&Suspicion>,
     alerts: Query<(), With<Alert>>,
     q: Query<(&Transform, Option<&MoveTo>)>,
@@ -602,7 +603,7 @@ fn wander(
     if interrupted(e, &suspicion, &alerts) {
         return FAILURE;
     }
-    if !mobile.0 {
+    if !mobile.0 && !attract.0 {
         return SUCCESS;
     }
     let Ok((t, Some(m))) = q.get(e) else {

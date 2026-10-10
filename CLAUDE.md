@@ -1,4 +1,6 @@
-# Second Person Shooter
+# HIM
+
+*a second person shooter*
 
 You see the world through the **target's** eyes (the main camera lives in his head) while
 controlling the **shooter** hunting him. A corner radar shows the whole arena.
@@ -104,9 +106,17 @@ Fyrox (small ecosystem), macroquad/three-d (too thin, would mean rolling our own
   snapped to 8 arrow-key directions by `snap_8way`) and tap-right-to-fire write the shooter's `ActionState` in
   leafwing's `ManualControl` set. The HUD swaps the R/M/Tab hints for egui buttons once touch is on, plus a big
   whistle button above the radar (`TouchWhistle` keeps its rect so taps on it don't fire).
-- `start.rs` (presentation): "tap to play" overlay. `Time<Virtual>` is paused and the shooter's actions disabled
-  until the first touch/key/click (`Started`). Then `TouchControls` follows the last input (touch on, key/click
-  off), and the stick spawns/despawns with it. `scripts/headless-run` starts on this overlay: send any key over BRP.
+- `start.rs` (presentation): the title screen, up until the first touch/key/click (`Started`); the shooter ignores input
+  until that press is let go. Then `TouchControls` follows the last input (touch on, key/click off), and the stick
+  spawns/despawns with it. `scripts/headless-run` starts on the title: send any key over BRP.
+- `start.rs`/`intro.rs` (presentation): the title card sits over a demo round (`round::Attract`: no shooter spawned,
+  he wanders, seen through his eyes); the first press ends it and starts a real round. Each round then opens on an
+  overhead shot of the whole arena (`intro::overhead`, fitted to the outline, turned so he faces up the screen) with
+  YOU/HIM markers, counts down, and swoops into his eyes over `SWOOP_SECS` (`intro::pose`). The countdown length and
+  whether his facing shows are assists (`difficulty::AssistLevers`), plus a little per piece of cover; a press means
+  ready, and `CountdownDone` reports how much was used. It flies the `MainCamera` itself (world pose written as its
+  local transform before propagation), freezes `Time<Virtual>` and shooter input meanwhile.
+  `IntroEnabled(false)` turns it off (the staged capture examples do). Text over the world sits on `hud::card()`s.
 - `arena.rs` floor zones: the `Floors` resource (base `Floor` + rect `FloorZone`s, later ones win; `Floors::at`).
   Classic = wood plaza, gravel, metal, grass; random layouts get a random base and up to 3 zones that fit (`Floors::random`). Each floor has its own
   footstep sounds and a `hearing_range`; `combat::hear_movement` turns nearby steps, bumps and whistles

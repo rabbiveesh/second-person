@@ -1,9 +1,10 @@
-//! Start screen and input mode. The game waits, frozen, behind a "tap to play" overlay (drawn by
-//! the HUD) until the first touch, key or click. That first press also lets the browser start
-//! audio. From then on the controls follow the last input: a touch switches to touch controls,
-//! and a key or click switches back to keyboard.
+//! Title screen and input mode. Until the first touch, key or click, the title card sits over a
+//! live demo round (`Attract`): no shooter, just him wandering an arena, seen through his eyes,
+//! which says what the game is before anyone reads a word. That first press also lets the browser
+//! start audio, and starts a fresh round for real. From then on the controls follow the last
+//! input: a touch switches to touch controls, and a key or click switches back to keyboard.
 //!
-//! Presentation only: the headless tests and scripts never see the overlay unless they add this.
+//! Presentation only: the headless tests and scripts never see the title unless they add this.
 
 use bevy::{
     input::{ButtonState, keyboard::KeyboardInput, mouse::MouseButtonInput, touch::TouchInput},
@@ -12,17 +13,21 @@ use bevy::{
 use leafwing_input_manager::{plugin::InputManagerSystem, prelude::*};
 
 use crate::{
+    round::{Attract, GameState},
     shooter::{Shooter, ShooterAction},
     touch::TouchControls,
 };
 
-/// False while the start screen is up.
+/// False while the title screen is up.
 #[derive(Resource, Default)]
 pub struct Started(pub bool);
 
 pub fn plugin(app: &mut App) {
+    // Something that starts already started (a staged capture) skips the demo round too.
+    let started = app.world().get_resource::<Started>().is_some_and(|s| s.0);
     app.init_resource::<Started>()
         .init_resource::<TouchControls>()
+        .insert_resource(Attract(!started))
         .add_systems(PreUpdate, (hold_until_started, follow_last_input).chain().before(InputManagerSystem::Update));
 }
 
@@ -46,26 +51,40 @@ fn follow_last_input(
     }
 }
 
-/// Before the start: time stands still and the shooter ignores input, so the press that
-/// dismisses the overlay doesn't also fire. This runs before `follow_last_input`, so the actions
-/// are enabled a frame after that press, when it's no longer "just pressed".
-fn hold_until_started(
+/// On the first press, end the demo and start a real round. The shooter ignores input until
+/// everything is let go, so the press that dismissed the title doesn't also fire or drive.
+pub fn hold_until_started(
     started: Res<Started>,
     mut was_started: Local<bool>,
+    mut released: Local<bool>,
+    mut attract: ResMut<Attract>,
+    mut next: ResMut<NextState<GameState>>,
     mut time: ResMut<Time<Virtual>>,
+    keys: Res<ButtonInput<KeyCode>>,
+    mouse: Res<ButtonInput<MouseButton>>,
+    touches: Res<Touches>,
     mut actions: Query<&mut ActionState<ShooterAction>, With<Shooter>>,
 ) {
-    if *was_started {
+    if started.0 && !*was_started {
+        *was_started = true;
+        if attract.0 {
+            attract.0 = false;
+            next.set(GameState::Playing);
+        }
+        time.unpause();
+    }
+    if *released {
         return;
     }
-    if started.0 {
-        *was_started = true;
-        time.unpause();
+    let held = keys.get_pressed().next().is_some()
+        || mouse.get_pressed().next().is_some()
+        || touches.iter().next().is_some();
+    if *was_started && !held {
+        *released = true;
         for mut a in &mut actions {
             a.enable();
         }
     } else {
-        time.pause();
         for mut a in &mut actions {
             if !a.disabled() {
                 a.disable();

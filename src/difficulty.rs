@@ -122,6 +122,10 @@ pub struct AssistLevers {
     pub sonar_period: Option<f32>,
     /// Multiplies the damage his shots do to you.
     pub damage_taken: f32,
+    /// Seconds of countdown over the arena before each round (see `intro`).
+    pub countdown: f32,
+    /// Whether the overhead shot shows which way he's facing.
+    pub reveal_facing: bool,
 }
 
 /// Below this dial the `Auto` radar stops sweeping: a player good enough to fade the help out
@@ -139,6 +143,10 @@ impl AssistLevers {
             sonar_period: (a >= SONAR_FROM).then(|| 6.0 / (1.0 + 4.0 * a)),
             // Only above the baseline: up to 30% off at a full dial.
             damage_taken: 1.0 - 0.6 * (a - BASELINE_ASSISTS).max(0.0),
+            // 3s at the baseline dial: 2s to glance at for a player who's fading the help, 4s at full.
+            countdown: 2.0 + 2.0 * a,
+            // Like the sonar: a player good enough to play the bare map finds his facing for themselves.
+            reveal_facing: a >= SONAR_FROM,
         }
     }
 }
@@ -356,10 +364,13 @@ mod tests {
     fn assists_are_monotone_and_fade_the_sonar_out() {
         let mut prev = AssistLevers::from_dial(0.0);
         assert_eq!(prev.sonar_period, None, "no help at all: no sonar");
+        assert!(!prev.reveal_facing && prev.countdown >= 2.0, "no help: a glance, and find his facing yourself");
         for i in 1..=20 {
             let l = AssistLevers::from_dial(i as f32 / 20.0);
             assert!(l.magnet_cone > prev.magnet_cone && l.magnet_range > prev.magnet_range);
             assert!(l.damage_taken <= prev.damage_taken);
+            assert!(l.countdown > prev.countdown, "more time to read the arena");
+            assert!(l.reveal_facing || !prev.reveal_facing, "his facing hidden as the dial rose");
             match (prev.sonar_period, l.sonar_period) {
                 (Some(a), Some(b)) => assert!(b < a, "sweeps come quicker"),
                 (Some(_), None) => panic!("sonar switched off as the dial rose"),

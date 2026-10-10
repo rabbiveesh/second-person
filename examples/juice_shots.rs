@@ -25,6 +25,7 @@ use bevy::{
     window::PrimaryWindow,
 };
 use second_person::{
+    intro::IntroEnabled,
     combat::{ShooterHit, TargetHit},
     round::GameState,
     shooter::Shooter,
@@ -66,6 +67,7 @@ fn main() {
     App::new()
         // Skip the start screen; pick the control scheme up front (plugins only init these).
         .insert_resource(Started(true))
+        .insert_resource(IntroEnabled(false))
         .insert_resource(TouchControls(touch))
         .insert_resource(Touch(touch))
         .insert_resource(EguiGlobalSettings {

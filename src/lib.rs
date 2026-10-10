@@ -1,4 +1,4 @@
-//! Second-person shooter: you see the world through your target's eyes while
+//! HIM, a second person shooter: you see the world through your target's eyes while
 //! driving the shooter who's hunting him.
 //!
 //! Split into `gameplay` (headless-testable simulation) and `presentation`
@@ -12,6 +12,7 @@ pub mod debug;
 pub mod difficulty;
 pub mod fx;
 pub mod hud;
+pub mod intro;
 pub mod juice;
 pub mod layout;
 pub mod nav;
@@ -54,5 +55,5 @@ pub fn gameplay(app: &mut App) {
 
 /// Everything that only matters when there's a screen and speakers.
 pub fn presentation(app: &mut App) {
-    app.add_plugins((juice::plugin, layout::plugin, fx::plugin, audio::plugin, radar::plugin, hud::plugin, touch::plugin, start::plugin, debug::plugin));
+    app.add_plugins((juice::plugin, layout::plugin, fx::plugin, audio::plugin, radar::plugin, hud::plugin, touch::plugin, start::plugin, intro::plugin, debug::plugin));
 }

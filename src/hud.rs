@@ -150,6 +150,12 @@ fn draw_hud(
         }
     }
 
+    // The title card over the demo round; none of the round's HUD applies yet.
+    if !started.0 {
+        title_card(ctx);
+        return Ok(());
+    }
+
     egui::Area::new("status".into())
         .anchor(egui::Align2::LEFT_TOP, [16.0, 16.0])
         .show(ctx, |ui| {
@@ -339,15 +345,28 @@ fn draw_hud(
                 });
             });
     }
-    if !started.0 {
-        let painter = ctx.layer_painter(egui::LayerId::new(egui::Order::Middle, "start dim".into()));
-        painter.rect_filled(screen, 0.0, egui::Color32::from_black_alpha(170));
-        egui::Area::new("start".into())
-            .order(egui::Order::Foreground)
-            .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
-            .show(ctx, |ui| {
+    Ok(())
+}
+
+/// A dark card, so text reads over whatever the world behind it happens to look like.
+pub fn card() -> egui::Frame {
+    egui::Frame::new()
+        .fill(egui::Color32::from_black_alpha(205))
+        .stroke(egui::Stroke::new(1.0, egui::Color32::from_white_alpha(30)))
+        .corner_radius(14.0)
+        .inner_margin(egui::Margin::symmetric(28, 20))
+}
+
+fn title_card(ctx: &egui::Context) {
+    egui::Area::new("title".into())
+        .order(egui::Order::Foreground)
+        .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
+        .show(ctx, |ui| {
+            card().show(ui, |ui| {
                 ui.vertical_centered(|ui| {
-                    ui.label(egui::RichText::new("SECOND PERSON SHOOTER").size(28.0).color(egui::Color32::WHITE).strong());
+                    ui.label(egui::RichText::new("HIM").size(64.0).color(egui::Color32::WHITE).strong());
+                    ui.label(egui::RichText::new("a second person shooter").size(18.0).italics().color(egui::Color32::LIGHT_GRAY));
+                    ui.add_space(8.0);
                     ui.label(egui::RichText::new("You see through his eyes. Hunt him down.").color(egui::Color32::LIGHT_GRAY));
                     ui.add_space(18.0);
                     ui.label(egui::RichText::new("tap to play").size(36.0).color(egui::Color32::from_rgb(90, 230, 110)).strong());
@@ -357,8 +376,7 @@ fn draw_hud(
                     ui.label(egui::RichText::new("keys: arrows drive · Space fires · W whistles").color(egui::Color32::LIGHT_GRAY));
                 });
             });
-    }
-    Ok(())
+        });
 }
 
 fn rect(r: Rect) -> egui::Rect {
