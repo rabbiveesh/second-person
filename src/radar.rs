@@ -1,9 +1,11 @@
 //! Radar: a top-down orthographic camera in a corner viewport. It sees the arena plus a
 //! radar-only render layer holding contacts.
 //!
-//! `RadarMode` is the difficulty knob:
+//! `RadarMode` is the player's pick (Tab):
+//! - `Auto` (default): sonar at the pace the assist dial sets (`difficulty::AssistLevers`),
+//!   quicker when you struggle, slower as you win, and no sweeps at all once the help has faded.
 //! - `Full`: live blips, shooter heading, target view cone.
-//! - `Sonar` (default): positions only, revealed by a periodic ping, then fading. Gunshots
+//! - `Sonar`: positions only, revealed by a ping every `SONAR_PERIOD`, then fading. Gunshots
 //!   also ping the shooter's position.
 //! - `Off`: no radar.
 
@@ -15,6 +17,7 @@ use bevy::{
 use crate::{
     arena::Layout,
     combat::Gunshot,
+    difficulty::Tuning,
     round::{GameState, RoundEntity},
 };
 
@@ -23,14 +26,15 @@ pub const RADAR_LAYER: usize = 1;
 /// radar can never see them directly — only via blips/contacts.
 pub const WORLD_AND_RADAR: &[usize] = &[0, RADAR_LAYER];
 
-const SONAR_PERIOD: f32 = 2.0;
+pub const SONAR_PERIOD: f32 = 2.0;
 const CONTACT_FADE: f32 = 1.8;
 const BLIP_HEIGHT: f32 = 4.0;
 
 #[derive(Resource, Default, Clone, Copy, PartialEq, Eq, Debug)]
 pub enum RadarMode {
-    Full,
     #[default]
+    Auto,
+    Full,
     Sonar,
     Off,
 }
@@ -38,9 +42,19 @@ pub enum RadarMode {
 impl RadarMode {
     pub fn next(self) -> Self {
         match self {
+            Self::Auto => Self::Full,
             Self::Full => Self::Sonar,
             Self::Sonar => Self::Off,
-            Self::Off => Self::Full,
+            Self::Off => Self::Auto,
+        }
+    }
+
+    /// Seconds between sonar sweeps (`None`: no sonar) this round.
+    pub fn sonar_period(self, tuning: &Tuning) -> Option<f32> {
+        match self {
+            Self::Auto => tuning.help().sonar_period,
+            Self::Sonar => Some(SONAR_PERIOD),
+            Self::Full | Self::Off => None,
         }
     }
 }
@@ -139,18 +153,24 @@ fn apply_mode(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn sonar_sweep(
     mut commands: Commands,
     time: Res<Time>,
     mode: Res<RadarMode>,
+    tuning: Res<Tuning>,
     mut timer: Local<Option<Timer>>,
     assets: Res<RadarAssets>,
     layout: Res<Layout>,
     mut materials: ResMut<Assets<StandardMaterial>>,
     contacts: Query<(&GlobalTransform, &RadarContact)>,
 ) {
-    let timer = timer.get_or_insert_with(|| Timer::from_seconds(SONAR_PERIOD, TimerMode::Repeating));
-    if *mode != RadarMode::Sonar || !timer.tick(time.delta()).just_finished() {
+    let Some(period) = mode.sonar_period(&tuning) else { return };
+    let timer = timer.get_or_insert_with(|| Timer::from_seconds(period, TimerMode::Repeating));
+    if timer.duration().as_secs_f32() != period {
+        timer.set_duration(std::time::Duration::from_secs_f32(period));
+    }
+    if !timer.tick(time.delta()).just_finished() {
         return;
     }
     for (t, contact) in &contacts {
@@ -176,16 +196,17 @@ fn sonar_sweep(
     ));
 }
 
-/// Gunshots give away the shooter's position on the radar (in any mode that has one).
+/// Gunshots give away the shooter's position on the radar while it's sweeping.
 fn gunshot_pings(
     mut commands: Commands,
     mode: Res<RadarMode>,
+    tuning: Res<Tuning>,
     assets: Res<RadarAssets>,
     mut materials: ResMut<Assets<StandardMaterial>>,
     mut shots: MessageReader<Gunshot>,
 ) {
     for shot in shots.read() {
-        if *mode == RadarMode::Sonar {
+        if mode.sonar_period(&tuning).is_some() {
             spawn_contact(&mut commands, &assets, &mut materials, shot.muzzle, Color::srgb(1.0, 0.8, 0.3));
         }
     }

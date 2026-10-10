@@ -21,6 +21,7 @@ use rand::Rng;
 
 use crate::{
     combat::Grapple,
+    difficulty::Tuning,
     Layer,
     arena::{Cover, Layout},
     nav::{Evade, MoveTo, Route},
@@ -35,7 +36,7 @@ const EYE_OFFSET: f32 = 0.7;
 pub const TARGET_MAX_HP: u32 = 3;
 
 pub const VIEW_RANGE: f32 = 40.0;
-const VIEW_HALF_ANGLE: f32 = 0.6; // ~34°, a bit narrower than the camera so "seen" means clearly on screen
+pub const VIEW_HALF_ANGLE: f32 = 0.6; // ~34°, a bit narrower than the camera so "seen" means clearly on screen
 const WALK_SPEED: f32 = 2.2;
 const RUN_SPEED: f32 = 5.5;
 /// "Close enough" for every arrival check (walk itself homes in to 0.2m).
@@ -45,6 +46,8 @@ const ARRIVE: f32 = 0.5;
 #[reflect(Component)]
 pub struct Target {
     pub hp: u32,
+    /// Hit points he started the round with (the Gunfight band sets it).
+    pub max_hp: u32,
 }
 
 /// Pitch node between the body (yaw) and the camera.
@@ -152,7 +155,9 @@ fn spawn_target(
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
     mut trees: ResMut<Assets<BehaviorTreeRoot>>,
+    tuning: Res<Tuning>,
 ) {
+    let him = tuning.him();
     let blip = materials.add(StandardMaterial {
         base_color: Color::srgb(1.0, 0.2, 0.2),
         unlit: true,
@@ -169,7 +174,7 @@ fn spawn_target(
     commands.spawn((
         Name::new("Target"),
         RoundEntity,
-        Target { hp: TARGET_MAX_HP },
+        Target { hp: him.hp, max_hp: him.hp },
         Suspicion::default(),
         RadarContact(Color::srgb(1.0, 0.2, 0.2)),
         LookGoal {
@@ -213,7 +218,7 @@ fn spawn_target(
             (
                 Name::new("Radar view cone"),
                 // Sector points +Y in its own plane; lay it flat, pointing forward (-Z).
-                Mesh3d(meshes.add(CircularSector::new(VIEW_RANGE * 0.5, VIEW_HALF_ANGLE))),
+                Mesh3d(meshes.add(CircularSector::new(VIEW_RANGE * 0.5, him.view_half_angle))),
                 MeshMaterial3d(cone),
                 Transform::from_xyz(0.0, 3.0, 0.0).with_rotation(Quat::from_rotation_x(-PI / 2.0)),
                 RenderLayers::layer(RADAR_LAYER),
@@ -620,8 +625,10 @@ fn perceive(
     eyes: Single<&GlobalTransform, With<MainCamera>>,
     mut target: Single<(Entity, &mut Suspicion), With<Target>>,
     shooter: Single<(Entity, &Transform, &LinearVelocity), With<Shooter>>,
+    tuning: Res<Tuning>,
     mut commands: Commands,
 ) {
+    let him = tuning.him();
     let (target_e, ref mut suspicion) = *target;
     let (shooter_e, shooter_t, shooter_v) = *shooter;
     let eye = eyes.translation();
@@ -630,7 +637,7 @@ fn perceive(
     let angle = eyes.forward().angle_between(to_shooter);
 
     let sees = dist < VIEW_RANGE
-        && angle < VIEW_HALF_ANGLE
+        && angle < him.view_half_angle
         && Dir3::new(to_shooter).is_ok_and(|dir| {
             spatial
                 .cast_ray(
@@ -655,9 +662,9 @@ fn perceive(
         suspicion.level = 1.0;
     } else if sees {
         let closeness = 1.0 - dist / VIEW_RANGE;
-        let centred = 1.0 - angle / VIEW_HALF_ANGLE;
+        let centred = 1.0 - angle / him.view_half_angle;
         let moving = if shooter_v.length() > 0.5 { 1.0 } else { 0.25 };
-        suspicion.bump((0.08 + 0.6 * closeness) * (0.4 + 0.6 * centred) * moving * dt);
+        suspicion.bump((0.08 + 0.6 * closeness) * (0.4 + 0.6 * centred) * moving * him.spot_rate * dt);
         // Half-sure: glance over.
         if suspicion.level > 0.5 && !suspicion.engaged {
             commands.entity(target_e).insert(Alert::new(shooter_t.translation, 1.5));

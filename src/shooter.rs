@@ -38,19 +38,19 @@ pub struct Shooter {
 }
 
 /// The shooter took a step (heard by the target).
-#[derive(Message, Clone, Copy)]
+#[derive(Message, Clone, Copy, Debug)]
 pub struct Footstep {
     pub at: Vec3,
 }
 
 /// The shooter walked into a wall or cover: a thud (so you notice you're stuck) and a knock back.
-#[derive(Message, Clone, Copy)]
+#[derive(Message, Clone, Copy, Debug)]
 pub struct Bump {
     pub at: Vec3,
 }
 
 /// You whistled: a loud, far-carrying sound so you can find yourself by ear. He can hear it too.
-#[derive(Message, Clone, Copy)]
+#[derive(Message, Clone, Copy, Debug)]
 pub struct Whistle {
     pub at: Vec3,
 }

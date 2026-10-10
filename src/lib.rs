@@ -4,9 +4,12 @@
 //! Split into `gameplay` (headless-testable simulation) and `presentation`
 //! (rendering-only: HUD, radar, FX, audio). Tests build an app from `gameplay` alone.
 
+pub mod adapt;
 pub mod arena;
 pub mod audio;
 pub mod combat;
+pub mod debug;
+pub mod difficulty;
 pub mod fx;
 pub mod hud;
 pub mod juice;
@@ -45,10 +48,11 @@ pub fn gameplay(app: &mut App) {
         target::plugin,
         shooter::plugin,
         combat::plugin,
+        difficulty::plugin,
     ));
 }
 
 /// Everything that only matters when there's a screen and speakers.
 pub fn presentation(app: &mut App) {
-    app.add_plugins((juice::plugin, layout::plugin, fx::plugin, audio::plugin, radar::plugin, hud::plugin, touch::plugin, start::plugin));
+    app.add_plugins((juice::plugin, layout::plugin, fx::plugin, audio::plugin, radar::plugin, hud::plugin, touch::plugin, start::plugin, debug::plugin));
 }

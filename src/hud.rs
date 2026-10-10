@@ -12,7 +12,7 @@ use crate::{
     round::{GameState, TargetMobile},
     shooter::{SHOOTER_MAX_HP, Shooter, Stunned},
     start::Started,
-    target::{Activity, Suspicion, TARGET_MAX_HP, Target},
+    target::{Activity, Suspicion, Target},
     touch::{TouchControls, TouchWhistle, WHISTLE_SIZE},
 };
 
@@ -174,7 +174,7 @@ fn draw_hud(
                     ui.label(format!(
                         "TARGET  {}{}",
                         "♥".repeat(target.hp as usize),
-                        "♡".repeat((TARGET_MAX_HP - target.hp) as usize)
+                        "♡".repeat(target.max_hp.saturating_sub(target.hp) as usize)
                     ));
                     let colour = if suspicion.engaged {
                         egui::Color32::from_rgb(220, 50, 40)
@@ -300,7 +300,7 @@ fn draw_hud(
     }
     // His view reddens at the edges as he's wounded, pulsing on each hit.
     if let Some(target) = &target {
-        let wounds = 1.0 - target.0.hp as f32 / TARGET_MAX_HP as f32;
+        let wounds = 1.0 - target.0.hp as f32 / target.0.max_hp.max(1) as f32;
         let strength = (wounds * 0.7 + flashes.hit * 0.5).min(1.0);
         if strength > 0.0 {
             let width = view.width().min(view.height()) * (0.12 + 0.18 * strength);

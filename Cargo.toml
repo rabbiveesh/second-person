@@ -40,6 +40,10 @@ opt-level = 3
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 getrandom_03 = { package = "getrandom", version = "0.3", features = ["wasm_js"] }
 getrandom_04 = { package = "getrandom", version = "0.4", features = ["wasm_js"] }
+# F9 debug dump downloads as a file in the browser.
+js-sys = "0.3"
+wasm-bindgen = "0.2"
+web-sys = { version = "0.3", features = ["Window", "Document", "Blob", "BlobPropertyBag", "Url", "HtmlAnchorElement"] }
 
 # bevy_firework 0.10.0 + a fix so particles work with MSAA on WebGL2: without a depth prepass
 # it bound a multisampled dummy depth texture, which WebGL2 can't create (panicked on the

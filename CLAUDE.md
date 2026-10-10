@@ -121,16 +121,32 @@ Fyrox (small ecosystem), macroquad/three-d (too thin, would mean rolling our own
   deck below the view holds the radar and whistle, and the left thumb drives from it. FOV is Hor+ with a floor:
   `BASE_VFOV` vertical until the view shows less than `MIN_HFOV` across, then the vertical opens up to `MAX_VFOV`.
   egui draws after every camera, so HUD fills must leave holes for camera viewports (see `hud::fill_around`).
-- `radar.rs`: ortho top-down camera in the viewport `layout` gives it (layers 0+1), framed on the layout's bounds. `RadarMode` is the difficulty knob
-  (Tab cycles; init'd in `round` so it exists headless):
+- `radar.rs`: ortho top-down camera in the viewport `layout` gives it (layers 0+1), framed on the layout's bounds. `RadarMode`
+  is the player's pick (Tab cycles; init'd in `round` so it exists headless):
+  - Auto (default): sonar at the pace the assist dial sets (see `difficulty.rs`), none once the help has faded.
   - Full: live `LiveBlip`s, heading arrow and view cone.
-  - Sonar (default): a sweep every 2s spawns fading contacts at each `RadarContact`, and gunshots ping too.
+  - Sonar: a sweep every 2s spawns fading contacts at each `RadarContact`, and gunshots ping too.
   - Off: no radar.
   Shooter and bullets render on layer 0 only, so the radar can't see them except through blips and contacts.
   The radar is lit by a per-camera `AmbientLight`, not a light of its own. Any shadow-casting light on the radar
   layer leaks the actors' shadows onto it, and **WebGL2 allows one `DirectionalLight` in total** (the sun). Tests guard both.
   bevy_firework is vendored (`vendor/bevy_firework`, `[patch.crates-io]`) with a fix so particles work under MSAA on
   WebGL2 (it bound a multisampled dummy depth texture, which WebGL2 can't create). Drop the patch once upstream fixes it.
+- `adapt/` (pure, no Bevy): the adaptive difficulty engine. A reducer (`reduce(PlayerProfile, AdaptEvent)`) keeps a
+  band 1..10, spread and rolling window per `Skill` (Stealth: landing the first hit before he engages; Gunfight: winning
+  once he has), plus an assist dial 0..1 kept separate from the bands. Each round's bands are sampled around the
+  centers (band blending), so promotion is never a cliff. Assists fade before a band rises; losing streaks ease off.
+  The first rounds are a disguised placement test. `adapt::sim` plays synthetic players through the real reducer
+  (`cargo run --example simulate -- --all --seeds 20`); tuning notes in `src/adapt/README.md`.
+- `difficulty.rs`: what the engine's numbers do in play. `Tuning` (Reflect, queryable over BRP) is this round's bands +
+  dial; `HisLevers` (from the bands: view cone, how fast he spots you, hearing, fire rate/damage, holding angles,
+  grapple/roll, HP) and `AssistLevers` (from the dial: magnetism, sonar pace, damage taken). Band 5 and the baseline dial
+  are exactly the hand-tuned constants, which stay in `target`/`combat`/`radar` (a test pins this). `AdaptiveDifficulty`
+  is only inserted by `main.rs`, so headless tests and staged examples keep the fixed tuning. Never shown to the player.
+  The 1v1 duel will have no assists.
+- `debug.rs` (presentation): F9 writes a plain-text dump (web: downloads it): build info, the adaptive state and round
+  history (`difficulty::debug_text`), every reflected `second_person::` resource, the target's and shooter's components,
+  and the last 300 gameplay messages. New reflected resources show up for free; log a new message with `log_messages`.
 - `fx.rs`: bevy_firework particle bursts (muzzle, impacts, hits), a muzzle point light (lights up the area
   around the shooter even when he's off-screen), and return-fire tracers.
 - `juice.rs`: transform-only feel, so it runs headless and is tested: the eyes flinch along the bullet
@@ -147,6 +163,7 @@ Fyrox (small ecosystem), macroquad/three-d (too thin, would mean rolling our own
   wound vignette, radar frame, end banner (held back `BANNER_DELAY` so the deaths play out).
 
 ## Tuning knobs
-Suspicion rates in `target::perceive`. `VIEW_HALF_ANGLE`/`VIEW_RANGE` in `target.rs`. Return fire
+Per-band and per-dial curves in `difficulty.rs` (the hand-tuned values below are band 5 / the baseline dial); the
+engine's thresholds in `adapt/profile.rs`, checked with the simulator. Suspicion rates in `target::perceive`. `VIEW_HALF_ANGLE`/`VIEW_RANGE` in `target.rs`. Return fire
 damage/interval, holding the angle (`HOLD_ANGLE_*`, `REACQUIRE_SECS`), bullet magnetism (`MAGNET_CONE`, `MAGNET_RANGE`), hearing range and near-miss range in `combat.rs`.
 Field of view and the portrait threshold in `layout.rs`.
