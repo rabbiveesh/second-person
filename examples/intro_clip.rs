@@ -1,4 +1,5 @@
-//! Records a round's intro: the overhead shot of the arena, then the swoop into his eyes.
+//! Records the way into a round: the title over the demo round, a press, the countdown over the
+//! arena, then the swoop into his eyes.
 //!
 //!     xvfb-run -a cargo run --example intro_clip -- <out dir> [seed]
 //!     ffmpeg -framerate 30 -i <out dir>/frame-%04d.png -pix_fmt yuv420p intro.mp4
@@ -14,10 +15,10 @@ use bevy::{
     time::TimeUpdateStrategy,
 };
 use bevy_egui::{EguiGlobalSettings, EguiPlugin};
+use leafwing_input_manager::prelude::*;
 use second_person::{
     arena::ArenaMode,
-    intro::{HOLD_SECS, SWOOP_SECS},
-    start::Started,
+    intro::Intro,
     touch::TouchControls,
 };
 
@@ -30,7 +31,6 @@ fn main() {
     let arena = args.next().map_or(ArenaMode::Classic, |s| ArenaMode::Seed(s.parse().expect("seed")));
     std::fs::create_dir_all(&out).unwrap();
     App::new()
-        .insert_resource(Started(true))
         .insert_resource(TouchControls(false))
         .insert_resource(arena)
         .insert_resource(EguiGlobalSettings {
@@ -56,11 +56,19 @@ fn main() {
         .run();
 }
 
-fn record(world: &mut World, mut frame: Local<u32>) {
+/// Title for 4s, then a press; stop half a second after he's in his eyes.
+fn record(world: &mut World, mut frame: Local<u32>, mut ended: Local<Option<u32>>) {
     *frame += 1;
     let f = *frame;
-    let last = ((HOLD_SECS + SWOOP_SECS + 1.0) * 60.0) as u32;
-    if f >= last {
+    match f {
+        240 => KeyCode::Space.press(world),
+        244 => KeyCode::Space.release(world),
+        _ => {}
+    }
+    if f > 300 && ended.is_none() && world.resource::<Intro>().0.is_none() {
+        *ended = Some(f);
+    }
+    if ended.is_some_and(|e| f >= e + 30) {
         world.write_message(AppExit::Success);
     } else if f >= 4 && f % 2 == 0 {
         let path = world.resource::<Out>().0.join(format!("frame-{:04}.png", (f - 4) / 2));

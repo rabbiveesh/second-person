@@ -854,31 +854,38 @@ fn tapping_the_whistle_button_does_not_fire() {
 }
 
 #[test]
-fn start_screen_holds_the_game_until_a_press_then_controls_follow_the_last_input() {
+fn title_runs_a_demo_round_until_a_press_starts_a_real_one() {
     use bevy::input::touch::{TouchInput, TouchPhase};
     use leafwing_input_manager::prelude::ActionState;
-    use second_person::{shooter::ShooterAction, start::{self, Started}, touch::TouchControls};
+    use second_person::{round::Attract, shooter::ShooterAction, start::{self, Started}, touch::TouchControls};
     let mut app = app_with(|app| {
         app.add_plugins(start::plugin);
     });
-    step(&mut app, 0.5);
+    // Behind the title: no shooter, the world runs, and he wanders.
+    let target = single::<Target>(&mut app);
+    let from = app.world().get::<Transform>(target).unwrap().translation;
+    step(&mut app, 4.0);
     assert!(!app.world().resource::<Started>().0);
-    assert!(app.world().resource::<Time<Virtual>>().is_paused(), "frozen behind the overlay");
+    assert!(app.world().resource::<Attract>().0);
+    assert!(!app.world().resource::<Time<Virtual>>().is_paused(), "demo round should run");
+    assert_eq!(app.world_mut().query::<&Shooter>().iter(app.world()).count(), 0);
+    let to = app.world().get::<Transform>(target).unwrap().translation;
+    assert!(from.distance(to) > 1.0, "he should wander behind the title: {from} -> {to}");
 
-    // The key that dismisses the overlay doesn't fire.
+    // The key that dismisses the title starts a real round, and doesn't fire.
     KeyCode::Space.press(app.world_mut());
     step(&mut app, 0.1);
     KeyCode::Space.release(app.world_mut());
     step(&mut app, 0.1);
     assert!(app.world().resource::<Started>().0);
-    assert!(!app.world().resource::<Time<Virtual>>().is_paused());
+    assert!(!app.world().resource::<Attract>().0);
+    let shooter = single::<Shooter>(&mut app);
     assert_eq!(counted::<Gunshot>(&app), 0, "dismissing press fired");
     assert!(!app.world().resource::<TouchControls>().0, "a key means keyboard");
 
     // Now Space fires as usual.
     press(&mut app, KeyCode::Space);
     assert_eq!(counted::<Gunshot>(&app), 1);
-    let shooter = single::<Shooter>(&mut app);
     assert!(!app.world().get::<ActionState<ShooterAction>>(shooter).unwrap().disabled());
 
     // A touch switches to touch controls, a key back to keyboard.
@@ -895,53 +902,71 @@ fn start_screen_holds_the_game_until_a_press_then_controls_follow_the_last_input
     assert!(!app.world().resource::<TouchControls>().0);
 }
 
+#[derive(Resource, Default)]
+struct Countdowns(Vec<second_person::intro::CountdownDone>);
+
 #[test]
-fn round_opens_over_the_arena_and_swoops_into_his_eyes() {
-    use second_person::{intro::{self, HOLD_SECS, SWOOP_SECS}, start};
+fn round_counts_down_over_the_arena_then_swoops_into_his_eyes() {
+    use second_person::{intro::{self, CountdownDone, SWOOP_SECS}, start};
     let mut app = app_with(|app| {
-        app.add_plugins((start::plugin, intro::plugin));
+        app.add_plugins((start::plugin, intro::plugin)).init_resource::<Countdowns>().add_systems(
+            Update,
+            |mut done: MessageReader<CountdownDone>, mut log: ResMut<Countdowns>| log.0.extend(done.read().copied()),
+        );
     });
     // The camera is respawned with each round, so look it up every time.
     let height = |app: &mut App| {
         let mut q = app.world_mut().query_filtered::<&GlobalTransform, With<MainCamera>>();
         q.single(app.world()).unwrap().translation().y
     };
-    // Behind the start screen it already shows the whole arena from high up.
+    let clock = |app: &App| app.world().resource::<intro::Intro>().0;
+
+    // Leaving the title starts a round on the overhead shot, frozen, counting down.
+    press(&mut app, KeyCode::Space);
     step(&mut app, 0.5);
     let top = height(&mut app);
     assert!(top > 20.0, "not overhead: {top}");
+    assert!(app.world().resource::<Time<Virtual>>().is_paused(), "game runs during the countdown");
+    let hold = clock(&app).expect("no intro").hold;
+    assert!(hold >= 3.0, "countdown {hold}");
 
-    // Starting doesn't start the round: it's still frozen while the overhead shot holds.
-    press(&mut app, KeyCode::Space);
-    step(&mut app, HOLD_SECS * 0.5);
-    assert!(app.world().resource::<Time<Virtual>>().is_paused(), "game runs during the intro");
-    assert!(height(&mut app) > 20.0);
-    KeyCode::ArrowUp.press(app.world_mut());
-    step(&mut app, 0.2);
-    KeyCode::ArrowUp.release(app.world_mut());
-    let shooter = single::<Shooter>(&mut app);
-    assert!(app.world().resource::<intro::Intro>().0.is_none(), "a press skips the intro");
+    // A press means ready: the countdown ends there (and says how much was used), the swoop plays.
+    press(&mut app, KeyCode::ArrowUp);
+    let c = clock(&app).expect("a ready press skips the swoop too");
+    assert!(c.t >= c.hold);
+    let log = &app.world().resource::<Countdowns>().0;
+    assert_eq!(log.len(), 1);
+    assert!(log[0].waited < 1.0 && log[0].offered == hold, "{:?}", log[0]);
+    // A second press skips the swoop.
+    step(&mut app, 0.1);
+    press(&mut app, KeyCode::ArrowUp);
+    assert!(clock(&app).is_none(), "a second press skips the swoop");
 
-    // Skipped: he's back in his own eyes, and the game is live.
+    // He's back in his own eyes, and the game is live.
     step(&mut app, 0.1);
     assert!(!app.world().resource::<Time<Virtual>>().is_paused());
     let cam = single::<MainCamera>(&mut app);
     let local = *app.world().get::<Transform>(cam).unwrap();
     assert!(local.translation.length() < 0.05 && local.rotation.angle_between(Quat::IDENTITY) < 0.05, "{local:?}");
+    let shooter = single::<Shooter>(&mut app);
     let before = app.world().get::<Transform>(shooter).unwrap().translation;
     KeyCode::ArrowUp.press(app.world_mut());
     step(&mut app, 0.3);
+    KeyCode::ArrowUp.release(app.world_mut());
     assert!(app.world().get::<Transform>(shooter).unwrap().translation.distance(before) > 0.5, "can't drive after");
 
-    // Left alone, a round's intro runs its course and lands in his eyes on its own.
-    KeyCode::ArrowUp.release(app.world_mut());
+    // Left alone, the next round's countdown runs out and the swoop lands in his eyes on its own.
     app.world_mut().resource_mut::<NextState<GameState>>().set(GameState::Playing);
-    step(&mut app, HOLD_SECS + SWOOP_SECS * 0.5);
+    step(&mut app, 0.1);
+    let hold = clock(&app).expect("no intro").hold;
+    step(&mut app, hold + SWOOP_SECS * 0.5);
     let mid = height(&mut app);
     assert!(mid > 2.5 && mid < top * 0.6, "mid-swoop height {mid} (from {top})");
     step(&mut app, SWOOP_SECS * 0.5 + 0.1);
-    assert!(app.world().resource::<intro::Intro>().0.is_none());
+    assert!(clock(&app).is_none());
     assert!((height(&mut app) - 1.6).abs() < 0.1, "not in his eyes: {}", height(&mut app));
+    let log = &app.world().resource::<Countdowns>().0;
+    assert!((log[1].waited - log[1].offered).abs() < 0.05, "waited it out: {:?}", log[1]);
 }
 
 /// Shooter 12m straight behind him (out of his view), turned `off_deg` away, fires once.

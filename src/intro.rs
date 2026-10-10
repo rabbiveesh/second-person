@@ -1,6 +1,11 @@
 //! Round intro: the view opens high over the whole arena, with you and him marked (and the way
-//! he's facing), holds long enough to read the layout, then swoops down into his eyes. The game
-//! is frozen throughout (virtual time paused, shooter input off), and any press skips it.
+//! he's facing), counts down while you read the layout, then swoops down into his eyes. The game
+//! is frozen throughout (virtual time paused, shooter input off). A press means "ready": it cuts
+//! the countdown short, and a second one skips the swoop.
+//!
+//! The countdown adapts: its base length is `Countdown` (the difficulty system's knob), plus a
+//! little for a busier arena. Each round reports how much of it the player used
+//! (`CountdownDone`), which is a cheap read on how much orienting they still need.
 //!
 //! The camera is still the `MainCamera` under his head: each frame we pick a world pose and write
 //! it as the camera's local transform, after `juice` and before transform propagation. When the
@@ -24,9 +29,11 @@ use crate::{
     target::{MainCamera, Target, TargetHead},
 };
 
-/// Overhead hold, then the swoop down into his eyes (real seconds).
-pub const HOLD_SECS: f32 = 1.8;
+/// The swoop down into his eyes after the countdown (real seconds).
 pub const SWOOP_SECS: f32 = 1.6;
+/// Extra countdown per piece of cover, up to `BUSY_MAX`: cluttered arenas take longer to read.
+const BUSY_PER_BLOCK: f32 = 0.05;
+const BUSY_MAX: f32 = 1.5;
 /// A press this soon after the game starts is the one that dismissed the start screen, not a skip.
 const SKIP_GRACE: f32 = 0.25;
 const MARKER_RADIUS: f32 = 1.6;
@@ -43,16 +50,42 @@ impl Default for IntroEnabled {
     }
 }
 
-/// Real seconds into this round's intro, or `None` once it's over.
+/// Base countdown before the swoop (real seconds), before the allowance for a busy arena.
+#[derive(Resource)]
+pub struct Countdown(pub f32);
+
+impl Default for Countdown {
+    fn default() -> Self {
+        Self(3.0)
+    }
+}
+
+/// This round's intro: real seconds in, and how long the countdown is.
+#[derive(Clone, Copy, Debug)]
+pub struct Clock {
+    pub t: f32,
+    pub hold: f32,
+}
+
+/// The intro playing now, or `None` once it's over.
 #[derive(Resource, Default)]
-pub struct Intro(pub Option<f32>);
+pub struct Intro(pub Option<Clock>);
+
+/// The countdown ended: how long it offered and how much of it the player waited out.
+#[derive(Message, Clone, Copy, Debug)]
+pub struct CountdownDone {
+    pub offered: f32,
+    pub waited: f32,
+}
 
 #[derive(Component)]
 struct IntroMarker;
 
 pub fn plugin(app: &mut App) {
     app.init_resource::<IntroEnabled>()
+        .init_resource::<Countdown>()
         .init_resource::<Intro>()
+        .add_message::<CountdownDone>()
         .add_systems(OnEnter(GameState::Playing), begin.after(SpawnRound))
         .add_systems(
             PreUpdate,
@@ -62,22 +95,25 @@ pub fn plugin(app: &mut App) {
                 .before(InputManagerSystem::Update),
         )
         .add_systems(PostUpdate, fly_camera.before(TransformSystems::Propagate))
-        .add_systems(EguiPrimaryContextPass, label_markers);
+        .add_systems(EguiPrimaryContextPass, (label_markers, count_down));
 }
 
 fn begin(
     mut commands: Commands,
     enabled: Res<IntroEnabled>,
+    countdown: Res<Countdown>,
+    layout: Res<Layout>,
     mut intro: ResMut<Intro>,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
-    shooter: Single<&Transform, With<Shooter>>,
+    shooter: Option<Single<&Transform, With<Shooter>>>,
     target: Single<&Transform, With<Target>>,
 ) {
-    intro.0 = enabled.0.then_some(0.0);
-    if !enabled.0 {
-        return;
-    }
+    intro.0 = None;
+    // No shooter means the title screen's demo round: nobody to orient.
+    let Some(shooter) = shooter.filter(|_| enabled.0) else { return };
+    let busy = (layout.blocks.len() as f32 * BUSY_PER_BLOCK).min(BUSY_MAX);
+    intro.0 = Some(Clock { t: 0.0, hold: countdown.0 + busy });
     let mut mark = |at: Vec3, color: Color, facing: Option<Quat>| {
         let material = materials.add(StandardMaterial { base_color: color, unlit: true, ..default() });
         let floor = at.with_y(0.03);
@@ -100,12 +136,14 @@ fn begin(
     mark(target.translation, HIM, Some(target.rotation));
 }
 
-/// Count real time once the start screen is gone; a fresh press skips to the end.
+/// Count real time once the title screen is gone. A press during the countdown ends it; a press
+/// during the swoop finishes it.
 fn advance(
     time: Res<Time<Real>>,
     started: Res<Started>,
     mut intro: ResMut<Intro>,
     mut commands: Commands,
+    mut done: MessageWriter<CountdownDone>,
     markers: Query<Entity, With<IntroMarker>>,
     mut keys: MessageReader<KeyboardInput>,
     mut clicks: MessageReader<MouseButtonInput>,
@@ -114,12 +152,19 @@ fn advance(
     let pressed = keys.read().any(|k| k.state == ButtonState::Pressed)
         | clicks.read().any(|c| c.state == ButtonState::Pressed)
         | (touches.read().count() > 0);
-    let Some(t) = intro.0.as_mut() else { return };
+    let Some(clock) = intro.0.as_mut() else { return };
     if !started.0 {
         return;
     }
-    *t += time.delta_secs();
-    if *t >= HOLD_SECS + SWOOP_SECS || (pressed && *t > SKIP_GRACE) {
+    let pressed = pressed && clock.t > SKIP_GRACE;
+    let counting = clock.t < clock.hold;
+    clock.t += time.delta_secs();
+    if counting && (pressed || clock.t >= clock.hold) {
+        done.write(CountdownDone { offered: clock.hold, waited: clock.t.min(clock.hold) });
+        clock.t = clock.t.max(clock.hold);
+        return;
+    }
+    if clock.t >= clock.hold + SWOOP_SECS || (pressed && !counting) {
         intro.0 = None;
         for e in &markers {
             commands.entity(e).despawn();
@@ -154,8 +199,8 @@ fn freeze(
 }
 
 /// Where the camera is at `t` seconds in, given the overhead shot and his eyes (world poses).
-pub fn pose(t: f32, overhead: Transform, eyes: Transform) -> Transform {
-    let u = ((t - HOLD_SECS) / SWOOP_SECS).clamp(0.0, 1.0);
+pub fn pose(clock: Clock, overhead: Transform, eyes: Transform) -> Transform {
+    let u = ((clock.t - clock.hold) / SWOOP_SECS).clamp(0.0, 1.0);
     let s = u * u * (3.0 - 2.0 * u);
     // Arc in from above and behind him rather than dropping straight down the lift shaft.
     let behind = eyes.rotation * Vec3::Z;
@@ -201,36 +246,57 @@ fn fly_camera(
     *cam.0 = Transform::from_matrix((eyes.compute_affine().inverse() * world.compute_affine()).into());
 }
 
-/// "YOU" and "HIM" over the markers while the overhead shot holds.
+/// "YOU" and "HIM" over the markers while the overhead shot holds, each on its own dark pill so
+/// it reads on any floor.
 fn label_markers(
     mut contexts: EguiContexts,
     intro: Res<Intro>,
-    started: Res<Started>,
     screen: Res<ScreenLayout>,
     cam: Single<(&Camera, &GlobalTransform), With<MainCamera>>,
     shooter: Single<&Transform, With<Shooter>>,
     target: Single<&Transform, With<Target>>,
 ) -> Result {
-    // Behind the start screen the markers alone do; labels would print over its text.
-    let (Some(t), true) = (intro.0, started.0) else { return Ok(()) };
-    let fade = 1.0 - ((t - HOLD_SECS) / (SWOOP_SECS * 0.3)).clamp(0.0, 1.0);
+    let Some(clock) = intro.0 else { return Ok(()) };
+    let fade = 1.0 - ((clock.t - clock.hold) / (SWOOP_SECS * 0.3)).clamp(0.0, 1.0);
     if fade <= 0.0 {
         return Ok(());
     }
     let ctx = contexts.ctx_mut()?;
-    let painter = ctx.layer_painter(egui::LayerId::new(egui::Order::Foreground, "intro labels".into()));
+    let painter = ctx.layer_painter(egui::LayerId::new(egui::Order::Middle, "intro labels".into()));
     let (camera, eyes) = *cam;
     for (at, text, color) in [(shooter.translation, "YOU", YOU), (target.translation, "HIM", HIM)] {
         let Ok(p) = camera.world_to_viewport(eyes, at) else { continue };
         let p = p + screen.view.min;
         let [r, g, b, _] = color.to_srgba().to_u8_array();
-        painter.text(
-            egui::pos2(p.x, p.y - 28.0),
-            egui::Align2::CENTER_BOTTOM,
-            text,
-            egui::FontId::proportional(24.0),
-            egui::Color32::from_rgba_unmultiplied(r, g, b, (255.0 * fade) as u8),
+        let alpha = (255.0 * fade) as u8;
+        let galley = painter.layout_no_wrap(
+            text.into(),
+            egui::FontId::proportional(20.0),
+            egui::Color32::from_rgba_unmultiplied(r, g, b, alpha),
         );
+        let pill = egui::Rect::from_center_size(egui::pos2(p.x, p.y - 40.0), galley.size() + egui::vec2(20.0, 8.0));
+        painter.rect_filled(pill, pill.height() / 2.0, egui::Color32::from_black_alpha((205.0 * fade) as u8));
+        painter.galley(pill.center() - galley.size() / 2.0, galley, egui::Color32::WHITE);
     }
+    Ok(())
+}
+
+/// The countdown, big, on a card near the top, clear of him (he's always mid-arena).
+fn count_down(mut contexts: EguiContexts, intro: Res<Intro>) -> Result {
+    let Some(clock) = intro.0.filter(|c| c.t < c.hold) else { return Ok(()) };
+    let ctx = contexts.ctx_mut()?;
+    let left = (clock.hold - clock.t).ceil().max(1.0) as u32;
+    egui::Area::new("countdown".into())
+        .order(egui::Order::Foreground)
+        .anchor(egui::Align2::CENTER_TOP, [0.0, 24.0])
+        .interactable(false)
+        .show(ctx, |ui| {
+            crate::hud::card().show(ui, |ui| {
+                ui.vertical_centered(|ui| {
+                    ui.label(egui::RichText::new(left.to_string()).size(72.0).color(egui::Color32::WHITE).strong());
+                    ui.label(egui::RichText::new("tap or press any key when ready").size(15.0).color(egui::Color32::LIGHT_GRAY));
+                });
+            });
+        });
     Ok(())
 }

@@ -15,7 +15,7 @@ use bevy::{
 use crate::{
     arena::Layout,
     combat::Gunshot,
-    round::{GameState, RoundEntity},
+    round::{Attract, GameState, RoundEntity},
 };
 
 pub const RADAR_LAYER: usize = 1;
@@ -125,10 +125,11 @@ fn frame_layout(layout: Res<Layout>, mut camera: Single<(&mut Projection, &mut T
 
 fn apply_mode(
     mode: Res<RadarMode>,
+    attract: Res<Attract>,
     mut camera: Single<&mut Camera, With<RadarCamera>>,
     mut blips: Query<&mut Visibility, With<LiveBlip>>,
 ) {
-    camera.is_active = *mode != RadarMode::Off;
+    camera.is_active = *mode != RadarMode::Off && !attract.0;
     let vis = if *mode == RadarMode::Full {
         Visibility::Inherited
     } else {
