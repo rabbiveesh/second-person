@@ -4,9 +4,11 @@
 //! Split into `gameplay` (headless-testable simulation) and `presentation`
 //! (rendering-only: HUD, radar, FX, audio). Tests build an app from `gameplay` alone.
 
+pub mod adapt;
 pub mod arena;
 pub mod audio;
 pub mod combat;
+pub mod difficulty;
 pub mod fx;
 pub mod hud;
 pub mod juice;
@@ -45,6 +47,7 @@ pub fn gameplay(app: &mut App) {
         target::plugin,
         shooter::plugin,
         combat::plugin,
+        difficulty::plugin,
     ));
 }
 
