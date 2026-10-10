@@ -84,6 +84,28 @@ impl Stagger {
     }
 }
 
+/// Double-tap left or right (arrows, or a double flick of the touch stick) to hop sideways
+/// without turning.
+#[derive(Component, Reflect, Default)]
+#[reflect(Component)]
+pub struct Sidestep {
+    /// The first tap of a possible double: its side (-1 left, +1 right), when, and the facing
+    /// before it, since a tap on a turn key also turns you a little.
+    first: Option<(f32, f32, Quat)>,
+    /// Whether the stick is pushed left/right right now (to catch each fresh push).
+    held: f32,
+    /// Seconds of hop left, and its velocity.
+    pub left: f32,
+    pub velocity: Vec3,
+    cooldown: f32,
+}
+
+/// Both taps have to land within this.
+const DOUBLE_TAP_WINDOW: f32 = 0.3;
+const HOP_SPEED: f32 = 12.0;
+const HOP_SECS: f32 = 0.2;
+const HOP_COOLDOWN: f32 = 0.8;
+
 const STEP_INTERVAL: f32 = 0.42;
 const BUMP_REACH: f32 = 0.15;
 const KNOCKBACK_SPEED: f32 = 4.0;
@@ -115,7 +137,7 @@ fn spawn_shooter(
         Name::new("Shooter"),
         RoundEntity,
         Shooter { hp: SHOOTER_MAX_HP },
-        (Stagger::default(), Stunned::default()),
+        (Stagger::default(), Stunned::default(), Sidestep::default()),
         InputMap::default()
             .with_dual_axis(ShooterAction::Drive, VirtualDPad::arrow_keys())
             .with(ShooterAction::Fire, KeyCode::Space)
@@ -191,20 +213,59 @@ fn drive(
             &mut LinearVelocity,
             &mut Stagger,
             &mut Stunned,
+            &mut Sidestep,
         ),
         With<Shooter>,
     >,
 ) {
-    for (actions, t, mut rot, mut vel, mut stagger, mut stunned) in &mut q {
+    let now = time.elapsed_secs();
+    let dt = time.delta_secs();
+    for (actions, t, mut rot, mut vel, mut stagger, mut stunned, mut side) in &mut q {
+        let input = actions.clamped_axis_pair(&ShooterAction::Drive);
+        side.cooldown -= dt;
+        // A fresh push straight left or right (not a diagonal, which is driving while turning).
+        let pushed = if input.x.abs() > 0.5 && input.y.abs() < 0.5 { input.x.signum() } else { 0.0 };
+        let tap = (pushed != 0.0 && side.held != pushed).then_some(pushed);
+        side.held = pushed;
+        if stunned.left > 0.0 || stagger.left > 0.0 {
+            side.first = None;
+        } else if let Some(dir) = tap {
+            match side.first {
+                Some((first, at, facing)) if first == dir && now - at <= DOUBLE_TAP_WINDOW && side.cooldown <= 0.0 => {
+                    // Undo the little turn the two taps made, then hop square to the side.
+                    rot.0 = facing;
+                    side.first = None;
+                    side.left = HOP_SECS;
+                    side.cooldown = HOP_COOLDOWN;
+                    side.velocity = rot.0 * Vec3::X * dir * HOP_SPEED;
+                }
+                _ => side.first = Some((dir, now, rot.0)),
+            }
+        }
+
         if stunned.left > 0.0 {
             stunned.left -= time.delta_secs();
             let pull = stunned.pull_to.map_or(Vec3::ZERO, |p| (p - t.translation).with_y(0.0).normalize_or_zero() * PULL_SPEED);
             vel.0 = Vec3::new(pull.x, vel.0.y, pull.z);
             stagger.left = 0.0;
+            side.left = 0.0;
             *step = 0.0;
             continue;
         }
-        let input = actions.clamped_axis_pair(&ShooterAction::Drive);
+        // A knock back (his laser, a wall) cuts a hop short.
+        if stagger.left > 0.0 {
+            side.left = 0.0;
+        }
+        if side.left > 0.0 {
+            side.left -= dt;
+            vel.0 = Vec3::new(side.velocity.x, vel.0.y, side.velocity.z);
+            if side.left <= 0.0 {
+                // Landing scuffs like a step, so he can hear it.
+                steps.write(Footstep { at: t.translation });
+            }
+            *step = 0.0;
+            continue;
+        }
         rot.0 = Quat::from_rotation_y(-input.x * TURN_SPEED * time.delta_secs()) * rot.0;
 
         let throttle = input.y;
@@ -235,9 +296,9 @@ fn drive(
 fn bump(
     spatial: SpatialQuery,
     mut bumps: MessageWriter<Bump>,
-    mut q: Query<(&Transform, &mut LinearVelocity, &mut Stagger, &Stunned), With<Shooter>>,
+    mut q: Query<(&Transform, &mut LinearVelocity, &mut Stagger, &Stunned, &mut Sidestep), With<Shooter>>,
 ) {
-    for (t, mut vel, mut stagger, stunned) in &mut q {
+    for (t, mut vel, mut stagger, stunned, mut side) in &mut q {
         if stagger.left > 0.0 || stunned.left > 0.0 {
             continue;
         }
@@ -253,6 +314,7 @@ fn bump(
         };
         let normal = Vec3::new(hit.normal.x, 0.0, hit.normal.z).normalize_or(-dir.as_vec3());
         bumps.write(Bump { at: t.translation + dir * hit.distance });
+        side.left = 0.0;
         *stagger = Stagger::knock(normal * KNOCKBACK_SPEED);
         vel.0 = Vec3::new(stagger.push.x, vel.0.y, stagger.push.z);
     }

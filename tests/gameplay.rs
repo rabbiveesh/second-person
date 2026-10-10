@@ -704,6 +704,72 @@ fn arrow_keys_drive_the_shooter_like_a_tank() {
     assert!(yaw > 0.5, "Left turns counter-clockwise (left): yaw {yaw}");
 }
 
+/// Tap an arrow for a few frames (quicker than a deliberate turn).
+fn tap(app: &mut App, key: KeyCode) {
+    key.press(app.world_mut());
+    step(app, 4.0 * DT);
+    key.release(app.world_mut());
+    step(app, 4.0 * DT);
+}
+
+#[test]
+fn double_tapping_a_turn_key_hops_sideways_without_turning() {
+    let mut app = app();
+    let shooter = single::<Shooter>(&mut app);
+    let start = Vec3::new(0.0, 0.9, 15.0);
+    place(&mut app, shooter, start, 0.0); // facing -Z, so right is +X
+    app.update();
+
+    tap(&mut app, KeyCode::ArrowRight);
+    tap(&mut app, KeyCode::ArrowRight);
+    step(&mut app, 0.5);
+    let t = *app.world().get::<Transform>(shooter).unwrap();
+    assert!(t.translation.x > start.x + 1.8, "hopped right: {}", t.translation);
+    assert!((t.translation.z - start.z).abs() < 0.2, "square to the side: {}", t.translation);
+    let (yaw, _, _) = t.rotation.to_euler(EulerRot::YXZ);
+    assert!(yaw.abs() < 0.01, "facing kept: yaw {yaw}");
+
+    // Taps too far apart just turn, a little each.
+    tap(&mut app, KeyCode::ArrowLeft);
+    step(&mut app, 0.5);
+    tap(&mut app, KeyCode::ArrowLeft);
+    step(&mut app, 0.3);
+    let after = *app.world().get::<Transform>(shooter).unwrap();
+    assert!((after.translation.x - t.translation.x).abs() < 0.1, "no hop: {}", after.translation);
+    let (yaw, _, _) = after.rotation.to_euler(EulerRot::YXZ);
+    assert!(yaw > 0.2, "turned left instead: yaw {yaw}");
+}
+
+#[test]
+fn he_dodge_rolls_your_first_shot_but_not_the_second() {
+    use second_person::target::{ROLL_SECS, Roll};
+    let mut app = app();
+    let shooter_pos = Vec3::new(0.0, 0.9, -12.0);
+    stage(&mut app, shooter_pos, shooter_pos);
+    let target = single::<Target>(&mut app);
+    app.world_mut().get_mut::<Suspicion>(target).unwrap().bump(1.0);
+    step(&mut app, 0.1);
+    assert!(app.world().get::<Suspicion>(target).unwrap().sees_shooter);
+    let start = app.world().get::<Transform>(target).unwrap().translation;
+
+    press(&mut app, KeyCode::Space);
+    assert!(app.world().get::<Roll>(target).is_some(), "no roll");
+    // Mid-roll he's somersaulting: his view is upside down.
+    step(&mut app, ROLL_SECS / 2.0);
+    let cam = single::<MainCamera>(&mut app);
+    let up = app.world().get::<Transform>(cam).unwrap().rotation * Vec3::Y;
+    assert!(up.y < -0.5, "view didn't tumble: up is {up}");
+    step(&mut app, ROLL_SECS / 2.0);
+    let landed = app.world().get::<Transform>(target).unwrap().translation;
+    assert!((landed.x - start.x).abs() > 1.5, "didn't dive sideways: {start} -> {landed}");
+    step(&mut app, 0.3);
+    assert_eq!(counted::<TargetHit>(&app), 0, "the dodged shot hit");
+
+    // Still on cooldown: the follow-up isn't dodged.
+    press(&mut app, KeyCode::Space);
+    assert!(app.world().get::<Roll>(target).is_none(), "rolled again");
+}
+
 #[test]
 fn walking_into_a_wall_thuds_and_knocks_you_back() {
     let mut app = app();

@@ -281,7 +281,7 @@ fn draw_hud(
                 ui.add(
                     egui::Label::new(
                         egui::RichText::new(format!(
-                            "Up/Down move   Left/Right turn   Space fire   W whistle   M target walks: {}   Tab radar: {:?}   L arena: {}   V view: {}   F1 inspector",
+                            "Up/Down move   Left/Right turn (double-tap: hop)   Space fire   W whistle   M target walks: {}   Tab radar: {:?}   L arena: {}   V view: {}   F1 inspector",
                             if mobile.0 { "on" } else { "off" },
                             *radar_mode,
                             arena.name,
