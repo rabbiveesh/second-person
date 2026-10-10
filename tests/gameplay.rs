@@ -895,6 +895,55 @@ fn start_screen_holds_the_game_until_a_press_then_controls_follow_the_last_input
     assert!(!app.world().resource::<TouchControls>().0);
 }
 
+#[test]
+fn round_opens_over_the_arena_and_swoops_into_his_eyes() {
+    use second_person::{intro::{self, HOLD_SECS, SWOOP_SECS}, start};
+    let mut app = app_with(|app| {
+        app.add_plugins((start::plugin, intro::plugin));
+    });
+    // The camera is respawned with each round, so look it up every time.
+    let height = |app: &mut App| {
+        let mut q = app.world_mut().query_filtered::<&GlobalTransform, With<MainCamera>>();
+        q.single(app.world()).unwrap().translation().y
+    };
+    // Behind the start screen it already shows the whole arena from high up.
+    step(&mut app, 0.5);
+    let top = height(&mut app);
+    assert!(top > 20.0, "not overhead: {top}");
+
+    // Starting doesn't start the round: it's still frozen while the overhead shot holds.
+    press(&mut app, KeyCode::Space);
+    step(&mut app, HOLD_SECS * 0.5);
+    assert!(app.world().resource::<Time<Virtual>>().is_paused(), "game runs during the intro");
+    assert!(height(&mut app) > 20.0);
+    KeyCode::ArrowUp.press(app.world_mut());
+    step(&mut app, 0.2);
+    KeyCode::ArrowUp.release(app.world_mut());
+    let shooter = single::<Shooter>(&mut app);
+    assert!(app.world().resource::<intro::Intro>().0.is_none(), "a press skips the intro");
+
+    // Skipped: he's back in his own eyes, and the game is live.
+    step(&mut app, 0.1);
+    assert!(!app.world().resource::<Time<Virtual>>().is_paused());
+    let cam = single::<MainCamera>(&mut app);
+    let local = *app.world().get::<Transform>(cam).unwrap();
+    assert!(local.translation.length() < 0.05 && local.rotation.angle_between(Quat::IDENTITY) < 0.05, "{local:?}");
+    let before = app.world().get::<Transform>(shooter).unwrap().translation;
+    KeyCode::ArrowUp.press(app.world_mut());
+    step(&mut app, 0.3);
+    assert!(app.world().get::<Transform>(shooter).unwrap().translation.distance(before) > 0.5, "can't drive after");
+
+    // Left alone, a round's intro runs its course and lands in his eyes on its own.
+    KeyCode::ArrowUp.release(app.world_mut());
+    app.world_mut().resource_mut::<NextState<GameState>>().set(GameState::Playing);
+    step(&mut app, HOLD_SECS + SWOOP_SECS * 0.5);
+    let mid = height(&mut app);
+    assert!(mid > 2.5 && mid < top * 0.6, "mid-swoop height {mid} (from {top})");
+    step(&mut app, SWOOP_SECS * 0.5 + 0.1);
+    assert!(app.world().resource::<intro::Intro>().0.is_none());
+    assert!((height(&mut app) - 1.6).abs() < 0.1, "not in his eyes: {}", height(&mut app));
+}
+
 /// Shooter 12m straight behind him (out of his view), turned `off_deg` away, fires once.
 fn shot_off_by(off_deg: f32) -> App {
     let mut app = app();

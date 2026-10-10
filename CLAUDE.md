@@ -107,6 +107,11 @@ Fyrox (small ecosystem), macroquad/three-d (too thin, would mean rolling our own
 - `start.rs` (presentation): "tap to play" overlay. `Time<Virtual>` is paused and the shooter's actions disabled
   until the first touch/key/click (`Started`). Then `TouchControls` follows the last input (touch on, key/click
   off), and the stick spawns/despawns with it. `scripts/headless-run` starts on this overlay: send any key over BRP.
+- `intro.rs` (presentation): each round opens on an overhead shot of the whole arena (`intro::overhead`, fitted to the
+  outline and turned so he faces up the screen) with YOU/HIM markers and his facing, holds `HOLD_SECS`, then swoops
+  into his eyes over `SWOOP_SECS` (`intro::pose`). It flies the `MainCamera` itself (world pose written as its local
+  transform before propagation), freezes `Time<Virtual>` and shooter input meanwhile, and any press skips it.
+  `IntroEnabled(false)` turns it off (the staged capture examples do).
 - `arena.rs` floor zones: the `Floors` resource (base `Floor` + rect `FloorZone`s, later ones win; `Floors::at`).
   Classic = wood plaza, gravel, metal, grass; random layouts get a random base and up to 3 zones that fit (`Floors::random`). Each floor has its own
   footstep sounds and a `hearing_range`; `combat::hear_movement` turns nearby steps, bumps and whistles

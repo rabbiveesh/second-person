@@ -49,7 +49,7 @@ fn follow_last_input(
 /// Before the start: time stands still and the shooter ignores input, so the press that
 /// dismisses the overlay doesn't also fire. This runs before `follow_last_input`, so the actions
 /// are enabled a frame after that press, when it's no longer "just pressed".
-fn hold_until_started(
+pub fn hold_until_started(
     started: Res<Started>,
     mut was_started: Local<bool>,
     mut time: ResMut<Time<Virtual>>,

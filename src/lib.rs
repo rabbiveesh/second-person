@@ -9,6 +9,7 @@ pub mod audio;
 pub mod combat;
 pub mod fx;
 pub mod hud;
+pub mod intro;
 pub mod juice;
 pub mod layout;
 pub mod nav;
@@ -50,5 +51,5 @@ pub fn gameplay(app: &mut App) {
 
 /// Everything that only matters when there's a screen and speakers.
 pub fn presentation(app: &mut App) {
-    app.add_plugins((juice::plugin, layout::plugin, fx::plugin, audio::plugin, radar::plugin, hud::plugin, touch::plugin, start::plugin));
+    app.add_plugins((juice::plugin, layout::plugin, fx::plugin, audio::plugin, radar::plugin, hud::plugin, touch::plugin, start::plugin, intro::plugin));
 }

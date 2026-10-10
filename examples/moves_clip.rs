@@ -18,6 +18,7 @@ use bevy::{
 use bevy_egui::{EguiGlobalSettings, EguiPlugin};
 use leafwing_input_manager::prelude::*;
 use second_person::{
+    intro::IntroEnabled,
     arena::ArenaMode,
     round::GameState,
     shooter::Shooter,
@@ -41,6 +42,7 @@ fn main() {
     std::fs::create_dir_all(&out).unwrap();
     App::new()
         .insert_resource(Started(true))
+        .insert_resource(IntroEnabled(false))
         .insert_resource(TouchControls(false))
         .insert_resource(ArenaMode::Classic)
         .insert_resource(EguiGlobalSettings {
