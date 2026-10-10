@@ -12,11 +12,13 @@
 //! - **The assist dial** ([`AssistLevers`]) is quiet help for *you*: aim assist, the sonar's pace
 //!   (all the way to no sonar at all), and how hard his shots hit.
 
+use std::collections::VecDeque;
+
 use bevy::prelude::*;
 use rand::{SeedableRng, rngs::StdRng};
 
 use crate::{
-    adapt::{self, AdaptEvent, BASE_BAND, Band, PlayerProfile, RoundResult, Skill, profile::BASELINE_ASSISTS},
+    adapt::{self, AdaptEvent, BASE_BAND, Band, Cue, PlayerProfile, RoundResult, Skill, profile::BASELINE_ASSISTS},
     combat::{self, TargetHit},
     round::{GameState, SpawnRound},
     target::{self, Suspicion, Target},
@@ -151,12 +153,25 @@ impl Default for AssistLevers {
 #[derive(Resource)]
 pub struct AdaptiveDifficulty {
     pub profile: PlayerProfile,
+    /// The last [`HISTORY_LEN`] finished rounds, oldest first (for the debug dump).
+    pub history: VecDeque<RoundRecord>,
     rng: StdRng,
+}
+
+/// Finished rounds kept in [`AdaptiveDifficulty::history`].
+pub const HISTORY_LEN: usize = 50;
+
+/// One finished round: how it was tuned, how it went, and what the engine did about it.
+#[derive(Debug, Clone)]
+pub struct RoundRecord {
+    pub tuning: Tuning,
+    pub result: RoundResult,
+    pub cues: Vec<Cue>,
 }
 
 impl AdaptiveDifficulty {
     pub fn new(profile: PlayerProfile, seed: u64) -> Self {
-        AdaptiveDifficulty { profile, rng: StdRng::seed_from_u64(seed) }
+        AdaptiveDifficulty { profile, history: VecDeque::new(), rng: StdRng::seed_from_u64(seed) }
     }
 }
 
@@ -196,7 +211,7 @@ fn start_round(
     mut tuning: ResMut<Tuning>,
     mut log: ResMut<RoundLog>,
 ) {
-    let AdaptiveDifficulty { profile, rng } = &mut *adaptive;
+    let AdaptiveDifficulty { profile, rng, .. } = &mut *adaptive;
     let bands = adapt::next_round(profile, rng);
     *profile = adapt::reduce(profile.clone(), AdaptEvent::RoundStarted { bands });
     *tuning = Tuning {
@@ -219,7 +234,12 @@ fn watch_round(mut log: ResMut<RoundLog>, mut hits: MessageReader<TargetHit>, ta
     }
 }
 
-fn finish_round<const WON: bool>(time: Res<Time>, mut adaptive: ResMut<AdaptiveDifficulty>, log: Res<RoundLog>) {
+fn finish_round<const WON: bool>(
+    time: Res<Time>,
+    tuning: Res<Tuning>,
+    mut adaptive: ResMut<AdaptiveDifficulty>,
+    log: Res<RoundLog>,
+) {
     let result = RoundResult {
         won: WON,
         secs: time.elapsed_secs() - log.started,
@@ -227,11 +247,69 @@ fn finish_round<const WON: bool>(time: Res<Time>, mut adaptive: ResMut<AdaptiveD
         // A loss means he engaged; a win with no sighting logged means you got him first.
         spotted_first: log.spotted_first.unwrap_or(!WON),
     };
-    let profile = &mut adaptive.profile;
-    *profile = adapt::reduce(profile.clone(), AdaptEvent::RoundFinished(result));
-    for cue in &profile.cues {
+    let adaptive = &mut *adaptive;
+    adaptive.profile = adapt::reduce(adaptive.profile.clone(), AdaptEvent::RoundFinished(result));
+    for cue in &adaptive.profile.cues {
         debug!("adapt: {cue:?}");
     }
+    if adaptive.history.len() == HISTORY_LEN {
+        adaptive.history.pop_front();
+    }
+    adaptive.history.push_back(RoundRecord { tuning: *tuning, result, cues: adaptive.profile.cues.clone() });
+}
+
+/// The adaptive state as text, for the F9 dump.
+pub fn debug_text(world: &World) -> String {
+    use std::fmt::Write as _;
+    let mut out = String::new();
+    if let Some(t) = world.get_resource::<Tuning>() {
+        let _ = writeln!(out, "this round: {t:?}");
+        let _ = writeln!(out, "his levers: {:#?}", t.him());
+        let _ = writeln!(out, "assist levers: {:#?}", t.help());
+    }
+    let Some(a) = world.get_resource::<AdaptiveDifficulty>() else {
+        let _ = writeln!(out, "engine: off (fixed tuning)");
+        return out;
+    };
+    let p = &a.profile;
+    let _ = writeln!(
+        out,
+        "dial {:.3} · rounds played {} · calibrating {} (probes {:?}) · recent wins {:?}",
+        p.assists, p.rounds_played, p.calibrating(), p.calibration.probes, p.recent
+    );
+    for skill in Skill::ALL {
+        let st = p.skill(skill);
+        let (rate, n) = st.window.clean_rate();
+        let (at, m) = st.window.at_center(st.center, st.epoch, true);
+        let _ = writeln!(
+            out,
+            "{:<8} center {} spread {:.2} epoch {} fell_from {:?} · clean {} over {n} · unassisted at center {} over {m}",
+            skill.name(),
+            st.center,
+            st.spread,
+            st.epoch,
+            st.fell_from,
+            rate.map_or("-".into(), |r| format!("{:.0}%", r * 100.0)),
+            at.map_or("-".into(), |r| format!("{:.0}%", r * 100.0)),
+        );
+    }
+    let _ = writeln!(out, "\nrounds (oldest first): bands stealth/gunfight, dial, result, cues");
+    for r in &a.history {
+        let res = &r.result;
+        let _ = writeln!(
+            out,
+            "  {}/{} dial {:.2} · {} in {:.0}s{}{} · {:?}",
+            r.tuning.stealth,
+            r.tuning.gunfight,
+            r.tuning.assists,
+            if res.won { "won" } else { "lost" },
+            res.secs,
+            if res.engaged { " · fight" } else { "" },
+            if res.spotted_first { " · spotted first" } else { "" },
+            r.cues,
+        );
+    }
+    out
 }
 
 #[cfg(test)]

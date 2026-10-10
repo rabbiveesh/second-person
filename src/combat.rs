@@ -70,20 +70,20 @@ pub struct Bullet {
 }
 
 /// The shooter fired. Drives muzzle flash, gunshot sound and radar ping.
-#[derive(Message, Clone, Copy)]
+#[derive(Message, Clone, Copy, Debug)]
 pub struct Gunshot {
     pub muzzle: Vec3,
     pub dir: Vec3,
 }
 
 /// A bullet hit world geometry.
-#[derive(Message, Clone, Copy)]
+#[derive(Message, Clone, Copy, Debug)]
 pub struct BulletImpact {
     pub at: Vec3,
 }
 
 /// The target got shot.
-#[derive(Message, Clone, Copy)]
+#[derive(Message, Clone, Copy, Debug)]
 pub struct TargetHit {
     pub at: Vec3,
     /// Which way the bullet was travelling (unit, horizontal-ish).
@@ -91,14 +91,14 @@ pub struct TargetHit {
 }
 
 /// The target fired a deliberate miss near where he thinks you are: a warning, no damage.
-#[derive(Message, Clone, Copy)]
+#[derive(Message, Clone, Copy, Debug)]
 pub struct WarningShot {
     pub from: Vec3,
     pub to: Vec3,
 }
 
 /// He fired his grappling hook at you (from his hand, to you).
-#[derive(Message, Clone, Copy)]
+#[derive(Message, Clone, Copy, Debug)]
 pub struct GrappleFired {
     pub from: Vec3,
     pub to: Vec3,
@@ -114,7 +114,7 @@ pub enum Grapple {
 }
 
 /// The target shot the shooter (hitscan from `from` to `to`).
-#[derive(Message, Clone, Copy)]
+#[derive(Message, Clone, Copy, Debug)]
 pub struct ShooterHit {
     pub from: Vec3,
     pub to: Vec3,

@@ -8,6 +8,7 @@ pub mod adapt;
 pub mod arena;
 pub mod audio;
 pub mod combat;
+pub mod debug;
 pub mod difficulty;
 pub mod fx;
 pub mod hud;
@@ -53,5 +54,5 @@ pub fn gameplay(app: &mut App) {
 
 /// Everything that only matters when there's a screen and speakers.
 pub fn presentation(app: &mut App) {
-    app.add_plugins((juice::plugin, layout::plugin, fx::plugin, audio::plugin, radar::plugin, hud::plugin, touch::plugin, start::plugin));
+    app.add_plugins((juice::plugin, layout::plugin, fx::plugin, audio::plugin, radar::plugin, hud::plugin, touch::plugin, start::plugin, debug::plugin));
 }

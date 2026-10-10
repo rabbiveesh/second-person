@@ -1098,3 +1098,17 @@ fn losing_a_fight_counts_against_the_gunfight_band() {
     assert_eq!(last(Skill::Stealth), Some(Outcome::Struggle), "he engaged first");
     assert!(profile.assists > 0.3, "a loss raises the dial, got {}", profile.assists);
 }
+
+#[test]
+fn the_debug_dump_reports_the_difficulty_and_recent_events() {
+    let mut app = app_with(|app| {
+        app.add_plugins(second_person::debug::plugin)
+            .insert_resource(AdaptiveDifficulty::new(PlayerProfile::calibrated(6, 0.2), 1));
+    });
+    stage(&mut app, Vec3::new(0.0, 0.9, -12.0), Vec3::NEG_Z);
+    press(&mut app, KeyCode::Space);
+    let report = second_person::debug::report(app.world_mut());
+    for needle in ["=== adaptive difficulty ===", "stealth  center", "his levers", "Tuning = ", "=== target ===", "Suspicion", "Gunshot"] {
+        assert!(report.contains(needle), "missing {needle:?} in:\n{report}");
+    }
+}
