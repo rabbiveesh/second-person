@@ -78,6 +78,9 @@ Fyrox (small ecosystem), macroquad/three-d (too thin, would mean rolling our own
   Grappling hook (`combat::grapple`, `Grapple` on the target): while fighting and seeing you at 6-20m, he reels
   you in (shooter `Stunned { pull_to }`), fires a point-blank burst, leaves you stunned, then `Relocate`s.
   Investigating a noise he can't see (cover in the way) makes him walk toward it until he can.
+  Dodge roll (`combat::dodge`, `Roll`): when he sees you fire straight at him from beyond `ROLL_MIN_RANGE`, he dives
+  `ROLL_DISTANCE` across the line of fire (never into cover), then `ROLL_COOLDOWN` before the next, so a second shot
+  lands. No return fire mid-roll. `juice` plays it as a shoulder roll: the view turns into the dive, somersaults forward a full turn while dropping `ROLL_DIP`, then squares back up.
   `Suspicion.last_known` is where he last saw or heard you (no omniscience).
   Tasks only set intent (`LookGoal`, `MoveTo`, `Activity`). Systems `perceive` → `gaze` → `walk`
   do the work. Use the shared `ARRIVE` constant for every arrival check, because mismatched thresholds deadlock tasks. Lower branches **fail** when a higher-priority condition appears (that's preemption).
@@ -95,6 +98,8 @@ Fyrox (small ecosystem), macroquad/three-d (too thin, would mean rolling our own
 - `shooter.rs`: dynamic capsule, rotation locked, tank controls relative to its own facing. One analog
   `ShooterAction::Drive` dual axis (x turn, y throttle); arrows bind to it as a virtual d-pad.
   Walking into the world emits `Bump` and a `Stagger` knockback (can't walk, only turn); his laser staggers you too.
+  `Sidestep`: a double-tap straight left/right on `Drive` (arrows, or a double flick of the stick, since both feed the same
+  axis) hops 2.4m sideways with the facing restored to before the taps; the landing writes a `Footstep`. Stagger cuts it.
 - `touch.rs`: phone controls, spawned on the first touch. A floating `virtual_joystick` stick (left half,
   snapped to 8 arrow-key directions by `snap_8way`) and tap-right-to-fire write the shooter's `ActionState` in
   leafwing's `ManualControl` set. The HUD swaps the R/M/Tab hints for egui buttons once touch is on, plus a big
@@ -108,7 +113,8 @@ Fyrox (small ecosystem), macroquad/three-d (too thin, would mean rolling our own
   (W, the shooter's "where am I?" sound, heard by him from 28m) into suspicion.
 - `combat.rs`: bullets (CCD, collision events; `magnetised` bends a shot within `MAGNET_CONE`/`MAGNET_RANGE` of him with
   a clear line straight at him, the only aim assist: no lock-on, nothing that leaks where he is), hearing (shots and near misses raise `Alert` +
-  suspicion), target hitscan return fire while engaged, warning shots (`WarningShot`, deliberate misses near
+  suspicion), target hitscan return fire while engaged (`Aim`: out of sight he holds the angle where you vanished, so re-peeking
+  the same corner within `HOLD_ANGLE_SECS` draws a shot after `REACQUIRE_SECS`), warning shots (`WarningShot`, deliberate misses near
   `last_known`) while suspicious but not engaged, win/lose check.
 - `layout.rs` (presentation): `ScreenLayout` (view, deck, radar rects) refit from the window every frame, so
   rotation and resizes just work. Landscape: full-window view, radar in the corner over it. Portrait (h ≥ 1.3w): a
@@ -142,5 +148,5 @@ Fyrox (small ecosystem), macroquad/three-d (too thin, would mean rolling our own
 
 ## Tuning knobs
 Suspicion rates in `target::perceive`. `VIEW_HALF_ANGLE`/`VIEW_RANGE` in `target.rs`. Return fire
-damage/interval, bullet magnetism (`MAGNET_CONE`, `MAGNET_RANGE`), hearing range and near-miss range in `combat.rs`.
+damage/interval, holding the angle (`HOLD_ANGLE_*`, `REACQUIRE_SECS`), bullet magnetism (`MAGNET_CONE`, `MAGNET_RANGE`), hearing range and near-miss range in `combat.rs`.
 Field of view and the portrait threshold in `layout.rs`.

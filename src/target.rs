@@ -143,7 +143,7 @@ pub fn plugin(app: &mut App) {
     app.add_systems(OnEnter(GameState::Playing), spawn_target.in_set(SpawnRound))
         .add_systems(
             Update,
-            (perceive, gaze, walk).chain().run_if(in_state(GameState::Playing)),
+            (perceive, gaze, walk, roll).chain().run_if(in_state(GameState::Playing)),
         );
 }
 
@@ -698,6 +698,39 @@ fn gaze(
     let (pitch, _, _) = head.rotation.to_euler(EulerRot::XYZ);
     let new_pitch = pitch + (desired_pitch - pitch).clamp(-step, step);
     head.rotation = Quat::from_rotation_x(new_pitch);
+}
+
+/// Diving sideways out of the line of fire (see `combat::dodge`). Overrides walking while it lasts;
+/// `t` counts up to `ROLL_SECS`.
+#[derive(Component, Reflect)]
+#[reflect(Component)]
+pub struct Roll {
+    pub t: f32,
+    pub velocity: Vec3,
+}
+
+pub const ROLL_SECS: f32 = 0.7;
+
+fn roll(
+    mut commands: Commands,
+    time: Res<Time>,
+    mut q: Query<(Entity, &mut Roll, &mut LinearVelocity, Option<&MoveTo>)>,
+) {
+    for (e, mut roll, mut v, moving) in &mut q {
+        roll.t += time.delta_secs();
+        if roll.t >= ROLL_SECS {
+            v.0 = Vec3::ZERO;
+            commands.entity(e).remove::<Roll>();
+            // Re-plan from where he landed, or he'd walk back to the waypoint he dived away from.
+            if let Some(&m) = moving {
+                commands.entity(e).insert(m);
+            }
+        } else {
+            // Explosive launch, bleeding off through the tumble to a standstill as he comes up.
+            // Averages to `velocity`, so he still covers the full distance.
+            v.0 = roll.velocity * 2.0 * (1.0 - roll.t / ROLL_SECS);
+        }
+    }
 }
 
 /// Follow the `Route` planned for `MoveTo`, looking where he's going; turn before moving.
