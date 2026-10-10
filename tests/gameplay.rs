@@ -997,11 +997,11 @@ fn bullet_magnetism_does_not_bend_around_cover() {
     let muzzle = Vec3::new(-9.0, 1.0, -12.0);
     let to_him = (Vec3::new(0.0, 0.9, 0.0) - muzzle).normalize();
     let forward = Quat::from_rotation_y(8f32.to_radians()) * to_him;
-    assert_eq!(magnetised(&Layout::classic(), muzzle, forward, Vec3::new(0.0, 0.9, 0.0)), forward);
+    assert_eq!(magnetised(&Layout::classic(), &second_person::difficulty::AssistLevers::default(), muzzle, forward, Vec3::new(0.0, 0.9, 0.0)), forward);
     // Same angle in the open does bend.
     let open = Vec3::new(0.0, 1.0, 12.0);
     let fwd = Quat::from_rotation_y(8f32.to_radians()) * (Vec3::new(0.0, 0.9, 0.0) - open).normalize();
-    assert_ne!(magnetised(&Layout::classic(), open, fwd, Vec3::new(0.0, 0.9, 0.0)), fwd);
+    assert_ne!(magnetised(&Layout::classic(), &second_person::difficulty::AssistLevers::default(), open, fwd, Vec3::new(0.0, 0.9, 0.0)), fwd);
 }
 
 /// Him at `him`, the shooter at `shooter_pos`, both on the ground plane (XZ). Engages him, then
@@ -1093,3 +1093,96 @@ fn magnetised_fire_down_the_line_misses_most_shots_on_a_cover_run() {
     assert!(hits * 2 < shots, "{hits} of {shots} shots hit");
 }
 
+
+// ─── Adaptive difficulty ─────────────────────────────────────────────────────
+
+use second_person::{
+    adapt::{Outcome, PlayerProfile, Skill},
+    difficulty::{AdaptiveDifficulty, Tuning},
+};
+
+fn adaptive(app: &App) -> &AdaptiveDifficulty {
+    app.world().resource::<AdaptiveDifficulty>()
+}
+
+#[test]
+fn without_the_engine_every_round_is_the_hand_tuned_game() {
+    let mut app = app();
+    assert_eq!(*app.world().resource::<Tuning>(), Tuning::default());
+    let target = single::<Target>(&mut app);
+    assert_eq!(app.world().get::<Target>(target).unwrap().max_hp, TARGET_MAX_HP);
+}
+
+#[test]
+fn his_hit_points_follow_the_gunfight_band() {
+    let mut app = app_with(|app| {
+        app.insert_resource(Tuning { stealth: 1, gunfight: 1, ..default() });
+    });
+    let target = single::<Target>(&mut app);
+    let t = app.world().get::<Target>(target).unwrap();
+    assert_eq!((t.hp, t.max_hp), (TARGET_MAX_HP - 1, TARGET_MAX_HP - 1));
+}
+
+#[test]
+fn adaptive_rounds_are_tuned_by_the_engine_and_reported_back() {
+    let mut app = app_with(|app| {
+        app.insert_resource(AdaptiveDifficulty::new(PlayerProfile::calibrated(8, 0.0), 7));
+    });
+    let tuning = *app.world().resource::<Tuning>();
+    assert_eq!(tuning.assists, 0.0, "the engine's dial");
+    assert!((5..=10).contains(&tuning.gunfight) && (5..=10).contains(&tuning.stealth), "{tuning:?}");
+    assert!(adaptive(&app).profile.round.is_some(), "the round was reported started");
+    let target = single::<Target>(&mut app);
+    assert_eq!(app.world().get::<Target>(target).unwrap().max_hp, tuning.him().hp);
+
+    // Kill him from behind before he ever engages: a win, and a clean one for Stealth.
+    stage(&mut app, Vec3::new(0.0, 0.9, 6.0), Vec3::new(0.0, 0.9, -10.0));
+    app.world_mut().get_mut::<Target>(target).unwrap().hp = 1;
+    press(&mut app, KeyCode::Space);
+    step(&mut app, 0.5);
+    assert_eq!(*app.world().resource::<State<GameState>>().get(), GameState::Won);
+    let profile = &adaptive(&app).profile;
+    assert_eq!(profile.rounds_played, 1);
+    assert_eq!(profile.recent, vec![true]);
+    let stealth = profile.skill(Skill::Stealth).window.entries.last().copied();
+    assert_eq!(stealth.map(|e| (e.outcome, e.band)), Some((Outcome::Clean, tuning.stealth)));
+    assert!(profile.skill(Skill::Gunfight).window.entries.is_empty(), "no gunfight happened");
+
+    // The next round asks the engine again.
+    press(&mut app, KeyCode::KeyR);
+    assert!(adaptive(&app).profile.round.is_some());
+}
+
+#[test]
+fn losing_a_fight_counts_against_the_gunfight_band() {
+    let mut app = app_with(|app| {
+        app.insert_resource(AdaptiveDifficulty::new(PlayerProfile::calibrated(5, 0.3), 3));
+    });
+    let target = single::<Target>(&mut app);
+    app.world_mut().get_mut::<Suspicion>(target).unwrap().bump(1.0);
+    app.update();
+    let shooter = single::<Shooter>(&mut app);
+    app.world_mut().get_mut::<Shooter>(shooter).unwrap().hp = 0.0;
+    step(&mut app, 0.1);
+    assert_eq!(*app.world().resource::<State<GameState>>().get(), GameState::Lost);
+    let profile = &adaptive(&app).profile;
+    assert_eq!(profile.recent, vec![false]);
+    let last = |s: Skill| profile.skill(s).window.entries.last().map(|e| e.outcome);
+    assert_eq!(last(Skill::Gunfight), Some(Outcome::Struggle));
+    assert_eq!(last(Skill::Stealth), Some(Outcome::Struggle), "he engaged first");
+    assert!(profile.assists > 0.3, "a loss raises the dial, got {}", profile.assists);
+}
+
+#[test]
+fn the_debug_dump_reports_the_difficulty_and_recent_events() {
+    let mut app = app_with(|app| {
+        app.add_plugins(second_person::debug::plugin)
+            .insert_resource(AdaptiveDifficulty::new(PlayerProfile::calibrated(6, 0.2), 1));
+    });
+    stage(&mut app, Vec3::new(0.0, 0.9, -12.0), Vec3::NEG_Z);
+    press(&mut app, KeyCode::Space);
+    let report = second_person::debug::report(app.world_mut());
+    for needle in ["=== adaptive difficulty ===", "stealth  center", "his levers", "Tuning = ", "=== target ===", "Suspicion", "Gunshot"] {
+        assert!(report.contains(needle), "missing {needle:?} in:\n{report}");
+    }
+}

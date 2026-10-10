@@ -32,7 +32,9 @@ fn main() {
             EguiPlugin::default(),
             second_person::gameplay,
             second_person::presentation,
-        ));
+        ))
+        // Every round's difficulty adapts to the player (headless tests keep the fixed tuning).
+        .init_resource::<second_person::difficulty::AdaptiveDifficulty>();
 
     // F1 world inspector: opt-in via the `inspector` cargo feature (on in `dev`).
     #[cfg(feature = "inspector")]

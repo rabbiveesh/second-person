@@ -8,6 +8,7 @@ use rand::Rng;
 use crate::{
     Layer,
     arena,
+    difficulty::{AssistLevers, HisLevers, Tuning},
     round::{GameState, RoundEntity},
     nav::MoveTo,
     shooter::{Bump, Footstep, Whistle, Shooter, ShooterAction, Stagger, Stunned},
@@ -18,19 +19,21 @@ const BULLET_SPEED: f32 = 45.0;
 const FIRE_COOLDOWN: f32 = 0.3;
 /// Bullet magnetism: a shot fired within this angle of him (and in range, with a clear line)
 /// is bent to his centre. No lock-on, nothing that leaks where he is when you're not on him.
+/// These, and the other `pub` knobs here, are the hand-tuned values at the baseline assist dial
+/// and base band; `difficulty` scales them per round.
 pub const MAGNET_CONE: f32 = 12.0_f32.to_radians();
 pub const MAGNET_RANGE: f32 = 30.0;
 const HEARING_RANGE: f32 = 18.0;
 const NEAR_MISS_RANGE: f32 = 7.0;
-const RETURN_FIRE_INTERVAL: f32 = 0.8;
-const RETURN_FIRE_DAMAGE: f32 = 8.0;
+pub const RETURN_FIRE_INTERVAL: f32 = 0.8;
+pub const RETURN_FIRE_DAMAGE: f32 = 8.0;
 /// How long he keeps his aim on the spot where you ducked out of sight, how close to it you have
 /// to reappear to walk into it, and how fast he fires when you do.
-const HOLD_ANGLE_SECS: f32 = 1.5;
+pub const HOLD_ANGLE_SECS: f32 = 1.5;
 /// His dodge roll: how far he dives, how long before he can again, and how close a shot can be
 /// fired before he can't react in time.
 const ROLL_DISTANCE: f32 = 2.2;
-const ROLL_COOLDOWN: f32 = 2.5;
+pub const ROLL_COOLDOWN: f32 = 2.5;
 const ROLL_MIN_RANGE: f32 = 5.0;
 const HOLD_ANGLE_RADIUS: f32 = 3.0;
 const REACQUIRE_SECS: f32 = 0.25;
@@ -51,7 +54,7 @@ const WARNING_MISS: std::ops::Range<f32> = 1.5..3.5;
 const WARNING_INTERVAL: std::ops::Range<f32> = 1.2..2.8;
 /// Grappling hook: used while fighting, on a shooter he can see within this range.
 const GRAPPLE_RANGE: std::ops::Range<f32> = 6.0..20.0;
-const GRAPPLE_COOLDOWN: f32 = 14.0;
+pub const GRAPPLE_COOLDOWN: f32 = 14.0;
 /// Stop reeling at this distance (or after `GRAPPLE_MAX_PULL` seconds, if you snag on something).
 const GRAPPLE_CLOSE: f32 = 2.5;
 const GRAPPLE_MAX_PULL: f32 = 2.0;
@@ -67,20 +70,20 @@ pub struct Bullet {
 }
 
 /// The shooter fired. Drives muzzle flash, gunshot sound and radar ping.
-#[derive(Message, Clone, Copy)]
+#[derive(Message, Clone, Copy, Debug)]
 pub struct Gunshot {
     pub muzzle: Vec3,
     pub dir: Vec3,
 }
 
 /// A bullet hit world geometry.
-#[derive(Message, Clone, Copy)]
+#[derive(Message, Clone, Copy, Debug)]
 pub struct BulletImpact {
     pub at: Vec3,
 }
 
 /// The target got shot.
-#[derive(Message, Clone, Copy)]
+#[derive(Message, Clone, Copy, Debug)]
 pub struct TargetHit {
     pub at: Vec3,
     /// Which way the bullet was travelling (unit, horizontal-ish).
@@ -88,14 +91,14 @@ pub struct TargetHit {
 }
 
 /// The target fired a deliberate miss near where he thinks you are: a warning, no damage.
-#[derive(Message, Clone, Copy)]
+#[derive(Message, Clone, Copy, Debug)]
 pub struct WarningShot {
     pub from: Vec3,
     pub to: Vec3,
 }
 
 /// He fired his grappling hook at you (from his hand, to you).
-#[derive(Message, Clone, Copy)]
+#[derive(Message, Clone, Copy, Debug)]
 pub struct GrappleFired {
     pub from: Vec3,
     pub to: Vec3,
@@ -111,7 +114,7 @@ pub enum Grapple {
 }
 
 /// The target shot the shooter (hitscan from `from` to `to`).
-#[derive(Message, Clone, Copy)]
+#[derive(Message, Clone, Copy, Debug)]
 pub struct ShooterHit {
     pub from: Vec3,
     pub to: Vec3,
@@ -155,6 +158,7 @@ fn load_assets(
     });
 }
 
+#[allow(clippy::too_many_arguments)]
 fn fire(
     mut commands: Commands,
     time: Res<Time>,
@@ -163,6 +167,7 @@ fn fire(
     shooter: Single<(&ActionState<ShooterAction>, &Transform, &Stunned), With<Shooter>>,
     target: Single<(Entity, &Transform, &mut Suspicion), With<Target>>,
     layout: Res<arena::Layout>,
+    tuning: Res<Tuning>,
     mut gunshots: MessageWriter<Gunshot>,
 ) {
     let cooldown = cooldown.get_or_insert_with(|| {
@@ -180,7 +185,7 @@ fn fire(
 
     let muzzle = t.translation + t.rotation * Vec3::new(0.3, 0.15, -0.9);
     let (target_e, target_t, mut suspicion) = target.into_inner();
-    let forward = magnetised(&layout, muzzle, *t.forward(), target_t.translation);
+    let forward = magnetised(&layout, &tuning.help(), muzzle, *t.forward(), target_t.translation);
     commands.spawn((
         Name::new("Bullet"),
         RoundEntity,
@@ -199,7 +204,7 @@ fn fire(
     gunshots.write(Gunshot { muzzle, dir: forward });
 
     // Gunshots are loud.
-    if target_t.translation.distance(t.translation) < HEARING_RANGE {
+    if target_t.translation.distance(t.translation) < HEARING_RANGE * tuning.him().hearing {
         suspicion.bump(0.25);
         suspicion.last_known = Some(t.translation);
         commands.entity(target_e).insert(Alert::new(t.translation, 3.0));
@@ -207,12 +212,12 @@ fn fire(
 }
 
 /// The direction a shot from `muzzle` actually flies: straight along `forward`, unless the target
-/// is within `MAGNET_CONE` of it, within `MAGNET_RANGE`, and not behind cover; then straight at him.
-pub fn magnetised(layout: &arena::Layout, muzzle: Vec3, forward: Vec3, target: Vec3) -> Vec3 {
+/// is within the magnet cone of it, within range, and not behind cover; then straight at him.
+pub fn magnetised(layout: &arena::Layout, help: &AssistLevers, muzzle: Vec3, forward: Vec3, target: Vec3) -> Vec3 {
     let to_target = target - muzzle;
     let flat = |v: Vec3| v.xz().normalize_or_zero();
-    let on_him = flat(forward).angle_to(flat(to_target)).abs() <= MAGNET_CONE;
-    if on_him && to_target.length() <= MAGNET_RANGE && !layout.los_blocked(muzzle.xz(), target.xz()) {
+    let on_him = flat(forward).angle_to(flat(to_target)).abs() <= help.magnet_cone;
+    if on_him && to_target.length() <= help.magnet_range && !layout.los_blocked(muzzle.xz(), target.xz()) {
         to_target.normalize()
     } else {
         forward
@@ -226,7 +231,9 @@ fn bullet_hits(
     mut targets: Query<(Entity, &mut Target, &Transform, &mut Suspicion)>,
     mut hits: MessageWriter<TargetHit>,
     mut impacts: MessageWriter<BulletImpact>,
+    tuning: Res<Tuning>,
 ) {
+    let near_miss = NEAR_MISS_RANGE * tuning.him().hearing;
     let mut spent = Vec::new();
     for ev in collisions.read() {
         let (bullet_e, other) = if bullets.contains(ev.collider1) {
@@ -254,7 +261,7 @@ fn bullet_hits(
             impacts.write(BulletImpact { at: bullet_t.translation });
             // Near miss: he hears the impact and looks toward where it came from.
             for (target_e, _, target_t, mut suspicion) in &mut targets {
-                if target_t.translation.distance(bullet_t.translation) < NEAR_MISS_RANGE {
+                if target_t.translation.distance(bullet_t.translation) < near_miss {
                     suspicion.bump(0.3);
                     suspicion.last_known = Some(bullet.origin);
                     commands.entity(target_e).insert(Alert::new(bullet.origin, 2.5));
@@ -273,9 +280,11 @@ fn hear_movement(
     mut steps: MessageReader<Footstep>,
     mut bumps: MessageReader<Bump>,
     mut whistles: MessageReader<Whistle>,
+    tuning: Res<Tuning>,
     target: Single<(Entity, &Transform, &mut Suspicion), With<Target>>,
 ) {
     let (target_e, target_t, mut suspicion) = target.into_inner();
+    let hearing = tuning.him().hearing;
     let ear = target_t.translation;
     let heard = steps
         .read()
@@ -283,7 +292,7 @@ fn hear_movement(
         .chain(bumps.read().map(|b| (b.at, BUMP_HEARING_RANGE, BUMP_SUSPICION)))
         .chain(whistles.read().map(|w| (w.at, WHISTLE_HEARING_RANGE, WHISTLE_SUSPICION)));
     for (at, range, amount) in heard {
-        let closeness = 1.0 - ear.distance(at) / range;
+        let closeness = 1.0 - ear.distance(at) / (range * hearing);
         if closeness <= 0.0 {
             continue;
         }
@@ -344,6 +353,7 @@ fn grapple(
     eyes: Single<&GlobalTransform, With<MainCamera>>,
     target: Single<(Entity, &Transform, &Suspicion, Option<&Activity>, Option<&mut Grapple>), With<Target>>,
     shooter: Single<(&mut Shooter, &Transform, &mut Stunned)>,
+    tuning: Res<Tuning>,
     mut fired: MessageWriter<GrappleFired>,
     mut hits: MessageWriter<ShooterHit>,
 ) {
@@ -355,12 +365,13 @@ fn grapple(
     let dist = target_t.translation.xz().distance(shooter_t.translation.xz());
 
     let Some(mut grapple) = grapple else {
+        let Some(grapple_cooldown) = tuning.him().grapple_cooldown else { return };
         if *cooldown <= 0.0
             && activity == Some(&Activity::Engaging)
             && suspicion.sees_shooter
             && GRAPPLE_RANGE.contains(&dist)
         {
-            *cooldown = GRAPPLE_COOLDOWN;
+            *cooldown = grapple_cooldown;
             commands.entity(target_e).insert(Grapple::Pulling { time: 0.0 }).try_remove::<MoveTo>();
             fired.write(GrappleFired { from: hand, to: shooter_t.translation });
         }
@@ -380,7 +391,7 @@ fn grapple(
             if *next > 0.0 {
                 return;
             }
-            s.hp = (s.hp - HAMMER_DAMAGE).max(0.0);
+            s.hp = (s.hp - HAMMER_DAMAGE * tuning.help().damage_taken).max(0.0);
             hits.write(ShooterHit { from: hand, to: shooter_t.translation });
             *shots_left -= 1;
             *next = HAMMER_INTERVAL;
@@ -402,11 +413,13 @@ fn dodge(
     time: Res<Time>,
     mut cooldown: Local<f32>,
     layout: Res<arena::Layout>,
+    tuning: Res<Tuning>,
     mut shots: MessageReader<Gunshot>,
     target: Single<(Entity, &Transform, &Suspicion, Has<Grapple>, Has<Roll>), With<Target>>,
 ) {
     *cooldown -= time.delta_secs();
     let (e, t, suspicion, grappling, rolling) = *target;
+    let Some(roll_cooldown) = tuning.him().roll_cooldown else { return };
     for shot in shots.read() {
         let to_him = t.translation - shot.muzzle;
         let aimed = shot.dir.angle_between(to_him) < 0.1;
@@ -424,7 +437,7 @@ fn dodge(
             (layout.is_clear(dest, 0.5) && !layout.los_blocked(here, dest)).then_some(sign)
         };
         let Some(sign) = clear(first).or_else(|| clear(-first)) else { continue };
-        *cooldown = ROLL_COOLDOWN;
+        *cooldown = roll_cooldown;
         let velocity = (across * sign * ROLL_DISTANCE / ROLL_SECS).extend(0.0).xzy();
         commands.entity(e).insert(Roll { t: 0.0, velocity });
     }
@@ -439,28 +452,28 @@ struct Aim {
 
 impl Aim {
     /// Advance by `dt` at time `now`, with you at `you` (XZ) and in sight or not. True when he
-    /// fires. Out of sight he holds the angle: for `HOLD_ANGLE_SECS` he keeps aiming where you
+    /// fires. Out of sight he holds the angle: for `hold_angle_secs` he keeps aiming where you
     /// vanished, and if you show up near there he fires after only `REACQUIRE_SECS`, so peeking
     /// from the same corner over and over gets you shot. Show up somewhere new and he has to find
     /// you all over again.
-    fn step(&mut self, now: f32, dt: f32, sees: bool, you: Vec2) -> bool {
+    fn step(&mut self, him: &HisLevers, now: f32, dt: f32, sees: bool, you: Vec2) -> bool {
         if !sees {
             match self.lost {
                 None => self.lost = Some((now, you)),
-                Some((at, _)) if now - at > HOLD_ANGLE_SECS => *self = Aim::default(),
+                Some((at, _)) if now - at > him.hold_angle_secs => *self = Aim::default(),
                 _ => {}
             }
             return false;
         }
         if let Some((_, spot)) = self.lost.take() {
             self.charge = if spot.distance(you) < HOLD_ANGLE_RADIUS {
-                self.charge.max(RETURN_FIRE_INTERVAL - REACQUIRE_SECS)
+                self.charge.max(him.fire_interval - REACQUIRE_SECS)
             } else {
                 0.0
             };
         }
         self.charge += dt;
-        if self.charge >= RETURN_FIRE_INTERVAL {
+        if self.charge >= him.fire_interval {
             self.charge = 0.0;
             return true;
         }
@@ -476,6 +489,7 @@ fn return_fire(
     eyes: Single<&GlobalTransform, With<MainCamera>>,
     target: Single<(&Suspicion, Option<&Activity>, Has<Grapple>, Has<Roll>), With<Target>>,
     mut shooter: Single<(&mut Shooter, &Transform, &mut Stagger)>,
+    tuning: Res<Tuning>,
     mut hits: MessageWriter<ShooterHit>,
 ) {
     let (suspicion, activity, grappling, rolling) = *target;
@@ -487,8 +501,9 @@ fn return_fire(
         return; // no shooting mid-dive; his aim picks up again after
     }
     let (ref mut s, t, ref mut stagger) = *shooter;
-    if aim.step(time.elapsed_secs(), time.delta_secs(), suspicion.sees_shooter, t.translation.xz()) {
-        s.hp = (s.hp - RETURN_FIRE_DAMAGE).max(0.0);
+    let him = tuning.him();
+    if aim.step(&him, time.elapsed_secs(), time.delta_secs(), suspicion.sees_shooter, t.translation.xz()) {
+        s.hp = (s.hp - him.fire_damage * tuning.help().damage_taken).max(0.0);
         // Start the tracer just below the eyes so it's visible from his own view.
         let from = eyes.translation() + eyes.down() * 0.3 + eyes.right() * 0.2;
         hits.write(ShooterHit { from, to: t.translation });
@@ -497,7 +512,7 @@ fn return_fire(
     }
 }
 
-fn check_outcome(
+pub fn check_outcome(
     target: Single<&Target>,
     shooter: Single<&Shooter>,
     mut next: ResMut<NextState<GameState>>,
@@ -517,7 +532,7 @@ mod tests {
     fn time_to_fire(aim: &mut Aim, t0: f32, you: Vec2) -> f32 {
         let dt = 1.0 / 60.0;
         let mut t = t0;
-        while !aim.step(t, dt, true, you) {
+        while !aim.step(&HisLevers::default(), t, dt, true, you) {
             t += dt;
             assert!(t - t0 < 5.0, "never fired");
         }
@@ -532,18 +547,18 @@ mod tests {
         assert!((first - RETURN_FIRE_INTERVAL).abs() < 0.05, "first shot {first}");
 
         // Duck out briefly, then peek from the same corner: he's already aimed there.
-        aim.step(1.0, 0.016, false, corner);
+        aim.step(&HisLevers::default(), 1.0, 0.016, false, corner);
         let again = time_to_fire(&mut aim, 1.4, corner + Vec2::new(0.5, 0.5));
         assert!(again <= REACQUIRE_SECS + 0.02, "re-peek shot after {again}");
 
         // From somewhere new he has to find you again.
-        aim.step(3.0, 0.016, false, corner);
+        aim.step(&HisLevers::default(), 3.0, 0.016, false, corner);
         let elsewhere = time_to_fire(&mut aim, 3.5, corner + Vec2::new(8.0, 0.0));
         assert!(elsewhere > RETURN_FIRE_INTERVAL - 0.05, "new spot shot after {elsewhere}");
 
         // Wait him out and the hold lapses.
-        aim.step(5.0, 0.016, false, corner);
-        aim.step(5.0 + HOLD_ANGLE_SECS + 0.1, 0.016, false, corner);
+        aim.step(&HisLevers::default(), 5.0, 0.016, false, corner);
+        aim.step(&HisLevers::default(), 5.0 + HOLD_ANGLE_SECS + 0.1, 0.016, false, corner);
         let later = time_to_fire(&mut aim, 7.0, corner);
         assert!(later > RETURN_FIRE_INTERVAL - 0.05, "after waiting, shot after {later}");
     }

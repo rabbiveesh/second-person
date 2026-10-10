@@ -6001,11 +6001,14 @@ dependencies = [
  "getrandom 0.3.4",
  "getrandom 0.4.3",
  "hound",
+ "js-sys",
  "leafwing-input-manager",
  "rand 0.9.5",
  "sfxr",
  "virtual_joystick",
  "vleue_navigator",
+ "wasm-bindgen",
+ "web-sys",
 ]
 
 [[package]]
