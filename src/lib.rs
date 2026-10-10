@@ -1,4 +1,4 @@
-//! Second-person shooter: you see the world through your target's eyes while
+//! HIM, a second person shooter: you see the world through your target's eyes while
 //! driving the shooter who's hunting him.
 //!
 //! Split into `gameplay` (headless-testable simulation) and `presentation`

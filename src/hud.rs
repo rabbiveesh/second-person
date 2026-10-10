@@ -347,7 +347,9 @@ fn draw_hud(
             .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
             .show(ctx, |ui| {
                 ui.vertical_centered(|ui| {
-                    ui.label(egui::RichText::new("SECOND PERSON SHOOTER").size(28.0).color(egui::Color32::WHITE).strong());
+                    ui.label(egui::RichText::new("HIM").size(56.0).color(egui::Color32::WHITE).strong());
+                    ui.label(egui::RichText::new("a second person shooter").size(18.0).italics().color(egui::Color32::LIGHT_GRAY));
+                    ui.add_space(10.0);
                     ui.label(egui::RichText::new("You see through his eyes. Hunt him down.").color(egui::Color32::LIGHT_GRAY));
                     ui.add_space(18.0);
                     ui.label(egui::RichText::new("tap to play").size(36.0).color(egui::Color32::from_rgb(90, 230, 110)).strong());

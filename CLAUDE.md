@@ -1,4 +1,6 @@
-# Second Person Shooter
+# HIM
+
+*a second person shooter*
 
 You see the world through the **target's** eyes (the main camera lives in his head) while
 controlling the **shooter** hunting him. A corner radar shows the whole arena.

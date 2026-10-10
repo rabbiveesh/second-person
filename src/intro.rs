@@ -205,12 +205,14 @@ fn fly_camera(
 fn label_markers(
     mut contexts: EguiContexts,
     intro: Res<Intro>,
+    started: Res<Started>,
     screen: Res<ScreenLayout>,
     cam: Single<(&Camera, &GlobalTransform), With<MainCamera>>,
     shooter: Single<&Transform, With<Shooter>>,
     target: Single<&Transform, With<Target>>,
 ) -> Result {
-    let Some(t) = intro.0 else { return Ok(()) };
+    // Behind the start screen the markers alone do; labels would print over its text.
+    let (Some(t), true) = (intro.0, started.0) else { return Ok(()) };
     let fade = 1.0 - ((t - HOLD_SECS) / (SWOOP_SECS * 0.3)).clamp(0.0, 1.0);
     if fade <= 0.0 {
         return Ok(());
