@@ -17,7 +17,7 @@ use bevy_firework::{
 use crate::{
     combat::{BulletImpact, Grapple, GrappleFired, Gunshot, ShooterHit, TargetHit, WarningShot},
     shooter::Shooter,
-    target::MainCamera,
+    target::TargetHead,
     round::RoundEntity,
 };
 
@@ -261,14 +261,15 @@ fn spawn_hook(
 fn fly_hook(
     mut commands: Commands,
     time: Res<Time>,
-    grapple: Option<Single<&Grapple>>,
-    eyes: Option<Single<&GlobalTransform, With<MainCamera>>>,
+    grapples: Query<(Entity, &Grapple)>,
+    heads: Query<(&ChildOf, &GlobalTransform), With<TargetHead>>,
     shooter: Option<Single<&Transform, (With<Shooter>, Without<Hook>, Without<HookRope>)>>,
     mut hooks: Query<(Entity, &mut Hook, &mut Transform), Without<HookRope>>,
     mut ropes: Query<(Entity, &mut Transform), With<HookRope>>,
 ) {
-    let pulling = grapple.is_some_and(|g| matches!(**g, Grapple::Pulling { .. }));
-    let (true, Some(eyes), Some(shooter)) = (pulling, eyes, shooter) else {
+    let puller = grapples.iter().find(|(_, g)| matches!(g, Grapple::Pulling { .. })).map(|(e, _)| e);
+    let eyes = puller.and_then(|p| heads.iter().find(|(parent, _)| parent.parent() == p).map(|(_, eyes)| eyes));
+    let (Some(eyes), Some(shooter)) = (eyes, shooter) else {
         hooks.iter().map(|h| h.0).chain(ropes.iter().map(|r| r.0)).for_each(|e| commands.entity(e).despawn());
         return;
     };

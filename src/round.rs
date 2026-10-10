@@ -4,7 +4,7 @@ use avian3d::prelude::*;
 use bevy::prelude::*;
 use leafwing_input_manager::prelude::*;
 
-use crate::{arena::ArenaMode, radar::RadarMode};
+use crate::{arena::ArenaMode, radar::RadarMode, view::ViewRule};
 
 #[derive(States, Default, Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub enum GameState {
@@ -26,6 +26,10 @@ pub enum MetaAction {
     CycleRadar,
     /// Switch between the classic and generated arenas (starts a new round).
     CycleArena,
+    /// Cycle how multiple targets' eyes work (starts a new round).
+    CycleView,
+    /// Jump to another target's eyes (when the view rule allows it).
+    SwitchView,
 }
 
 /// Whether the target is allowed to walk around (vs. standing still and looking around).
@@ -51,6 +55,8 @@ pub fn plugin(app: &mut App) {
                     (MetaAction::ToggleTargetMobility, KeyCode::KeyM),
                     (MetaAction::CycleRadar, KeyCode::Tab),
                     (MetaAction::CycleArena, KeyCode::KeyL),
+                    (MetaAction::CycleView, KeyCode::KeyV),
+                    (MetaAction::SwitchView, KeyCode::KeyQ),
                 ]),
             ));
         })
@@ -80,7 +86,12 @@ fn meta_input(
     mut mobile: ResMut<TargetMobile>,
     mut radar: ResMut<RadarMode>,
     mut arena: ResMut<ArenaMode>,
+    mut view: ResMut<ViewRule>,
 ) {
+    if actions.just_pressed(&MetaAction::CycleView) {
+        *view = view.next();
+        next.set(GameState::Playing);
+    }
     if actions.just_pressed(&MetaAction::CycleArena) {
         *arena = arena.next();
         // `set` re-enters Playing even mid-round, which rebuilds the arena.

@@ -15,7 +15,8 @@ use second_person::{
     round::GameState,
     arena::{Floor, Floors},
     shooter::{Bump, SHOOTER_MAX_HP, Shooter},
-    target::{Activity, Alert, MainCamera, Suspicion, TARGET_MAX_HP, Target, VIEW_RANGE},
+    target::{Activity, Alert, Dead, MainCamera, Suspicion, TARGET_MAX_HP, Target, VIEW_RANGE, Viewed},
+    view::ViewRule,
 };
 
 const DT: f32 = 1.0 / 60.0;
@@ -31,6 +32,12 @@ fn app_with(extra: impl FnOnce(&mut App)) -> App {
 
 fn app_in(arena: ArenaMode) -> App {
     app_cfg(arena, |_| {})
+}
+
+fn app_view(arena: ArenaMode, rule: ViewRule) -> App {
+    app_cfg(arena, move |app| {
+        app.insert_resource(rule);
+    })
 }
 
 fn app_cfg(arena: ArenaMode, extra: impl FnOnce(&mut App)) -> App {
@@ -132,6 +139,20 @@ fn firing_spawns_a_bullet_and_a_gunshot() {
     let mut app = app();
     // Not the random start: that can put you nose-up against a crate, which eats the bullet.
     stage(&mut app, Vec3::new(0.0, 0.9, -12.0), Vec3::NEG_Z);
+    press(&mut app, KeyCode::Space);
+    assert_eq!(counted::<Gunshot>(&app), 1);
+    assert_eq!(app.world_mut().query::<&Bullet>().iter(app.world()).count(), 1);
+}
+
+/// Systems written for one target (`Single<Target>`) silently stop running with three, so the
+/// shooter could no longer fire.
+#[test]
+fn firing_works_with_several_targets() {
+    let mut app = app_view(ArenaMode::Classic, ViewRule::HopOnKill);
+    let shooter = single::<Shooter>(&mut app);
+    let at = Vec3::new(0.0, 0.9, -12.0);
+    place(&mut app, shooter, at, yaw_towards(at, Vec3::ZERO));
+    app.update();
     press(&mut app, KeyCode::Space);
     assert_eq!(counted::<Gunshot>(&app), 1);
     assert_eq!(app.world_mut().query::<&Bullet>().iter(app.world()).count(), 1);
@@ -386,7 +407,7 @@ fn random_starts_are_clear_of_cover_and_the_target() {
     let layouts = std::iter::once(Layout::classic()).chain((0..40).map(Layout::random));
     for layout in layouts {
         for _ in 0..50 {
-            let t = second_person::shooter::random_start(&mut rng, &layout);
+            let t = second_person::shooter::random_start(&mut rng, &layout, &[Vec2::ZERO]);
             let p = t.translation.xz();
             assert!(p.length() >= second_person::shooter::MIN_START_DISTANCE, "{p} in {}", layout.name);
             assert!(layout.is_clear(p, 0.35), "{p} overlaps cover in {}", layout.name);
@@ -562,6 +583,104 @@ fn l_switches_arena_and_rebuilds_it() {
     press(&mut app, KeyCode::KeyL);
     assert_eq!(app.world().resource::<Layout>().name, "Classic");
     assert_eq!(walls(&mut app), 4);
+}
+
+fn viewed(app: &mut App) -> Entity {
+    single::<Viewed>(app)
+}
+
+/// The target whose head the main camera is attached to.
+fn camera_owner(app: &mut App) -> Entity {
+    let cam = single::<MainCamera>(app);
+    let head = app.world().get::<ChildOf>(cam).unwrap().parent();
+    app.world().get::<ChildOf>(head).unwrap().parent()
+}
+
+fn targets(app: &mut App) -> Vec<Entity> {
+    let mut v: Vec<Entity> = app.world_mut().query_filtered::<Entity, With<Target>>().iter(app.world()).collect();
+    v.sort();
+    v
+}
+
+#[test]
+fn multi_target_rounds_spawn_three_apart_with_the_shooter_clear_of_all() {
+    let mut app = app_view(ArenaMode::Classic, ViewRule::HopOnKill);
+    let ts = targets(&mut app);
+    assert_eq!(ts.len(), 3);
+    let pos = |app: &App, e: Entity| app.world().get::<Transform>(e).unwrap().translation.xz();
+    let shooter = single::<Shooter>(&mut app);
+    for (i, &a) in ts.iter().enumerate() {
+        for &b in &ts[i + 1..] {
+            assert!(pos(&app, a).distance(pos(&app, b)) >= 10.0);
+        }
+        assert!(pos(&app, a).distance(pos(&app, shooter)) >= second_person::shooter::MIN_START_DISTANCE);
+    }
+    let v = viewed(&mut app);
+    assert_eq!(camera_owner(&mut app), v);
+}
+
+#[test]
+fn killing_the_viewed_target_hops_to_a_survivor_and_killing_all_wins() {
+    let mut app = app_view(ArenaMode::Classic, ViewRule::HopOnKill);
+    let first = viewed(&mut app);
+    app.world_mut().get_mut::<Target>(first).unwrap().hp = 0;
+    step(&mut app, 0.1);
+    assert!(app.world().get::<Dead>(first).is_some());
+    let second = viewed(&mut app);
+    assert_ne!(second, first);
+    assert_eq!(camera_owner(&mut app), second);
+    assert_eq!(*app.world().resource::<State<GameState>>().get(), GameState::Playing);
+
+    for e in targets(&mut app) {
+        app.world_mut().get_mut::<Target>(e).unwrap().hp = 0;
+    }
+    step(&mut app, 0.1);
+    assert_eq!(*app.world().resource::<State<GameState>>().get(), GameState::Won);
+}
+
+#[test]
+fn q_switches_view_only_under_the_switch_rule() {
+    let mut app = app_view(ArenaMode::Classic, ViewRule::HopOnKill);
+    step(&mut app, 1.0);
+    let before = viewed(&mut app);
+    press(&mut app, KeyCode::KeyQ);
+    assert_eq!(viewed(&mut app), before);
+
+    let mut app = app_view(ArenaMode::Classic, ViewRule::Switch);
+    step(&mut app, 1.0);
+    let mut seen = vec![viewed(&mut app)];
+    for _ in 0..2 {
+        press(&mut app, KeyCode::KeyQ);
+        step(&mut app, 0.7); // cooldown
+        seen.push(viewed(&mut app));
+    }
+    seen.sort();
+    seen.dedup();
+    assert_eq!(seen.len(), 3, "Q visits every target");
+    let v = viewed(&mut app);
+    assert_eq!(camera_owner(&mut app), v);
+}
+
+#[test]
+fn threat_cam_follows_the_most_suspicious_target() {
+    let mut app = app_view(ArenaMode::Classic, ViewRule::Threat);
+    step(&mut app, 1.2); // past the dwell time
+    let current = viewed(&mut app);
+    let other = targets(&mut app).into_iter().find(|&e| e != current).unwrap();
+    app.world_mut().get_mut::<Suspicion>(other).unwrap().level = 0.8;
+    step(&mut app, 0.1);
+    assert_eq!(viewed(&mut app), other);
+    assert_eq!(camera_owner(&mut app), other);
+}
+
+#[test]
+fn v_cycles_view_rules_and_respawns_targets() {
+    let mut app = app();
+    assert_eq!(targets(&mut app).len(), 1);
+    press(&mut app, KeyCode::KeyV);
+    assert_eq!(*app.world().resource::<ViewRule>(), ViewRule::HopOnKill);
+    assert_eq!(targets(&mut app).len(), 3);
+    assert_eq!(app.world_mut().query::<&MainCamera>().iter(app.world()).count(), 1);
 }
 #[test]
 fn arrow_keys_drive_the_shooter_like_a_tank() {

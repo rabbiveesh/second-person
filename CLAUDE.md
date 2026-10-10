@@ -88,6 +88,10 @@ Fyrox (small ecosystem), macroquad/three-d (too thin, would mean rolling our own
   While engaged, any sighting tops it back up to 1.0 (contact); out of sight it drains, and at 0 he lets go.
   Peek spots keep `PEEK_SLACK` clear of every corner and stay inside his `VIEW_RANGE`, or peeks see nothing and the fight stalls.
   The engine supports a moving target: the camera is parented to him, and walking is just velocity on a kinematic body.
+- `view.rs` (spike): `ViewRule` (V cycles, restarts): `Single` (default), or 3 targets with `HopOnKill`, `Switch` (Q) or
+  `Threat` (view follows the most suspicious). One target carries `Viewed`; switching moves it and reparents the single
+  `MainCamera` to that target's `TargetHead`. Eyes for perception/return fire come from each `TargetHead`, never the
+  camera. Dead targets get `Dead` + bevior_tree `Freeze`; the round is won when all are dead.
 - `nav.rs`: vleue_navigator navmesh, built synchronously from `NavObstacle` colliders (the arena blocks) inside the
   layout's outline (`fit_navmesh` updates it each round).
   `MoveTo { dest, speed, strafe }` is planned into a `Route` and followed by `target::walk`. With `strafe` he moves

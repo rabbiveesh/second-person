@@ -18,6 +18,7 @@ pub mod shooter;
 pub mod start;
 pub mod target;
 pub mod touch;
+pub mod view;
 
 use avian3d::prelude::*;
 use bevy::prelude::*;
@@ -45,6 +46,7 @@ pub fn gameplay(app: &mut App) {
         target::plugin,
         shooter::plugin,
         combat::plugin,
+        view::plugin,
     ));
 }
 

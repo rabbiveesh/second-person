@@ -12,7 +12,8 @@ use crate::{
     round::{GameState, TargetMobile},
     shooter::{SHOOTER_MAX_HP, Shooter, Stunned},
     start::Started,
-    target::{Activity, Suspicion, TARGET_MAX_HP, Target},
+    target::{Activity, Dead, Suspicion, TARGET_MAX_HP, Target, Viewed},
+    view::{ViewRule, ViewSwitched},
     touch::{TouchControls, TouchWhistle, WHISTLE_SIZE},
 };
 
@@ -22,6 +23,8 @@ use crate::{
 struct Flashes {
     hurt: f32,
     hit: f32,
+    /// A dip to black when your view jumps to another target.
+    switch: f32,
     ended: f32,
     /// End-of-round headline, picked when the round ends.
     banner: &'static str,
@@ -87,6 +90,7 @@ fn track_flashes(
     mut flashes: ResMut<Flashes>,
     mut hurt: MessageReader<ShooterHit>,
     mut hit: MessageReader<TargetHit>,
+    mut switched: MessageReader<ViewSwitched>,
     shooter: Option<Single<&Shooter>>,
 ) {
     let decay = time.delta_secs() * 2.5;
@@ -100,6 +104,10 @@ fn track_flashes(
     }
     flashes.hurt = (flashes.hurt - decay).max(0.0);
     flashes.hit = (flashes.hit - decay).max(0.0);
+    flashes.switch = (flashes.switch - decay).max(0.0);
+    if switched.read().count() > 0 {
+        flashes.switch = 0.8;
+    }
     flashes.ended = match state.get() {
         GameState::Playing => 0.0,
         _ => flashes.ended + time.delta_secs(),
@@ -126,7 +134,9 @@ fn draw_hud(
     flashes: Res<Flashes>,
     layout: Res<ScreenLayout>,
     shooter: Option<Single<(&Shooter, &Stunned)>>,
-    target: Option<Single<(&Target, &Suspicion, Option<&Activity>)>>,
+    target: Option<Single<(&Target, &Suspicion, Option<&Activity>), With<Viewed>>>,
+    all_targets: Query<(Entity, &Target, Has<Viewed>, Has<Dead>)>,
+    view_rule: Res<ViewRule>,
 ) -> Result {
     let ctx = contexts.ctx_mut()?;
     let screen = ctx.content_rect();
@@ -176,6 +186,20 @@ fn draw_hud(
                         "♥".repeat(target.hp as usize),
                         "♡".repeat((TARGET_MAX_HP - target.hp) as usize)
                     ));
+                    if all_targets.iter().len() > 1 {
+                        let mut others: Vec<_> = all_targets.iter().collect();
+                        others.sort_by_key(|(e, ..)| *e);
+                        let row = others
+                            .iter()
+                            .map(|(_, t, viewed, dead)| match (viewed, dead) {
+                                (_, true) => "X".to_owned(),
+                                (true, _) => format!("[{}]", t.hp),
+                                _ => t.hp.to_string(),
+                            })
+                            .collect::<Vec<_>>()
+                            .join("  ");
+                        ui.label(format!("all targets: {row}"));
+                    }
                     let colour = if suspicion.engaged {
                         egui::Color32::from_rgb(220, 50, 40)
                     } else {
@@ -257,10 +281,11 @@ fn draw_hud(
                 ui.add(
                     egui::Label::new(
                         egui::RichText::new(format!(
-                            "Up/Down move   Left/Right turn (double-tap: hop)   Space fire   W whistle   M target walks: {}   Tab radar: {:?}   L arena: {}   F1 inspector",
+                            "Up/Down move   Left/Right turn (double-tap: hop)   Space fire   W whistle   M target walks: {}   Tab radar: {:?}   L arena: {}   V view: {}   F1 inspector",
                             if mobile.0 { "on" } else { "off" },
                             *radar_mode,
                             arena.name,
+                            view_rule.label(),
                         ))
                         .color(egui::Color32::WHITE)
                         .background_color(egui::Color32::from_black_alpha(140)),
@@ -293,6 +318,9 @@ fn draw_hud(
     let painter = ctx.layer_painter(egui::LayerId::new(egui::Order::Background, "flash".into()));
     if flashes.hurt > 0.0 {
         painter.rect_filled(view, 0.0, egui::Color32::from_rgba_unmultiplied(255, 0, 0, (flashes.hurt * 120.0) as u8));
+    }
+    if flashes.switch > 0.0 {
+        painter.rect_filled(view, 0.0, egui::Color32::from_black_alpha((flashes.switch.min(1.0) * 255.0) as u8));
     }
     if flashes.hit > 0.0 {
         painter.rect_filled(view, 0.0, egui::Color32::from_rgba_unmultiplied(255, 255, 255, (flashes.hit * 60.0) as u8));

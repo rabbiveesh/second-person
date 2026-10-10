@@ -11,8 +11,21 @@ use crate::{
     round::{GameState, RoundEntity},
     nav::MoveTo,
     shooter::{Bump, Footstep, Whistle, Shooter, ShooterAction, Stagger, Stunned},
-    target::{Activity, Alert, MainCamera, ROLL_SECS, Relocate, Roll, Suspicion, Target},
+    target::{Activity, Alert, Dead, ROLL_SECS, Relocate, Roll, Suspicion, Target, TargetHead},
 };
+
+/// Each live target's eyes (his head's global transform), keyed by the target entity.
+type Heads<'w, 's> = Query<'w, 's, (&'static ChildOf, &'static GlobalTransform), With<TargetHead>>;
+
+fn eyes_of(heads: &Heads, target: Entity) -> Option<GlobalTransform> {
+    heads.iter().find(|(parent, _)| parent.parent() == target).map(|(_, eyes)| *eyes)
+}
+
+/// Where a target's shots and hook leave from: just below and right of his eyes, so you can see
+/// them from his own view.
+fn hand(eyes: &GlobalTransform) -> Vec3 {
+    eyes.translation() + eyes.down() * 0.3 + eyes.right() * 0.2
+}
 
 const BULLET_SPEED: f32 = 45.0;
 const FIRE_COOLDOWN: f32 = 0.3;
@@ -161,7 +174,7 @@ fn fire(
     assets: Res<Assets3d>,
     mut cooldown: Local<Option<Timer>>,
     shooter: Single<(&ActionState<ShooterAction>, &Transform, &Stunned), With<Shooter>>,
-    target: Single<(Entity, &Transform, &mut Suspicion), With<Target>>,
+    mut targets: Query<(Entity, &Transform, &mut Suspicion), (With<Target>, Without<Dead>)>,
     layout: Res<arena::Layout>,
     mut gunshots: MessageWriter<Gunshot>,
 ) {
@@ -179,8 +192,14 @@ fn fire(
     cooldown.reset();
 
     let muzzle = t.translation + t.rotation * Vec3::new(0.3, 0.15, -0.9);
-    let (target_e, target_t, mut suspicion) = target.into_inner();
-    let forward = magnetised(&layout, muzzle, *t.forward(), target_t.translation);
+    // Magnetism pulls toward whichever live target is nearest the line of fire.
+    let aim = *t.forward();
+    let forward = targets
+        .iter()
+        .map(|(_, target_t, _)| magnetised(&layout, muzzle, aim, target_t.translation))
+        .filter(|&d| d != aim)
+        .max_by(|a, b| a.dot(aim).total_cmp(&b.dot(aim)))
+        .unwrap_or(aim);
     commands.spawn((
         Name::new("Bullet"),
         RoundEntity,
@@ -199,10 +218,12 @@ fn fire(
     gunshots.write(Gunshot { muzzle, dir: forward });
 
     // Gunshots are loud.
-    if target_t.translation.distance(t.translation) < HEARING_RANGE {
-        suspicion.bump(0.25);
-        suspicion.last_known = Some(t.translation);
-        commands.entity(target_e).insert(Alert::new(t.translation, 3.0));
+    for (target_e, target_t, mut suspicion) in &mut targets {
+        if target_t.translation.distance(t.translation) < HEARING_RANGE {
+            suspicion.bump(0.25);
+            suspicion.last_known = Some(t.translation);
+            commands.entity(target_e).insert(Alert::new(t.translation, 3.0));
+        }
     }
 }
 
@@ -223,7 +244,7 @@ fn bullet_hits(
     mut commands: Commands,
     mut collisions: MessageReader<CollisionStart>,
     bullets: Query<(&Bullet, &Transform)>,
-    mut targets: Query<(Entity, &mut Target, &Transform, &mut Suspicion)>,
+    mut targets: Query<(Entity, &mut Target, &Transform, &mut Suspicion), Without<Dead>>,
     mut hits: MessageWriter<TargetHit>,
     mut impacts: MessageWriter<BulletImpact>,
 ) {
@@ -273,23 +294,25 @@ fn hear_movement(
     mut steps: MessageReader<Footstep>,
     mut bumps: MessageReader<Bump>,
     mut whistles: MessageReader<Whistle>,
-    target: Single<(Entity, &Transform, &mut Suspicion), With<Target>>,
+    mut targets: Query<(Entity, &Transform, &mut Suspicion), (With<Target>, Without<Dead>)>,
 ) {
-    let (target_e, target_t, mut suspicion) = target.into_inner();
-    let ear = target_t.translation;
-    let heard = steps
+    let heard: Vec<_> = steps
         .read()
         .map(|s| (s.at, floors.at(s.at.xz()).hearing_range(), FOOTSTEP_SUSPICION))
         .chain(bumps.read().map(|b| (b.at, BUMP_HEARING_RANGE, BUMP_SUSPICION)))
-        .chain(whistles.read().map(|w| (w.at, WHISTLE_HEARING_RANGE, WHISTLE_SUSPICION)));
-    for (at, range, amount) in heard {
-        let closeness = 1.0 - ear.distance(at) / range;
-        if closeness <= 0.0 {
-            continue;
+        .chain(whistles.read().map(|w| (w.at, WHISTLE_HEARING_RANGE, WHISTLE_SUSPICION)))
+        .collect();
+    for (target_e, target_t, mut suspicion) in &mut targets {
+        let ear = target_t.translation;
+        for &(at, range, amount) in &heard {
+            let closeness = 1.0 - ear.distance(at) / range;
+            if closeness <= 0.0 {
+                continue;
+            }
+            suspicion.bump(amount * closeness);
+            suspicion.last_known = Some(at);
+            commands.entity(target_e).insert(Alert::new(at, 2.0));
         }
-        suspicion.bump(amount * closeness);
-        suspicion.last_known = Some(at);
-        commands.entity(target_e).insert(Alert::new(at, 2.0));
     }
 }
 
@@ -298,97 +321,110 @@ fn hear_movement(
 fn warning_fire(
     time: Res<Time>,
     spatial: SpatialQuery,
-    mut cooldown: Local<f32>,
-    eyes: Single<&GlobalTransform, With<MainCamera>>,
-    target: Single<&Suspicion, With<Target>>,
+    mut cooldowns: Local<bevy::platform::collections::HashMap<Entity, f32>>,
+    heads: Heads,
+    targets: Query<(Entity, &Suspicion), (With<Target>, Without<Dead>)>,
     mut warnings: MessageWriter<WarningShot>,
     mut impacts: MessageWriter<BulletImpact>,
 ) {
-    *cooldown -= time.delta_secs();
-    let suspicion = *target;
-    let Some(guess) = suspicion.last_known else { return };
-    if suspicion.engaged || suspicion.level < WARNING_SUSPICION || *cooldown > 0.0 {
-        return;
-    }
-    let from = eyes.translation() + eyes.down() * 0.3 + eyes.right() * 0.2;
-    let to_guess = guess - from;
-    if eyes.forward().angle_between(to_guess) > 0.5 {
-        return; // still turning to look
-    }
-    let mut rng = rand::rng();
-    *cooldown = rng.random_range(WARNING_INTERVAL);
-    let side = to_guess.with_y(0.0).normalize_or_zero().cross(Vec3::Y);
-    let sign = if rng.random_bool(0.5) { 1.0 } else { -1.0 };
-    let aim = guess + side * sign * rng.random_range(WARNING_MISS) + Vec3::Y * rng.random_range(-0.6..0.4);
-    let Ok(dir) = Dir3::new(aim - from) else { return };
-    // Stops at whatever it hits first (cover, a wall), else flies on past.
-    let to = match spatial.cast_ray(from, dir, 60.0, true, &SpatialQueryFilter::from_mask(Layer::World)) {
-        Some(hit) => {
-            let at = from + dir * hit.distance;
-            impacts.write(BulletImpact { at });
-            at
+    for (target_e, suspicion) in &targets {
+        let cooldown = cooldowns.entry(target_e).or_default();
+        *cooldown -= time.delta_secs();
+        let Some(guess) = suspicion.last_known else { continue };
+        if suspicion.engaged || suspicion.level < WARNING_SUSPICION || *cooldown > 0.0 {
+            continue;
         }
-        None => from + dir * 60.0,
-    };
-    warnings.write(WarningShot { from, to });
+        let Some(eyes) = eyes_of(&heads, target_e) else { continue };
+        let from = hand(&eyes);
+        let to_guess = guess - from;
+        if eyes.forward().angle_between(to_guess) > 0.5 {
+            continue; // still turning to look
+        }
+        let mut rng = rand::rng();
+        *cooldown = rng.random_range(WARNING_INTERVAL);
+        let side = to_guess.with_y(0.0).normalize_or_zero().cross(Vec3::Y);
+        let sign = if rng.random_bool(0.5) { 1.0 } else { -1.0 };
+        let aim = guess + side * sign * rng.random_range(WARNING_MISS) + Vec3::Y * rng.random_range(-0.6..0.4);
+        let Ok(dir) = Dir3::new(aim - from) else { continue };
+        // Stops at whatever it hits first (cover, a wall), else flies on past.
+        let to = match spatial.cast_ray(from, dir, 60.0, true, &SpatialQueryFilter::from_mask(Layer::World)) {
+            Some(hit) => {
+                let at = from + dir * hit.distance;
+                impacts.write(BulletImpact { at });
+                at
+            }
+            None => from + dir * 60.0,
+        };
+        warnings.write(WarningShot { from, to });
+    }
 }
 
 /// The grappling hook. While fighting, if he can see you at mid range and it's off cooldown,
 /// he hooks you and reels you in, fires a quick burst point-blank, leaves you stunned, and
 /// runs for a different cover.
+/// One hook at a time: a target only starts one while nobody else is mid-grapple.
 #[allow(clippy::too_many_arguments)]
 fn grapple(
     mut commands: Commands,
     time: Res<Time>,
-    mut cooldown: Local<f32>,
-    eyes: Single<&GlobalTransform, With<MainCamera>>,
-    target: Single<(Entity, &Transform, &Suspicion, Option<&Activity>, Option<&mut Grapple>), With<Target>>,
+    mut cooldowns: Local<bevy::platform::collections::HashMap<Entity, f32>>,
+    heads: Heads,
+    mut targets: Query<
+        (Entity, &Transform, &Suspicion, Option<&Activity>, Option<&mut Grapple>),
+        (With<Target>, Without<Dead>),
+    >,
     shooter: Single<(&mut Shooter, &Transform, &mut Stunned)>,
     mut fired: MessageWriter<GrappleFired>,
     mut hits: MessageWriter<ShooterHit>,
 ) {
     let dt = time.delta_secs();
-    *cooldown -= dt;
-    let (target_e, target_t, suspicion, activity, grapple) = target.into_inner();
     let (mut s, shooter_t, mut stunned) = shooter.into_inner();
-    let hand = eyes.translation() + eyes.down() * 0.3 + eyes.right() * 0.2;
-    let dist = target_t.translation.xz().distance(shooter_t.translation.xz());
+    let mut busy = targets.iter().any(|(.., g)| g.is_some());
+    for (target_e, target_t, suspicion, activity, grapple) in &mut targets {
+        let cooldown = cooldowns.entry(target_e).or_default();
+        *cooldown -= dt;
+        let Some(eyes) = eyes_of(&heads, target_e) else { continue };
+        let hand = hand(&eyes);
+        let dist = target_t.translation.xz().distance(shooter_t.translation.xz());
 
-    let Some(mut grapple) = grapple else {
-        if *cooldown <= 0.0
-            && activity == Some(&Activity::Engaging)
-            && suspicion.sees_shooter
-            && GRAPPLE_RANGE.contains(&dist)
-        {
-            *cooldown = GRAPPLE_COOLDOWN;
-            commands.entity(target_e).insert(Grapple::Pulling { time: 0.0 }).try_remove::<MoveTo>();
-            fired.write(GrappleFired { from: hand, to: shooter_t.translation });
-        }
-        return;
-    };
-    match &mut *grapple {
-        Grapple::Pulling { time } => {
-            *time += dt;
-            *stunned = Stunned { left: 0.2, pull_to: Some(target_t.translation) };
-            if dist < GRAPPLE_CLOSE || *time > GRAPPLE_MAX_PULL {
-                *grapple = Grapple::Hammering { shots_left: HAMMER_SHOTS, next: 0.0 };
+        let Some(mut grapple) = grapple else {
+            if !busy
+                && *cooldown <= 0.0
+                && activity == Some(&Activity::Engaging)
+                && suspicion.sees_shooter
+                && GRAPPLE_RANGE.contains(&dist)
+            {
+                busy = true;
+                *cooldown = GRAPPLE_COOLDOWN;
+                commands.entity(target_e).insert(Grapple::Pulling { time: 0.0 }).try_remove::<MoveTo>();
+                fired.write(GrappleFired { from: hand, to: shooter_t.translation });
             }
-        }
-        Grapple::Hammering { shots_left, next } => {
-            *stunned = Stunned { left: GRAPPLE_STUN, pull_to: None };
-            *next -= dt;
-            if *next > 0.0 {
-                return;
+            continue;
+        };
+        match &mut *grapple {
+            Grapple::Pulling { time } => {
+                *time += dt;
+                *stunned = Stunned { left: 0.2, pull_to: Some(target_t.translation) };
+                if dist < GRAPPLE_CLOSE || *time > GRAPPLE_MAX_PULL {
+                    *grapple = Grapple::Hammering { shots_left: HAMMER_SHOTS, next: 0.0 };
+                }
             }
-            s.hp = (s.hp - HAMMER_DAMAGE).max(0.0);
-            hits.write(ShooterHit { from: hand, to: shooter_t.translation });
-            *shots_left -= 1;
-            *next = HAMMER_INTERVAL;
-            if *shots_left == 0 {
-                commands
-                    .entity(target_e)
-                    .remove::<Grapple>()
-                    .insert(Relocate(target_t.translation.xz()));
+            Grapple::Hammering { shots_left, next } => {
+                *stunned = Stunned { left: GRAPPLE_STUN, pull_to: None };
+                *next -= dt;
+                if *next > 0.0 {
+                    continue;
+                }
+                s.hp = (s.hp - HAMMER_DAMAGE).max(0.0);
+                hits.write(ShooterHit { from: hand, to: shooter_t.translation });
+                *shots_left -= 1;
+                *next = HAMMER_INTERVAL;
+                if *shots_left == 0 {
+                    commands
+                        .entity(target_e)
+                        .remove::<Grapple>()
+                        .insert(Relocate(target_t.translation.xz()));
+                }
             }
         }
     }
@@ -397,36 +433,41 @@ fn grapple(
 /// He sees you fire straight at him: he dives sideways out of the line of fire. Bullets fly at
 /// `BULLET_SPEED`, so beyond `ROLL_MIN_RANGE` he's clear before it arrives. Only the first shot;
 /// the cooldown is your window for the second. He won't roll into cover or through a wall.
+/// Each target dodges for himself, with his own cooldown.
 fn dodge(
     mut commands: Commands,
     time: Res<Time>,
-    mut cooldown: Local<f32>,
+    mut cooldowns: Local<bevy::platform::collections::HashMap<Entity, f32>>,
     layout: Res<arena::Layout>,
     mut shots: MessageReader<Gunshot>,
-    target: Single<(Entity, &Transform, &Suspicion, Has<Grapple>, Has<Roll>), With<Target>>,
+    targets: Query<(Entity, &Transform, &Suspicion, Has<Grapple>, Has<Roll>), (With<Target>, Without<Dead>)>,
 ) {
-    *cooldown -= time.delta_secs();
-    let (e, t, suspicion, grappling, rolling) = *target;
+    for cooldown in cooldowns.values_mut() {
+        *cooldown -= time.delta_secs();
+    }
     for shot in shots.read() {
-        let to_him = t.translation - shot.muzzle;
-        let aimed = shot.dir.angle_between(to_him) < 0.1;
-        if !aimed || !suspicion.sees_shooter || grappling || rolling || *cooldown > 0.0 {
-            continue;
+        for (e, t, suspicion, grappling, rolling) in &targets {
+            let cooldown = cooldowns.entry(e).or_default();
+            let to_him = t.translation - shot.muzzle;
+            let aimed = shot.dir.angle_between(to_him) < 0.1;
+            if !aimed || !suspicion.sees_shooter || grappling || rolling || *cooldown > 0.0 {
+                continue;
+            }
+            if to_him.length() < ROLL_MIN_RANGE {
+                continue;
+            }
+            let here = t.translation.xz();
+            let across = shot.dir.xz().perp().normalize_or_zero();
+            let first = if rand::rng().random_bool(0.5) { 1.0 } else { -1.0 };
+            let clear = |sign: f32| {
+                let dest = here + across * sign * ROLL_DISTANCE;
+                (layout.is_clear(dest, 0.5) && !layout.los_blocked(here, dest)).then_some(sign)
+            };
+            let Some(sign) = clear(first).or_else(|| clear(-first)) else { continue };
+            *cooldown = ROLL_COOLDOWN;
+            let velocity = (across * sign * ROLL_DISTANCE / ROLL_SECS).extend(0.0).xzy();
+            commands.entity(e).insert(Roll { t: 0.0, velocity });
         }
-        if to_him.length() < ROLL_MIN_RANGE {
-            continue;
-        }
-        let here = t.translation.xz();
-        let across = shot.dir.xz().perp().normalize_or_zero();
-        let first = if rand::rng().random_bool(0.5) { 1.0 } else { -1.0 };
-        let clear = |sign: f32| {
-            let dest = here + across * sign * ROLL_DISTANCE;
-            (layout.is_clear(dest, 0.5) && !layout.los_blocked(here, dest)).then_some(sign)
-        };
-        let Some(sign) = clear(first).or_else(|| clear(-first)) else { continue };
-        *cooldown = ROLL_COOLDOWN;
-        let velocity = (across * sign * ROLL_DISTANCE / ROLL_SECS).extend(0.0).xzy();
-        commands.entity(e).insert(Roll { t: 0.0, velocity });
     }
 }
 
@@ -468,41 +509,43 @@ impl Aim {
     }
 }
 
-/// While engaging and able to see the shooter, the target fires back (hitscan), holding the angle
+/// While engaging and able to see the shooter, each target fires back (hitscan), holding the angle
 /// when you duck out of sight (see [`Aim::step`]).
 fn return_fire(
     time: Res<Time>,
-    mut aim: Local<Aim>,
-    eyes: Single<&GlobalTransform, With<MainCamera>>,
-    target: Single<(&Suspicion, Option<&Activity>, Has<Grapple>, Has<Roll>), With<Target>>,
+    mut aims: Local<bevy::platform::collections::HashMap<Entity, Aim>>,
+    heads: Heads,
+    targets: Query<(Entity, &Suspicion, Option<&Activity>, Has<Grapple>, Has<Roll>), (With<Target>, Without<Dead>)>,
     mut shooter: Single<(&mut Shooter, &Transform, &mut Stagger)>,
     mut hits: MessageWriter<ShooterHit>,
 ) {
-    let (suspicion, activity, grappling, rolling) = *target;
-    if activity != Some(&Activity::Engaging) || grappling {
-        *aim = Aim::default();
-        return;
-    }
-    if rolling {
-        return; // no shooting mid-dive; his aim picks up again after
-    }
-    let (ref mut s, t, ref mut stagger) = *shooter;
-    if aim.step(time.elapsed_secs(), time.delta_secs(), suspicion.sees_shooter, t.translation.xz()) {
-        s.hp = (s.hp - RETURN_FIRE_DAMAGE).max(0.0);
-        // Start the tracer just below the eyes so it's visible from his own view.
-        let from = eyes.translation() + eyes.down() * 0.3 + eyes.right() * 0.2;
-        hits.write(ShooterHit { from, to: t.translation });
-        let away = (t.translation - from).with_y(0.0).normalize_or_zero();
-        **stagger = Stagger::knock(away * RETURN_FIRE_KNOCKBACK);
+    for (target_e, suspicion, activity, grappling, rolling) in &targets {
+        let aim = aims.entry(target_e).or_default();
+        if activity != Some(&Activity::Engaging) || grappling {
+            *aim = Aim::default();
+            continue;
+        }
+        if rolling {
+            continue; // no shooting mid-dive; his aim picks up again after
+        }
+        let Some(eyes) = eyes_of(&heads, target_e) else { continue };
+        let (ref mut s, t, ref mut stagger) = *shooter;
+        if aim.step(time.elapsed_secs(), time.delta_secs(), suspicion.sees_shooter, t.translation.xz()) {
+            s.hp = (s.hp - RETURN_FIRE_DAMAGE).max(0.0);
+            let from = hand(&eyes);
+            hits.write(ShooterHit { from, to: t.translation });
+            let away = (t.translation - from).with_y(0.0).normalize_or_zero();
+            **stagger = Stagger::knock(away * RETURN_FIRE_KNOCKBACK);
+        }
     }
 }
 
 fn check_outcome(
-    target: Single<&Target>,
+    targets: Query<&Target>,
     shooter: Single<&Shooter>,
     mut next: ResMut<NextState<GameState>>,
 ) {
-    if target.hp == 0 {
+    if !targets.is_empty() && targets.iter().all(|t| t.hp == 0) {
         next.set(GameState::Won);
     } else if shooter.hp <= 0.0 {
         next.set(GameState::Lost);

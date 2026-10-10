@@ -8,7 +8,7 @@ use crate::{
     combat::TargetHit,
     round::GameState,
     shooter::Shooter,
-    target::{MainCamera, ROLL_SECS, Roll, Target, TargetHead},
+    target::{MainCamera, Target, TargetHead, Viewed, ROLL_SECS, Roll},
 };
 
 /// Eye height above the floor, and how far above it his view ends up when he's down.
@@ -71,9 +71,15 @@ fn start_fall(mut cam: Single<&mut CameraJuice>) {
 fn start_topple(
     mut commands: Commands,
     shooter: Single<(Entity, &Transform), With<Shooter>>,
-    target: Single<&Transform, With<Target>>,
+    targets: Query<&Transform, (With<Target>, Without<Shooter>)>,
 ) {
     let (e, t) = *shooter;
+    // Whoever's nearest shot him.
+    let Some(target) = targets.iter().min_by(|a, b| {
+        a.translation.distance_squared(t.translation).total_cmp(&b.translation.distance_squared(t.translation))
+    }) else {
+        return;
+    };
     // He's knocked away from the target, and partly sideways so the fall reads from his view
     // (falling straight along the line of sight just looks like he shrank).
     let back = (t.translation - target.translation).with_y(0.0).normalize_or(Vec3::X);
@@ -89,15 +95,18 @@ fn start_topple(
 fn camera_juice(
     time: Res<Time>,
     mut hits: MessageReader<TargetHit>,
-    head: Single<&GlobalTransform, With<TargetHead>>,
-    cam: Single<(&mut Transform, &mut CameraJuice), With<MainCamera>>,
-    roll: Option<Single<&Roll>>,
+    heads: Query<&GlobalTransform, With<TargetHead>>,
+    viewed: Option<Single<(&Transform, Option<&Roll>), (With<Viewed>, Without<MainCamera>)>>,
+    cam: Single<(&ChildOf, &mut Transform, &mut CameraJuice), With<MainCamera>>,
 ) {
-    let (mut transform, mut j) = cam.into_inner();
+    let (parent, mut transform, mut j) = cam.into_inner();
+    let Ok(head) = heads.get(parent.parent()) else { return };
     let dt = time.delta_secs();
     let head_rot = head.rotation();
 
-    for hit in hits.read() {
+    // Only hits on the one you're looking through.
+    let (me, roll) = viewed.map_or((None, None), |v| (Some(v.0.translation), v.1));
+    for hit in hits.read().filter(|h| me.is_some_and(|me| me.distance(h.at) < 0.5)) {
         // The bullet's direction in view space: his head snaps along it.
         let d = (head_rot * transform.rotation).inverse() * hit.dir;
         j.velocity += Vec3::new(d.z * KICK_PITCH, -d.x * KICK_YAW, -d.x * KICK_ROLL);

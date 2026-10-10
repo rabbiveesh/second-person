@@ -22,11 +22,12 @@ use rand::Rng;
 use crate::{
     combat::Grapple,
     Layer,
-    arena::{Cover, Layout},
+    arena::{self, Cover, Layout},
     nav::{Evade, MoveTo, Route},
     radar::{LiveBlip, RADAR_LAYER, RadarContact},
     round::{GameState, RoundEntity, SpawnRound, TargetMobile},
     shooter::Shooter,
+    view::ViewRule,
 };
 
 /// Body capsule center height; eyes sit `EYE_OFFSET` above it (~1.6m).
@@ -47,13 +48,35 @@ pub struct Target {
     pub hp: u32,
 }
 
-/// Pitch node between the body (yaw) and the camera.
+/// Pitch node between the body (yaw) and the camera. Its global transform is his eyes.
 #[derive(Component)]
 pub struct TargetHead;
 
-/// The camera that looks out of the target's eyes.
+/// The camera that looks out of the viewed target's eyes (parented to his head).
 #[derive(Component)]
 pub struct MainCamera;
+
+/// The target whose eyes you're looking through. Exactly one target has it.
+#[derive(Component, Reflect)]
+#[reflect(Component)]
+pub struct Viewed;
+
+/// Out of the round: stops thinking and moving, and lies down.
+#[derive(Component, Reflect)]
+#[reflect(Component)]
+pub struct Dead;
+
+/// His visible body (other targets see it; from inside, backface culling hides it).
+#[derive(Component)]
+struct TargetBody;
+
+/// Where this round's targets start (XZ). The first is the origin, which layouts keep open.
+#[derive(Resource, Default, Clone, Debug, Reflect)]
+#[reflect(Resource)]
+pub struct TargetSpawns(pub Vec<Vec2>);
+
+/// Minimum distance between targets' starting spots.
+const TARGET_SPACING: f32 = 10.0;
 
 /// Where the target wants to look (world space) and how fast he turns.
 #[derive(Component, Reflect)]
@@ -140,15 +163,37 @@ struct Fighting {
 pub struct Relocate(pub Vec2);
 
 pub fn plugin(app: &mut App) {
-    app.add_systems(OnEnter(GameState::Playing), spawn_target.in_set(SpawnRound))
+    app.init_resource::<TargetSpawns>()
+        .add_systems(
+            OnEnter(GameState::Playing),
+            (
+                plan_spawns.after(arena::choose_layout).before(SpawnRound),
+                spawn_targets.in_set(SpawnRound),
+            ),
+        )
         .add_systems(
             Update,
-            (perceive, gaze, walk, roll).chain().run_if(in_state(GameState::Playing)),
+            (perceive, gaze, walk, roll, die).chain().run_if(in_state(GameState::Playing)),
         );
 }
 
-fn spawn_target(
+fn plan_spawns(layout: Res<Layout>, rule: Res<ViewRule>, mut spawns: ResMut<TargetSpawns>) {
+    let mut rng = rand::rng();
+    let mut points = vec![Vec2::ZERO];
+    while points.len() < rule.target_count() {
+        let taken = points.clone();
+        let far_apart = |p: Vec2| taken.iter().all(|q| q.distance(p) >= TARGET_SPACING);
+        match layout.random_point(&mut rng, 1.5, far_apart) {
+            Some(p) => points.push(p),
+            None => break,
+        }
+    }
+    spawns.0 = points;
+}
+
+fn spawn_targets(
     mut commands: Commands,
+    spawns: Res<TargetSpawns>,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
     mut trees: ResMut<Assets<BehaviorTreeRoot>>,
@@ -165,62 +210,77 @@ fn spawn_target(
         cull_mode: None,
         ..default()
     });
+    let body = materials.add(Color::srgb(0.75, 0.25, 0.3));
+    let mut rng = rand::rng();
 
-    commands.spawn((
-        Name::new("Target"),
-        RoundEntity,
-        Target { hp: TARGET_MAX_HP },
-        Suspicion::default(),
-        RadarContact(Color::srgb(1.0, 0.2, 0.2)),
-        LookGoal {
-            point: Vec3::new(0.0, BODY_CENTER + EYE_OFFSET, -10.0),
-            turn_speed: 1.0,
-        },
-        RigidBody::Kinematic,
-        Collider::capsule(0.4, 1.0),
-        CollisionLayers::new(Layer::Target, [Layer::World, Layer::Shooter, Layer::Bullet]),
-        Transform::from_xyz(0.0, BODY_CENTER, 0.0),
-        Visibility::default(),
-        BehaviorTree::from_node(behaviour(), &mut trees),
-        children![
-            (
-                Name::new("Head"),
-                TargetHead,
-                Transform::from_xyz(0.0, EYE_OFFSET, 0.0),
-                Visibility::default(),
+    for (i, &p) in spawns.0.iter().enumerate() {
+        // The first one faces north as before; the rest face anywhere.
+        let facing = if i == 0 { 0.0 } else { rng.random_range(0.0..2.0 * PI) };
+        let look = Vec3::new(p.x, BODY_CENTER + EYE_OFFSET, p.y) + Quat::from_rotation_y(facing) * Vec3::NEG_Z * 10.0;
+        let mut target = commands.spawn((
+            Name::new("Target"),
+            RoundEntity,
+            Target { hp: TARGET_MAX_HP },
+            Suspicion::default(),
+            RadarContact(Color::srgb(1.0, 0.2, 0.2)),
+            LookGoal { point: look, turn_speed: 1.0 },
+            RigidBody::Kinematic,
+            Collider::capsule(0.4, 1.0),
+            CollisionLayers::new(Layer::Target, [Layer::World, Layer::Shooter, Layer::Bullet]),
+            Transform::from_xyz(p.x, BODY_CENTER, p.y).with_rotation(Quat::from_rotation_y(facing)),
+            Visibility::default(),
+            BehaviorTree::from_node(behaviour(), &mut trees),
+            children![
+                (
+                    Name::new("Body"),
+                    TargetBody,
+                    Mesh3d(meshes.add(Capsule3d::new(0.4, 1.0))),
+                    MeshMaterial3d(body.clone()),
+                    Transform::default(),
+                ),
+                (
+                    Name::new("Radar blip"),
+                    Mesh3d(meshes.add(Sphere::new(0.9))),
+                    MeshMaterial3d(blip.clone()),
+                    Transform::from_xyz(0.0, 4.0, 0.0),
+                    RenderLayers::layer(RADAR_LAYER),
+                    LiveBlip,
+                ),
+                (
+                    Name::new("Radar view cone"),
+                    // Sector points +Y in its own plane; lay it flat, pointing forward (-Z).
+                    Mesh3d(meshes.add(CircularSector::new(VIEW_RANGE * 0.5, VIEW_HALF_ANGLE))),
+                    MeshMaterial3d(cone.clone()),
+                    Transform::from_xyz(0.0, 3.0, 0.0).with_rotation(Quat::from_rotation_x(-PI / 2.0)),
+                    RenderLayers::layer(RADAR_LAYER),
+                    LiveBlip,
+                ),
+            ],
+        ));
+        let head = (
+            Name::new("Head"),
+            TargetHead,
+            Transform::from_xyz(0.0, EYE_OFFSET, 0.0),
+            Visibility::default(),
+        );
+        if i == 0 {
+            target.insert(Viewed).with_child((
+                head,
                 children![(
                     Name::new("Eyes"),
                     MainCamera,
                     Camera3d::default(),
-                    Camera {
-                        order: 0,
-                        ..default()
-                    },
+                    Camera { order: 0, ..default() },
                     Projection::Perspective(PerspectiveProjection {
                         fov: crate::layout::BASE_VFOV,
                         ..default()
                     }),
                 )],
-            ),
-            (
-                Name::new("Radar blip"),
-                Mesh3d(meshes.add(Sphere::new(0.9))),
-                MeshMaterial3d(blip),
-                Transform::from_xyz(0.0, 4.0, 0.0),
-                RenderLayers::layer(RADAR_LAYER),
-                LiveBlip,
-            ),
-            (
-                Name::new("Radar view cone"),
-                // Sector points +Y in its own plane; lay it flat, pointing forward (-Z).
-                Mesh3d(meshes.add(CircularSector::new(VIEW_RANGE * 0.5, VIEW_HALF_ANGLE))),
-                MeshMaterial3d(cone),
-                Transform::from_xyz(0.0, 3.0, 0.0).with_rotation(Quat::from_rotation_x(-PI / 2.0)),
-                RenderLayers::layer(RADAR_LAYER),
-                LiveBlip,
-            ),
-        ],
-    ));
+            ));
+        } else {
+            target.with_child(head);
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -613,64 +673,67 @@ fn wander(
 // Systems
 // ---------------------------------------------------------------------------
 
-/// Vision: is the shooter inside the view cone with clear line of sight? Feeds `Suspicion`.
+/// Vision: is the shooter inside each target's view cone with clear line of sight? Feeds `Suspicion`.
 fn perceive(
     time: Res<Time>,
     spatial: SpatialQuery,
-    eyes: Single<&GlobalTransform, With<MainCamera>>,
-    mut target: Single<(Entity, &mut Suspicion), With<Target>>,
+    heads: Query<(&ChildOf, &GlobalTransform), With<TargetHead>>,
+    mut targets: Query<&mut Suspicion, (With<Target>, Without<Dead>)>,
     shooter: Single<(Entity, &Transform, &LinearVelocity), With<Shooter>>,
     mut commands: Commands,
 ) {
-    let (target_e, ref mut suspicion) = *target;
     let (shooter_e, shooter_t, shooter_v) = *shooter;
-    let eye = eyes.translation();
-    let to_shooter = shooter_t.translation - eye;
-    let dist = to_shooter.length();
-    let angle = eyes.forward().angle_between(to_shooter);
+    for (parent, eyes) in &heads {
+        let target_e = parent.parent();
+        let Ok(mut suspicion) = targets.get_mut(target_e) else { continue };
+        let eye = eyes.translation();
+        let to_shooter = shooter_t.translation - eye;
+        let dist = to_shooter.length();
+        let angle = eyes.forward().angle_between(to_shooter);
 
-    let sees = dist < VIEW_RANGE
-        && angle < VIEW_HALF_ANGLE
-        && Dir3::new(to_shooter).is_ok_and(|dir| {
-            spatial
-                .cast_ray(
-                    eye,
-                    dir,
-                    dist + 1.0,
-                    true,
-                    &SpatialQueryFilter::from_mask([Layer::World, Layer::Shooter]),
-                )
-                .is_some_and(|hit| hit.entity == shooter_e)
-        });
-    suspicion.sees_shooter = sees;
-    if sees {
-        suspicion.last_known = Some(shooter_t.translation);
-    }
-
-    let dt = time.delta_secs();
-    if sees && suspicion.engaged {
-        // Mid-fight, any sighting is contact: he knows exactly where you are, so it re-arms the
-        // full engagement. Otherwise a still shooter at range only trickles suspicion back in on
-        // each peek, the hides drain it faster, and he talks himself out of a fight he's winning.
-        suspicion.level = 1.0;
-    } else if sees {
-        let closeness = 1.0 - dist / VIEW_RANGE;
-        let centred = 1.0 - angle / VIEW_HALF_ANGLE;
-        let moving = if shooter_v.length() > 0.5 { 1.0 } else { 0.25 };
-        suspicion.bump((0.08 + 0.6 * closeness) * (0.4 + 0.6 * centred) * moving * dt);
-        // Half-sure: glance over.
-        if suspicion.level > 0.5 && !suspicion.engaged {
-            commands.entity(target_e).insert(Alert::new(shooter_t.translation, 1.5));
+        let sees = dist < VIEW_RANGE
+            && angle < VIEW_HALF_ANGLE
+            && Dir3::new(to_shooter).is_ok_and(|dir| {
+                spatial
+                    .cast_ray(
+                        eye,
+                        dir,
+                        dist + 1.0,
+                        true,
+                        &SpatialQueryFilter::from_mask([Layer::World, Layer::Shooter]),
+                    )
+                    .is_some_and(|hit| hit.entity == shooter_e)
+            });
+        suspicion.sees_shooter = sees;
+        if sees {
+            suspicion.last_known = Some(shooter_t.translation);
         }
-    } else {
-        // Mid-fight he stays keyed up for longer: hiding and switching cover shouldn't make him forget you.
-        let decay = if suspicion.engaged { 0.05 } else { 0.12 };
-        suspicion.level = (suspicion.level - decay * dt).max(0.0);
-        if suspicion.level <= 0.0 && suspicion.engaged {
-            suspicion.engaged = false;
-            // Lost you: go check where you were last.
-            if let Some(p) = suspicion.last_known {
-                commands.entity(target_e).insert(Alert::new(p, 3.0));
+
+        let dt = time.delta_secs();
+        if sees && suspicion.engaged {
+            // Mid-fight, any sighting is contact: he knows exactly where you are, so it re-arms the
+            // full engagement. Otherwise a still shooter at range only trickles suspicion back in on
+            // each peek, the hides drain it faster, and he talks himself out of a fight he's winning.
+            suspicion.level = 1.0;
+        } else if sees {
+            let closeness = 1.0 - dist / VIEW_RANGE;
+            let centred = 1.0 - angle / VIEW_HALF_ANGLE;
+            let moving = if shooter_v.length() > 0.5 { 1.0 } else { 0.25 };
+            suspicion.bump((0.08 + 0.6 * closeness) * (0.4 + 0.6 * centred) * moving * dt);
+            // Half-sure: glance over.
+            if suspicion.level > 0.5 && !suspicion.engaged {
+                commands.entity(target_e).insert(Alert::new(shooter_t.translation, 1.5));
+            }
+        } else {
+            // Mid-fight he stays keyed up for longer: hiding and switching cover shouldn't make him forget you.
+            let decay = if suspicion.engaged { 0.05 } else { 0.12 };
+            suspicion.level = (suspicion.level - decay * dt).max(0.0);
+            if suspicion.level <= 0.0 && suspicion.engaged {
+                suspicion.engaged = false;
+                // Lost you: go check where you were last.
+                if let Some(p) = suspicion.last_known {
+                    commands.entity(target_e).insert(Alert::new(p, 3.0));
+                }
             }
         }
     }
@@ -679,25 +742,28 @@ fn perceive(
 /// Turn the body (yaw) and head (pitch) toward the `LookGoal`.
 fn gaze(
     time: Res<Time>,
-    mut body: Single<(&mut Transform, &LookGoal), With<Target>>,
-    mut head: Single<&mut Transform, (With<TargetHead>, Without<Target>)>,
+    mut bodies: Query<(&mut Transform, &LookGoal), (With<Target>, Without<Dead>)>,
+    mut heads: Query<(&ChildOf, &mut Transform), (With<TargetHead>, Without<Target>)>,
 ) {
-    let (ref mut t, goal) = *body;
-    let eye = t.translation + Vec3::Y * EYE_OFFSET;
-    let d = goal.point - eye;
-    let step = goal.turn_speed * time.delta_secs();
+    let step = time.delta_secs();
+    for (parent, mut head) in &mut heads {
+        let Ok((mut t, goal)) = bodies.get_mut(parent.parent()) else { continue };
+        let eye = t.translation + Vec3::Y * EYE_OFFSET;
+        let d = goal.point - eye;
+        let step = goal.turn_speed * step;
 
-    let yaw = yaw_of(t);
-    let desired_yaw = f32::atan2(-d.x, -d.z);
-    let new_yaw = yaw + angle_diff(yaw, desired_yaw).clamp(-step, step);
-    t.rotation = Quat::from_rotation_y(new_yaw);
+        let yaw = yaw_of(&t);
+        let desired_yaw = f32::atan2(-d.x, -d.z);
+        let new_yaw = yaw + angle_diff(yaw, desired_yaw).clamp(-step, step);
+        t.rotation = Quat::from_rotation_y(new_yaw);
 
-    // Pitch, plus a little idle sway so the view feels alive.
-    let desired_pitch = f32::atan2(d.y, d.xz().length()).clamp(-0.6, 0.6)
-        + 0.03 * (time.elapsed_secs() * 0.7).sin();
-    let (pitch, _, _) = head.rotation.to_euler(EulerRot::XYZ);
-    let new_pitch = pitch + (desired_pitch - pitch).clamp(-step, step);
-    head.rotation = Quat::from_rotation_x(new_pitch);
+        // Pitch, plus a little idle sway so the view feels alive.
+        let desired_pitch = f32::atan2(d.y, d.xz().length()).clamp(-0.6, 0.6)
+            + 0.03 * (time.elapsed_secs() * 0.7).sin();
+        let (pitch, _, _) = head.rotation.to_euler(EulerRot::XYZ);
+        let new_pitch = pitch + (desired_pitch - pitch).clamp(-step, step);
+        head.rotation = Quat::from_rotation_x(new_pitch);
+    }
 }
 
 /// Diving sideways out of the line of fire (see `combat::dodge`). Overrides walking while it lasts;
@@ -737,7 +803,7 @@ fn roll(
 fn walk(
     mut q: Query<
         (&Transform, &mut LinearVelocity, &mut LookGoal, Option<&MoveTo>, Option<&mut Route>),
-        With<Target>,
+        (With<Target>, Without<Dead>),
     >,
 ) {
     for (t, mut v, mut look, m, route) in &mut q {
@@ -767,6 +833,33 @@ fn walk(
         let off = t.forward().angle_between(d3);
         let pace = if off < 0.5 { 1.0 } else if off < 1.2 { 0.5 } else { 0.0 };
         v.0 = d3.normalize() * m.speed * pace;
+    }
+}
+
+/// Out of HP: freeze his brain, stop him, take him off the radar and lay his body down.
+fn die(
+    mut commands: Commands,
+    mut q: Query<(Entity, &Target, &Children, &mut LinearVelocity), Without<Dead>>,
+    mut bodies: Query<&mut Transform, With<TargetBody>>,
+    blips: Query<(), With<LiveBlip>>,
+) {
+    for (e, target, children, mut v) in &mut q {
+        if target.hp > 0 {
+            continue;
+        }
+        v.0 = Vec3::ZERO;
+        commands
+            .entity(e)
+            .insert((Dead, Freeze))
+            .remove::<(MoveTo, Route, RadarContact, Alert, Grapple)>();
+        for &child in children {
+            if let Ok(mut body) = bodies.get_mut(child) {
+                *body = Transform::from_xyz(0.0, -0.5, 0.0).with_rotation(Quat::from_rotation_x(PI / 2.0));
+            }
+            if blips.contains(child) {
+                commands.entity(child).despawn();
+            }
+        }
     }
 }
 
