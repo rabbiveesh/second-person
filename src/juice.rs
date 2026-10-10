@@ -24,9 +24,9 @@ const SPRING_DAMPING: f32 = 14.0;
 /// Camera shake: trauma is set to 1 on a hit and decays; shake scales with trauma².
 const SHAKE_ANGLE: f32 = 0.04;
 const TRAUMA_DECAY: f32 = 2.5;
-/// His dodge roll barrel-rolls the view a full turn about the line of sight and drops it this much
-/// (m) at the bottom of the tumble.
-const ROLL_DIP: f32 = 0.8;
+/// His dodge roll is a shoulder roll: turn into the dive, tuck and somersault forward, come up and
+/// square back to the threat. The eyes drop this much (m) at the bottom of the tumble.
+const ROLL_DIP: f32 = 1.2;
 /// Shooter capsule: half its height (centre to feet) and its radius.
 const SHOOTER_HALF_HEIGHT: f32 = 0.85;
 const SHOOTER_RADIUS: f32 = 0.35;
@@ -121,14 +121,17 @@ fn camera_juice(
         * j.trauma
         * Vec3::new((c * 37.0).sin(), (c * 29.0 + 1.3).sin(), (c * 23.0 + 2.1).sin());
     let mut a = j.angle + shake;
-    // Dodge roll: a full tumble towards the dive, eased in and out so it lands level, ducking to
-    // the floor on the way through.
+    // Dodge roll, by phase of the roll: snap the head round into the dive, somersault forward
+    // through a full turn of pitch (floor, sky behind, level), then turn back to the threat.
     let mut dip = 0.0;
     if let Some(roll) = roll {
         let side = roll.velocity.dot(*head.right()).signum();
         let u = (roll.t / ROLL_SECS).clamp(0.0, 1.0);
-        a.z -= side * std::f32::consts::TAU * smoothstep(u);
-        dip = ROLL_DIP * (std::f32::consts::PI * u).sin();
+        let phase = |from: f32, to: f32| smoothstep(((u - from) / (to - from)).clamp(0.0, 1.0));
+        let turned = phase(0.0, 0.2) - phase(0.75, 1.0);
+        a.y -= side * std::f32::consts::FRAC_PI_2 * turned;
+        a.x -= std::f32::consts::TAU * phase(0.15, 0.8);
+        dip = ROLL_DIP * (std::f32::consts::PI * phase(0.05, 0.95)).sin();
     }
     let flinch = Quat::from_euler(EulerRot::YXZ, a.y, a.x, a.z);
 

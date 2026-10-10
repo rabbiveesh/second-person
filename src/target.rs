@@ -709,7 +709,7 @@ pub struct Roll {
     pub velocity: Vec3,
 }
 
-pub const ROLL_SECS: f32 = 0.4;
+pub const ROLL_SECS: f32 = 0.7;
 
 fn roll(
     mut commands: Commands,
@@ -726,7 +726,9 @@ fn roll(
                 commands.entity(e).insert(m);
             }
         } else {
-            v.0 = roll.velocity;
+            // Explosive launch, bleeding off through the tumble to a standstill as he comes up.
+            // Averages to `velocity`, so he still covers the full distance.
+            v.0 = roll.velocity * 2.0 * (1.0 - roll.t / ROLL_SECS);
         }
     }
 }

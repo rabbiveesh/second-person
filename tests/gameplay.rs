@@ -623,7 +623,7 @@ fn double_tapping_a_turn_key_hops_sideways_without_turning() {
 
 #[test]
 fn he_dodge_rolls_your_first_shot_but_not_the_second() {
-    use second_person::target::Roll;
+    use second_person::target::{ROLL_SECS, Roll};
     let mut app = app();
     let shooter_pos = Vec3::new(0.0, 0.9, -12.0);
     stage(&mut app, shooter_pos, shooter_pos);
@@ -635,12 +635,12 @@ fn he_dodge_rolls_your_first_shot_but_not_the_second() {
 
     press(&mut app, KeyCode::Space);
     assert!(app.world().get::<Roll>(target).is_some(), "no roll");
-    // Mid-dive his view is upside down.
-    step(&mut app, 0.2);
+    // Mid-roll he's somersaulting: his view is upside down.
+    step(&mut app, ROLL_SECS / 2.0);
     let cam = single::<MainCamera>(&mut app);
     let up = app.world().get::<Transform>(cam).unwrap().rotation * Vec3::Y;
     assert!(up.y < -0.5, "view didn't tumble: up is {up}");
-    step(&mut app, 0.2);
+    step(&mut app, ROLL_SECS / 2.0);
     let landed = app.world().get::<Transform>(target).unwrap().translation;
     assert!((landed.x - start.x).abs() > 1.5, "didn't dive sideways: {start} -> {landed}");
     step(&mut app, 0.3);
