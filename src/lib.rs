@@ -15,6 +15,7 @@ pub mod hud;
 pub mod intro;
 pub mod juice;
 pub mod layout;
+pub mod music;
 pub mod nav;
 pub mod radar;
 pub mod round;

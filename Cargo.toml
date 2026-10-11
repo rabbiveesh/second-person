@@ -2,6 +2,7 @@
 name = "second_person"
 version = "0.1.0"
 edition = "2024"
+default-run = "second_person"
 
 [dependencies]
 avian3d = "0.7"
@@ -18,16 +19,29 @@ rand = "0.9"
 earcut = "0.4"
 bevy_brp_extras = { version = "0.22", optional = true }
 vleue_navigator = { version = "0.16", default-features = false, features = ["avian3d"] }
+# The adaptive score: synthesis, filters, reverb, per-note scheduling.
+fundsp = { version = "0.23", default-features = false, features = ["std"] }
+serde = { version = "1.0.229", features = ["derive"] }
+toml = "1.1.8"
+# Sound output for the music editor.
+cpal = { version = "0.18", optional = true }
 
 [features]
 default = ["dev"]
 # Fast iteration: dynamically link bevy. Disable for release builds (`--no-default-features`).
-dev = ["bevy/dynamic_linking", "inspector", "brp"]
+dev = ["bevy/dynamic_linking", "inspector", "brp", "editor"]
 # F1 world inspector. Off in release/web builds unless asked for.
 inspector = ["dep:bevy-inspector-egui"]
 # Bevy Remote Protocol on :15702 (+ extras: screenshots, key input) so tools/agents can
 # inspect and drive the running game. Pair with `bevy_brp_mcp` (see .mcp.json).
 brp = ["dep:bevy_brp_extras", "bevy/png"]
+# The music editor (`cargo run --bin editor`): native only, never in the game or the web build.
+editor = ["dep:cpal", "bevy/png"]
+
+[[bin]]
+name = "editor"
+path = "src/bin/editor/main.rs"
+required-features = ["editor"]
 
 # Optimise deps even in dev; our own crate stays fast to compile.
 [profile.dev]
