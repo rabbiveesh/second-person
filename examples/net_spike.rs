@@ -38,13 +38,11 @@ use lightyear::netcode::client_plugin::NetcodeConfig;
 use lightyear::prelude::input::native::InputMarker;
 use rand::Rng;
 use second_person::arena::{ArenaMode, Layout};
-use second_person::round::GameState;
+use second_person::round::{GameState, RoundEntity};
 use serde::{Deserialize, Serialize};
 
 const TICK_HZ: f64 = 60.0;
 
-/// The duel always uses the classic arena: the sim reads it, so both sides must agree on it.
-static ARENA: std::sync::LazyLock<Layout> = std::sync::LazyLock::new(Layout::classic);
 const DT: f32 = 1.0 / TICK_HZ as f32;
 const PORT: u16 = 5888;
 const PROTOCOL_ID: u64 = 0x5EC0_4D;
@@ -107,6 +105,11 @@ struct Active(bool);
 #[derive(Component, Serialize, Deserialize, Clone, Copy, Debug, PartialEq)]
 struct Hp(f32);
 
+/// This round's arena. The server picks it; clients rebuild the identical `Layout` from the seed
+/// (generation is deterministic), so a whole arena costs 8 bytes on the wire.
+#[derive(Component, Serialize, Deserialize, Clone, Copy, Debug, PartialEq)]
+struct ArenaSeed(u64);
+
 #[derive(Component, Serialize, Deserialize, Clone, Copy, Debug, PartialEq)]
 struct Score(u32);
 
@@ -162,6 +165,8 @@ fn protocol(app: &mut App) {
     sim_component::<Pose>(app).add_linear_interpolation().add_correction();
     sim_component::<Active>(app);
     app.component::<Hp>().replicate();
+    app.component::<ArenaSeed>().replicate();
+    round_constant::<Layout>(app);
     app.component::<Score>().replicate();
     app.component::<Eyelids>().replicate();
     app.component::<BulletPos>().replicate().add_linear_interpolation();
@@ -185,6 +190,9 @@ fn protocol(app: &mut App) {
 //   state and inputs.
 // - `AuthoritySet` (server only) may overrule it: damage, death, respawn. Clients pick those
 //   up as a misprediction and roll back.
+// - Round constants (the arena) are resources the sim may read but that only change between
+//   rounds, while every body is frozen: written by `AuthoritySet` on the server and by
+//   `FollowServerSet` on clients, which applies what the server announced.
 //
 // `arch` tests at the bottom walk every schedule's system access and fail on any breach.
 
@@ -198,10 +206,19 @@ struct SimSet;
 #[derive(SystemSet, Clone, Debug, PartialEq, Eq, Hash)]
 struct AuthoritySet;
 
+#[derive(SystemSet, Clone, Debug, PartialEq, Eq, Hash)]
+struct FollowServerSet;
+
 /// Components registered as predicted simulation state, plus what the sim may read besides them.
 #[derive(Resource, Default)]
 struct SimRegistry {
     state: Vec<bevy::ecs::component::ComponentId>,
+    round_constants: Vec<bevy::ecs::component::ComponentId>,
+}
+
+fn round_constant<T: Resource>(app: &mut App) {
+    let id = app.world_mut().register_component::<T>();
+    app.world_mut().get_resource_or_init::<SimRegistry>().round_constants.push(id);
 }
 
 fn sim_component<T>(app: &mut App) -> lightyear::prediction::registry::PredictedComponentRegistration<'_, T>
@@ -215,10 +232,10 @@ where
 
 /// The one movement system: the server runs it authoritatively, the client runs it for its own
 /// (predicted) body and re-runs it during rollback. Interpolated opponents are only displayed.
-fn sim_move(mut q: Query<(&mut Pose, &ActionState<Inputs>, &Active), Without<Interpolated>>) {
+fn sim_move(arena: Res<Layout>, mut q: Query<(&mut Pose, &ActionState<Inputs>, &Active), Without<Interpolated>>) {
     for (mut pose, input, active) in &mut q {
         if active.0 {
-            step(&mut pose, &input.0);
+            step(&mut pose, &input.0, &arena);
         }
     }
 }
@@ -235,26 +252,26 @@ fn angle_diff(a: f32, b: f32) -> f32 {
 
 /// Deterministic tank movement against the static arena: the same code runs on the server
 /// (authoritative) and on the client (prediction), so mispredictions only come from latency.
-fn step(pose: &mut Pose, i: &Inputs) {
+fn step(pose: &mut Pose, i: &Inputs, arena: &Layout) {
     pose.yaw += i.turn.signum() as f32 * TURN_SPEED * DT;
     let d = dir(pose.yaw) * i.fwd.signum() as f32 * MOVE_SPEED * DT;
-    if ARENA.is_clear(pose.pos + Vec2::new(d.x, 0.0), RADIUS) {
+    if arena.is_clear(pose.pos + Vec2::new(d.x, 0.0), RADIUS) {
         pose.pos.x += d.x;
     }
-    if ARENA.is_clear(pose.pos + Vec2::new(0.0, d.y), RADIUS) {
+    if arena.is_clear(pose.pos + Vec2::new(0.0, d.y), RADIUS) {
         pose.pos.y += d.y;
     }
 }
 
-fn random_spawn(other: Option<Vec2>) -> Pose {
+/// A clear spot, as far from `other` as this arena reasonably allows.
+fn random_spawn(arena: &Layout, other: Option<Vec2>) -> Pose {
     let mut rng = rand::rng();
-    loop {
-        let b = ARENA.bounds().inflate(-3.0);
-        let p = Vec2::new(rng.random_range(b.min.x..b.max.x), rng.random_range(b.min.y..b.max.y));
-        if ARENA.is_clear(p, 1.0) && other.is_none_or(|o| o.distance(p) > 25.0) {
-            return Pose { pos: p, yaw: rng.random_range(0.0..std::f32::consts::TAU) };
-        }
-    }
+    let far = arena.bounds().size().length() * 0.4;
+    let pos = [far, far * 0.5, 0.0]
+        .into_iter()
+        .find_map(|min| arena.random_point(&mut rng, 1.0, |p| other.is_none_or(|o| o.distance(p) > min)))
+        .expect("arena has no clear floor");
+    Pose { pos, yaw: rng.random_range(0.0..std::f32::consts::TAU) }
 }
 
 // ---------------------------------------------------------------- main
@@ -354,9 +371,12 @@ struct RoundState {
 }
 
 fn server_plugin(app: &mut App, lag: u64) {
+    let seed = rand::rng().random_range(0..100_000);
     app.insert_resource(ReplicationMetadata::new(Duration::from_millis(33)))
         .init_resource::<RoundState>()
+        .insert_resource(Layout::random(seed))
         .add_systems(Startup, move |mut commands: Commands| {
+            commands.spawn((ArenaSeed(seed), Replicate::to_clients(NetworkTarget::All)));
             let server = commands
                 .spawn((
                     Name::new("Server"),
@@ -471,6 +491,7 @@ fn on_connected(
     t: On<Add, Connected>,
     remote: Query<&RemoteId, With<ClientOf>>,
     players: Query<&Pose, With<PlayerId>>,
+    arena: Res<Layout>,
     mut commands: Commands,
 ) {
     let Ok(id) = remote.get(t.entity) else { return };
@@ -479,7 +500,7 @@ fn on_connected(
         warn!("third client {id:?} ignored: 1v1 only");
         return;
     }
-    let pose = random_spawn(players.iter().next().map(|p| p.pos));
+    let pose = random_spawn(&arena, players.iter().next().map(|p| p.pos));
     info!("player {id:?} joined at {:?}", pose.pos);
     commands.spawn((
         PlayerId(id),
@@ -575,6 +596,7 @@ fn server_bullets(
     mut round: ResMut<RoundState>,
     mut sender: ServerMultiMessageSender,
     server: Single<&Server>,
+    arena: Res<Layout>,
 ) {
     let now = timeline.tick();
     let mut events = vec![];
@@ -621,7 +643,7 @@ fn server_bullets(
             if done {
                 break;
             }
-            if !ARENA.is_clear(p, 0.05) {
+            if !arena.is_clear(p, 0.05) {
                 events.push(NetEvent::Impact { at: p });
                 done = true;
                 break;
@@ -648,8 +670,13 @@ fn server_log(time: Res<Time>, mut t: Local<f32>, q: Query<(&PlayerId, &Pose, &H
     }
 }
 
-/// Freezes both bodies between a kill and the next round, then respawns them.
-fn server_round(mut round: ResMut<RoundState>, mut q: Query<(&mut Pose, &mut Hp, &mut Active)>) {
+/// Freezes both bodies between a kill and the next round, then respawns them in a new arena.
+fn server_round(
+    mut round: ResMut<RoundState>,
+    mut arena: ResMut<Layout>,
+    mut seed: Single<&mut ArenaSeed>,
+    mut q: Query<(&mut Pose, &mut Hp, &mut Active)>,
+) {
     let Some(n) = round.respawn_in.as_mut() else { return };
     *n -= 1;
     for (_, _, mut active) in &mut q {
@@ -659,14 +686,16 @@ fn server_round(mut round: ResMut<RoundState>, mut q: Query<(&mut Pose, &mut Hp,
         return;
     }
     round.respawn_in = None;
+    seed.0 = rand::rng().random_range(0..100_000);
+    *arena = Layout::random(seed.0);
     let mut first = None;
     for (mut pose, mut hp, mut active) in &mut q {
-        *pose = random_spawn(first);
+        *pose = random_spawn(&arena, first);
         first = Some(pose.pos);
         hp.0 = MAX_HP;
         *active = Active(true);
     }
-    info!("new round");
+    info!("new round in {}", arena.name);
 }
 
 // ---------------------------------------------------------------- client
@@ -710,6 +739,7 @@ fn client_plugin(app: &mut App, id: u64, server: SocketAddr, lag: u64, bot: bool
     app.insert_resource(PredictionManager::default());
     app.insert_resource(BotBrain { enabled: bot, blink_for: 0, last_seen: None, aim_error: 0.0, retarget: 0 })
         .init_resource::<Hud>()
+        .init_resource::<Layout>()
         .add_systems(Startup, move |mut commands: Commands| {
             let auth = Authentication::Manual {
                 server_addr: server,
@@ -740,7 +770,8 @@ fn client_plugin(app: &mut App, id: u64, server: SocketAddr, lag: u64, bot: bool
         })
         .add_systems(FixedPreUpdate, write_inputs.in_set(InputSystems::WriteClientInputs))
         .add_systems(FixedUpdate, sim_move.in_set(SimSet))
-        .add_systems(Update, (receive_events, log_state));
+        .add_systems(Update, (receive_events, log_state))
+        .add_systems(PreUpdate, follow_arena.in_set(FollowServerSet).after(ReplicationSystems::Receive));
     if !headless {
         app.add_systems(Startup, setup_view)
             .insert_resource(ArenaMode::Classic)
@@ -754,14 +785,62 @@ fn client_view_systems(app: &mut App) {
     app.add_systems(FixedUpdate, local_fire_fx.after(SimSet).run_if(not(is_in_rollback)))
         .add_systems(
             Update,
-            (dress_players, dress_bullets, sync_transforms, eyes_follow_opponent, tick_fx, hud_title, shots),
+            (
+                dress_players,
+                dress_bullets,
+                sync_transforms,
+                eyes_follow_opponent,
+                tick_fx,
+                hud_title,
+                shots,
+                frame_radar.run_if(resource_changed::<Layout>),
+            ),
         );
+}
+
+/// Fit the radar to whatever arena this round uses.
+fn frame_radar(arena: Res<Layout>, mut radar: Query<(&mut Projection, &mut Transform), With<Radar>>) {
+    let b = arena.bounds();
+    for (mut proj, mut t) in &mut radar {
+        if let Projection::Orthographic(o) = &mut *proj {
+            o.scaling_mode = ScalingMode::FixedVertical { viewport_height: b.size().max_element() + 2.0 };
+        }
+        let c = b.center();
+        *t = Transform::from_xyz(c.x, 60.0, c.y).looking_at(Vec3::new(c.x, 0.0, c.y), Vec3::NEG_Z);
+    }
 }
 
 /// Your inputs: arrows + space, or the bot. The bot "cheats" the way any client could:
 /// it knows the opponent's position because it has to, to render their eyes.
+/// Rebuild the arena the server announced. Windowed clients also respawn its scenery.
+fn follow_arena(
+    seed: Query<&ArenaSeed, Changed<ArenaSeed>>,
+    mut arena: ResMut<Layout>,
+    mut mode: Option<ResMut<ArenaMode>>,
+    mut next: Option<ResMut<NextState<GameState>>>,
+    scenery: Query<Entity, With<RoundEntity>>,
+    mut current: Local<Option<u64>>,
+    mut commands: Commands,
+) {
+    let Ok(&ArenaSeed(seed)) = seed.single() else { return };
+    // Replication can touch the component without changing it.
+    if *current == Some(seed) {
+        return;
+    }
+    *current = Some(seed);
+    *arena = Layout::random(seed);
+    info!("arena: {}", arena.name);
+    if let (Some(mode), Some(next)) = (mode.as_mut(), next.as_mut()) {
+        // The game's own arena plugin builds it on entering Playing, from this mode.
+        **mode = ArenaMode::Seed(seed);
+        scenery.iter().for_each(|e| commands.entity(e).despawn());
+        next.set(GameState::Playing);
+    }
+}
+
 fn write_inputs(
     keys: Option<Res<ButtonInput<KeyCode>>>,
+    arena: Res<Layout>,
     mut me: Query<(&mut ActionState<Inputs>, &Pose, Option<&Eyelids>), With<InputMarker<Inputs>>>,
     them: Query<(&Pose, Option<&Eyelids>), (With<Interpolated>, With<PlayerId>)>,
     mut brain: ResMut<BotBrain>,
@@ -780,7 +859,7 @@ fn write_inputs(
             // Close our eyes when they're facing us down a clear line: blind them, then reposition.
             let to_me = me.pos - them_now.pos;
             let they_aim_at_me = angle_diff((-to_me.x).atan2(-to_me.y), them_now.yaw).abs() < 0.3
-                && !ARENA.los_blocked(me.pos, them_now.pos);
+                && !arena.los_blocked(me.pos, them_now.pos);
             if brain.blink_for == 0
                 && they_aim_at_me
                 && my_lids.is_some_and(|l| !l.closed && l.cooldown == 0)
@@ -798,14 +877,14 @@ fn write_inputs(
             }
             brain.retarget -= 1;
             let to = them.pos - me.pos;
-            let clear_shot = !ARENA.los_blocked(me.pos, them.pos);
+            let clear_shot = !arena.los_blocked(me.pos, them.pos);
             // No line of sight: flank around the cover instead of staring at it.
             let flank = if clear_shot { 0.0 } else { 1.1 };
             let want = (-to.x).atan2(-to.y) + brain.aim_error + flank;
             let err = angle_diff(want, me.yaw);
             i.turn = if err > 0.04 { 1 } else if err < -0.04 { -1 } else { 0 };
             let ahead = me.pos + dir(me.yaw) * 1.2;
-            if !ARENA.is_clear(ahead, RADIUS) {
+            if !arena.is_clear(ahead, RADIUS) {
                 i.turn = 1;
                 i.fwd = -1;
             } else if to.length() > 9.0 || !clear_shot {
@@ -910,7 +989,7 @@ fn setup_view(mut commands: Commands) {
             ..default()
         },
         Projection::Orthographic(OrthographicProjection {
-            scaling_mode: ScalingMode::FixedVertical { viewport_height: ARENA.bounds().height() + 2.0 },
+            scaling_mode: ScalingMode::FixedVertical { viewport_height: 60.0 },
             ..OrthographicProjection::default_3d()
         }),
         Transform::from_xyz(0.0, 60.0, 0.0).looking_at(Vec3::ZERO, Vec3::NEG_Z),
@@ -1035,12 +1114,13 @@ fn tick_fx(
     mut commands: Commands,
     mut bullets: Query<(Entity, &mut LocalBullet, &mut Transform)>,
     mut flashes: Query<(Entity, &mut Flash)>,
+    arena: Res<Layout>,
 ) {
     let dt = time.delta_secs();
     for (e, mut b, mut t) in &mut bullets {
         b.life -= dt;
         t.translation += Vec3::new(b.vel.x, 0.0, b.vel.y) * dt;
-        if b.life <= 0.0 || !ARENA.is_clear(t.translation.xz(), 0.05) {
+        if b.life <= 0.0 || !arena.is_clear(t.translation.xz(), 0.05) {
             commands.entity(e).despawn();
         }
     }
@@ -1095,7 +1175,7 @@ fn hud_title(
 fn shots(time: Res<Time>, mut t: Local<f32>, mut n: Local<u32>, mut commands: Commands) {
     let Ok(dir) = std::env::var("SPIKE_SHOT") else { return };
     *t += time.delta_secs();
-    if *t < 3.0 || *n >= 8 {
+    if *t < std::env::var("SPIKE_SHOT_EVERY").ok().and_then(|s| s.parse().ok()).unwrap_or(3.0) || *n >= 8 {
         return;
     }
     *t = 0.0;
@@ -1125,6 +1205,7 @@ mod arch {
         schedule: String,
         sim: bool,
         authority: bool,
+        follow: bool,
         reads: Vec<ComponentId>,
         writes: Vec<ComponentId>,
     }
@@ -1180,6 +1261,7 @@ mod arch {
             };
             let sim = members(SimSet.intern());
             let authority = members(AuthoritySet.intern());
+            let follow = members(FollowServerSet.intern());
             let keys: Vec<SystemKey> = graph.systems.iter().map(|(k, ..)| k).collect();
             for key in keys {
                 let system = graph.systems.get_mut(key).unwrap();
@@ -1193,6 +1275,7 @@ mod arch {
                     schedule: format!("{label:?}"),
                     sim: sim.contains(&key),
                     authority: authority.contains(&key),
+                    follow: follow.contains(&key),
                     reads: vec![],
                     writes: vec![],
                 };
@@ -1217,7 +1300,9 @@ mod arch {
     fn violations(app: &mut App, server: bool) -> Vec<String> {
         let systems = survey(app);
         let world = app.world();
-        let state: HashSet<ComponentId> = world.resource::<SimRegistry>().state.iter().copied().collect();
+        let registry = world.resource::<SimRegistry>();
+        let state: HashSet<ComponentId> = registry.state.iter().copied().collect();
+        let constants: HashSet<ComponentId> = registry.round_constants.iter().copied().collect();
         let inputs = world.components().component_id::<ActionState<Inputs>>().unwrap();
         let name = |id: ComponentId| {
             world.components().get_name(id).map(|n| n.shortname().to_string()).unwrap_or_default()
@@ -1229,8 +1314,8 @@ mod arch {
                 if s.schedule != "FixedUpdate" {
                     v.push(format!("{who} is in SimSet but not FixedUpdate, so rollback won't re-run it"));
                 }
-                for &id in s.reads.iter().chain(&s.writes) {
-                    if !state.contains(&id) && id != inputs {
+                for &id in &s.reads {
+                    if !state.contains(&id) && !constants.contains(&id) && id != inputs {
                         v.push(format!(
                             "{who} is simulation but depends on {}, which isn't predicted: \
                              make it Simulated or move the logic out of SimSet",
@@ -1238,9 +1323,25 @@ mod arch {
                         ));
                     }
                 }
+                for &id in &s.writes {
+                    if !state.contains(&id) {
+                        v.push(format!("{who} is simulation but writes {}, which isn't predicted", name(id)));
+                    }
+                }
             }
             if s.authority && !server {
                 v.push(format!("{who}: AuthoritySet is server-only"));
+            }
+            if !s.authority && !s.follow {
+                for &id in &s.writes {
+                    if constants.contains(&id) {
+                        v.push(format!(
+                            "{who} changes round constant {} outside AuthoritySet/FollowServerSet: \
+                             the sim reads it, so only the server may decide it",
+                            name(id)
+                        ));
+                    }
+                }
             }
             if !s.sim && !s.authority {
                 for &id in &s.writes {
@@ -1281,10 +1382,10 @@ mod arch {
 
     // The checker itself: the bugs it exists to catch.
 
-    fn predicts_from_hp(mut q: Query<(&mut Pose, &ActionState<Inputs>, &Hp)>) {
+    fn predicts_from_hp(arena: Res<Layout>, mut q: Query<(&mut Pose, &ActionState<Inputs>, &Hp)>) {
         for (mut pose, input, hp) in &mut q {
             if hp.0 > 0.0 {
-                step(&mut pose, &input.0);
+                step(&mut pose, &input.0, &arena);
             }
         }
     }
@@ -1295,12 +1396,16 @@ mod arch {
         }
     }
 
-    fn frozen_by_round(round: Res<RoundState>, mut q: Query<(&mut Pose, &ActionState<Inputs>)>) {
+    fn frozen_by_round(arena: Res<Layout>, round: Res<RoundState>, mut q: Query<(&mut Pose, &ActionState<Inputs>)>) {
         if round.respawn_in.is_none() {
             for (mut pose, input) in &mut q {
-                step(&mut pose, &input.0);
+                step(&mut pose, &input.0, &arena);
             }
         }
+    }
+
+    fn moves_walls(mut arena: ResMut<Layout>) {
+        arena.blocks.clear();
     }
 
     #[test]
@@ -1308,7 +1413,7 @@ mod arch {
         let mut app = client_app();
         app.init_resource::<RoundState>().add_systems(
             FixedUpdate,
-            (predicts_from_hp.in_set(SimSet), frozen_by_round.in_set(SimSet), knockback),
+            (predicts_from_hp.in_set(SimSet), frozen_by_round.in_set(SimSet), knockback, moves_walls),
         );
         app.add_systems(Update, sim_move.in_set(SimSet)).add_systems(Update, server_round.in_set(AuthoritySet));
         let v = violations(&mut app, false);
@@ -1317,6 +1422,7 @@ mod arch {
         assert!(hit("frozen_by_round") && hit("RoundState"), "{v:#?}");
         assert!(hit("knockback") && hit("outside SimSet"), "{v:#?}");
         assert!(hit("not FixedUpdate"), "{v:#?}");
+        assert!(hit("moves_walls") && hit("Layout"), "{v:#?}");
         assert!(hit("server_round") && hit("server-only"), "{v:#?}");
     }
 }
