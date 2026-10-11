@@ -100,7 +100,9 @@ fn camera_juice(
     for hit in hits.read() {
         // The bullet's direction in view space: his head snaps along it.
         let d = (head_rot * transform.rotation).inverse() * hit.dir;
-        j.velocity += Vec3::new(d.z * KICK_PITCH, -d.x * KICK_YAW, -d.x * KICK_ROLL);
+        // Harder hits (the ones he never saw coming) kick harder.
+        let k = (hit.damage / crate::combat::SHOT_DAMAGE).clamp(0.6, 2.0);
+        j.velocity += Vec3::new(d.z * KICK_PITCH, -d.x * KICK_YAW, -d.x * KICK_ROLL) * k;
         j.trauma = 1.0;
         if d.x.abs() > 0.1 {
             j.side = -d.x.signum();

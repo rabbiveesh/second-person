@@ -86,13 +86,14 @@ fn impact_sparks(mut commands: Commands, mut impacts: MessageReader<BulletImpact
 
 fn target_hit(mut commands: Commands, mut hits: MessageReader<TargetHit>) {
     for hit in hits.read() {
+        let k = hit.damage / crate::combat::SHOT_DAMAGE;
         burst(
             &mut commands,
             "Blood",
             hit.at,
             Vec3::Y,
             1.5,
-            20,
+            (20.0 * k) as usize,
             (1.0, 4.0),
             LinearRgba::rgb(2.0, 0.0, 0.0),
             0.5,

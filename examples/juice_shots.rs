@@ -117,7 +117,7 @@ fn script(world: &mut World, mut frame: Local<u32>) {
             world.resource_mut::<LastHit>().0 = None;
             stage(world);
             let t = single::<Target>(world);
-            world.get_mut::<Target>(t).unwrap().hp = 1;
+            world.get_mut::<Target>(t).unwrap().hp = 1.0;
         }
         210 => {
             stage(world);

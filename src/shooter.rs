@@ -68,6 +68,17 @@ impl ControlScheme {
         }
     }
 
+    /// What your shots do relative to tank controls: the schemes that do more of the work for
+    /// you (walking you at him, or a frame that never moves) pay for it in damage.
+    pub fn damage_dealt(self) -> f32 {
+        match self {
+            Self::Tank | Self::Snake | Self::Mirror | Self::Ice => 1.0,
+            Self::Eyes => 0.9,
+            Self::Compass => 0.85,
+            Self::Magnetic => 0.7,
+        }
+    }
+
     /// The tank-style schemes keep turning on left/right (and the double-tap hop).
     fn turns(self) -> bool {
         matches!(self, Self::Tank | Self::Snake)

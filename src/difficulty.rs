@@ -78,7 +78,7 @@ pub struct HisLevers {
     pub grapple_cooldown: Option<f32>,
     /// Dodge roll cooldown; `None` = he doesn't roll.
     pub roll_cooldown: Option<f32>,
-    pub hp: u32,
+    pub hp: f32,
 }
 
 /// Lowest Gunfight band at which he uses the grappling hook...
@@ -97,11 +97,8 @@ impl HisLevers {
             hold_angle_secs: by_band(gunfight, 0.5, combat::HOLD_ANGLE_SECS, 2.5),
             grapple_cooldown: (gunfight >= GRAPPLE_FROM_BAND).then(|| by_band(gunfight, 20.0, combat::GRAPPLE_COOLDOWN, 9.0)),
             roll_cooldown: (gunfight >= ROLL_FROM_BAND).then(|| by_band(gunfight, 4.0, combat::ROLL_COOLDOWN, 1.6)),
-            hp: match gunfight {
-                ..=2 => target::TARGET_MAX_HP - 1,
-                9.. => target::TARGET_MAX_HP + 1,
-                _ => target::TARGET_MAX_HP,
-            },
+            // A bar, not a count, so the dial can move it by any amount without it showing.
+            hp: by_band(gunfight, 70.0, target::TARGET_MAX_HP, 140.0),
         }
     }
 }
@@ -354,7 +351,7 @@ mod tests {
             assert!(hi.hold_angle_secs > lo.hold_angle_secs);
             assert!(hi.grapple_cooldown.is_some() >= lo.grapple_cooldown.is_some());
             assert!(hi.roll_cooldown.is_some() >= lo.roll_cooldown.is_some());
-            assert!(hi.hp >= lo.hp);
+            assert!(hi.hp > lo.hp);
         }
         let weakest = HisLevers::from_bands(1, 1);
         assert_eq!((weakest.grapple_cooldown, weakest.roll_cooldown), (None, None));
