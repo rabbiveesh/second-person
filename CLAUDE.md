@@ -31,6 +31,10 @@ controlling the **shooter** hunting him. A corner radar shows the whole arena.
      (`examples/juice_shots`) at any sizes (logical px; `:touch` = touch UI, fires by tapping). Check mobile with it.
    Gameplay components derive `Reflect` + `#[reflect(Component)]` (auto-registered) so they're queryable.
    `.mcp.json` also registers `bevy_brp_mcp` for MCP-native access.
+4. Music: `cargo run --bin editor` (feature `editor`, in `dev`) edits and plays `music/*.score` live. Screenshots
+   headless: `HIM_AUDIO=headless xvfb-run -a cargo run --bin editor -- --round --wait 30 --screenshot out.png`
+   (`--help` lists the options). `cargo run --release --example render_score -- him out.wav` renders a scripted round.
+   `cargo run --bin editor -- --check --write` puts every track in canonical form (a test requires it).
 
 ## Stack (and why)
 | Crate | Role |
@@ -45,6 +49,9 @@ controlling the **shooter** hunting him. A corner radar shows the whole arena.
 | sfxr + hound (dev-deps) | procedural SFX generation |
 | bevy_brp_extras 0.22 | BRP + screenshots/key input for agents (`brp` feature) |
 | rand 0.9 | randomness |
+| fundsp 0.23 (`std` only) | the adaptive score's synthesis: oscillators, filters, envelopes, reverb, limiter, and per-note `Sequencer`s |
+| serde + toml | `.score` track files |
+| cpal 0.18 (`editor` only) | the music editor's sound output (the game will host the engine in its own audio graph) |
 | earcut 0.4 | triangulates arena floor polygons (already in the tree via vleue_navigator) |
 | virtual_joystick 2.8 | on-screen touch stick (bevy_ui) |
 | vleue_navigator 0.16 (`avian3d`) | navmesh pathfinding (polyanya), built from avian colliders, WASM-safe |
@@ -168,6 +175,20 @@ Fyrox (small ecosystem), macroquad/three-d (too thin, would mean rolling our own
   `cargo run --example gen_sfx` (sfxr, fixed seeds) and are written to `assets/sfx/`.
 - Combat emits messages (`Gunshot`, `BulletImpact`, `TargetHit`, `ShooterHit`, shooter `Footstep`); fx, audio
   and radar subscribe to them. Add new feedback by subscribing, not by calling across modules.
+- `music/` (pure, no Bevy): the adaptive score. A track (`music/*.score`, TOML) has **cues** (`calm` loops while he
+  isn't engaged, `fight` while he is, `win`/`lose` are one-shot stingers), **stems** (layers of a cue; each a part of
+  one token per 16th, read against the bar's chord: `r-12`, `3+12`, `ch`, `x`, `d4`, `_` hold, `.` rest, `tok*n`; see
+  `pattern.rs`) and **patches** (small subtractive synths: oscillators, ADSR, filter + envelope, drive, tremolo,
+  glide, drum thump). `Engine` (`engine.rs`) renders it: each stem is a fundsp `Sequencer` bus with a fader; notes are
+  scheduled sample-accurately just before their block. In `calm`, `Suspicion` rides each stem's `Fader` rule (vertical
+  layering); `engaged` switches cue on the next bar line, from the top, at the new tempo (horizontal resequencing);
+  `end(won)` plays the stinger from the next beat. `once` stems play only on a cue's first pass (entrance hits).
+  `set_score` hot-swaps an edited track without losing the place. `Score::to_text` is the canonical file layout.
+  Not wired into the game yet; `layouts` on a track says which arenas it's for.
+- `src/bin/editor/`: the music editor (egui on Bevy, cpal out). Left: HIM simulated (suspicion, engage, win/lose,
+  `R` scripted round from `music::script`) and a mixer (meters, mute/solo). Views: Score (per-cue step grid,
+  chord lane, stem fader rules), Patches (sliders, envelope plot, audition), Text (the file; saving from it keeps
+  comments). Every edit that compiles goes straight into the playing engine.
 - `hud.rs`: egui on a dedicated `Camera2d` overlay (`PrimaryEguiContext`; auto-context disabled
   because game cameras respawn each round). Bars, activity, flashes, hit marker,
   wound vignette, radar frame, end banner (held back `BANNER_DELAY` so the deaths play out).
