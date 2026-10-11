@@ -4,7 +4,7 @@ use avian3d::prelude::*;
 use bevy::prelude::*;
 use leafwing_input_manager::prelude::*;
 
-use crate::{arena::ArenaMode, radar::RadarMode};
+use crate::{arena::ArenaMode, radar::RadarMode, shooter::ControlScheme};
 
 #[derive(States, Default, Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub enum GameState {
@@ -26,6 +26,8 @@ pub enum MetaAction {
     CycleRadar,
     /// Switch between the classic and generated arenas (starts a new round).
     CycleArena,
+    /// Try the next `ControlScheme`.
+    CycleControls,
 }
 
 /// Whether the target is allowed to walk around (vs. standing still and looking around).
@@ -56,6 +58,7 @@ pub fn plugin(app: &mut App) {
                     (MetaAction::ToggleTargetMobility, KeyCode::KeyM),
                     (MetaAction::CycleRadar, KeyCode::Tab),
                     (MetaAction::CycleArena, KeyCode::KeyL),
+                    (MetaAction::CycleControls, KeyCode::KeyC),
                 ]),
             ));
         })
@@ -85,7 +88,11 @@ fn meta_input(
     mut mobile: ResMut<TargetMobile>,
     mut radar: ResMut<RadarMode>,
     mut arena: ResMut<ArenaMode>,
+    mut controls: ResMut<ControlScheme>,
 ) {
+    if actions.just_pressed(&MetaAction::CycleControls) {
+        *controls = controls.next();
+    }
     if actions.just_pressed(&MetaAction::CycleArena) {
         *arena = arena.next();
         // `set` re-enters Playing even mid-round, which rebuilds the arena.

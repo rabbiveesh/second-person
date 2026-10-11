@@ -109,6 +109,11 @@ Fyrox (small ecosystem), macroquad/three-d (too thin, would mean rolling our own
   Walking into the world emits `Bump` and a `Stagger` knockback (can't walk, only turn); his laser staggers you too.
   `Sidestep`: a double-tap straight left/right on `Drive` (arrows, or a double flick of the stick, since both feed the same
   axis) hops 2.4m sideways with the facing restored to before the taps; the landing writes a `Footstep`. Stagger cuts it.
+- `shooter.rs` `ControlScheme` (spike; C cycles, touch has a button): `Tank` (above), and direct schemes that walk where
+  you point and swing you to face it, differing only in the frame Up/Right push along (`ControlScheme::basis`):
+  `Compass` (radar up), `Eyes` (his view, so his turning turns your controls), `Mirror` (`Eyes` turned round),
+  `Magnetic` (Up at him, Left/Right circle). Plus `Snake` (always walking) and `Ice` (`Eyes` with momentum).
+  The direct schemes read the touch stick in analog (`touch::analog`); only `Tank` and `Snake` snap to 8 ways and hop.
 - `touch.rs`: phone controls, spawned on the first touch. A floating `virtual_joystick` stick (left half,
   snapped to 8 arrow-key directions by `snap_8way`) and tap-right-to-fire write the shooter's `ActionState` in
   leafwing's `ManualControl` set. The HUD swaps the R/M/Tab hints for egui buttons once touch is on, plus a big

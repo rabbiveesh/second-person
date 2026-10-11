@@ -1186,3 +1186,124 @@ fn the_debug_dump_reports_the_difficulty_and_recent_events() {
         assert!(report.contains(needle), "missing {needle:?} in:\n{report}");
     }
 }
+
+fn set_controls(app: &mut App, scheme: second_person::shooter::ControlScheme) {
+    app.insert_resource(scheme);
+}
+
+/// Hold `key` for `secs`, then let go; returns where the shooter got to and its yaw.
+fn hold(app: &mut App, key: KeyCode, secs: f32) -> (Vec3, f32) {
+    let shooter = single::<Shooter>(app);
+    key.press(app.world_mut());
+    step(app, secs);
+    key.release(app.world_mut());
+    app.update();
+    let t = *app.world().get::<Transform>(shooter).unwrap();
+    (t.translation, t.rotation.to_euler(EulerRot::YXZ).0)
+}
+
+#[test]
+fn c_cycles_the_control_schemes() {
+    use second_person::shooter::ControlScheme;
+    let mut app = app();
+    assert_eq!(*app.world().resource::<ControlScheme>(), ControlScheme::Tank);
+    for want in &ControlScheme::ALL[1..] {
+        press(&mut app, KeyCode::KeyC);
+        assert_eq!(app.world().resource::<ControlScheme>(), want);
+    }
+    press(&mut app, KeyCode::KeyC);
+    assert_eq!(*app.world().resource::<ControlScheme>(), ControlScheme::Tank);
+}
+
+#[test]
+fn direct_schemes_push_along_their_own_frames() {
+    use second_person::shooter::ControlScheme;
+    let me = Vec3::new(4.0, 0.9, 10.0);
+    let him = Vec3::new(4.0, 0.9, 0.0);
+    // His eyes look along +X.
+    let eyes = GlobalTransform::from(Transform::from_xyz(0.0, 1.6, 0.0).looking_to(Vec3::X, Vec3::Y));
+    let near = |a: Vec3, b: Vec3| a.distance(b) < 1e-4;
+    let basis = |s: ControlScheme| s.basis(me, Some(him), Some(&eyes)).unwrap();
+
+    let (f, r) = basis(ControlScheme::Compass);
+    assert!(near(f, Vec3::NEG_Z) && near(r, Vec3::X), "north is up the radar: {f} {r}");
+    let (f, r) = basis(ControlScheme::Eyes);
+    assert!(near(f, Vec3::X) && near(r, Vec3::Z), "up goes where he looks, right is his right: {f} {r}");
+    let (f, r) = basis(ControlScheme::Mirror);
+    assert!(near(f, Vec3::NEG_X) && near(r, Vec3::NEG_Z), "mirror turns it round: {f} {r}");
+    let (f, r) = basis(ControlScheme::Magnetic);
+    assert!(near(f, Vec3::NEG_Z) && near(r, Vec3::X), "up walks at him: {f} {r}");
+    assert!(ControlScheme::Tank.basis(me, Some(him), Some(&eyes)).is_none());
+}
+
+#[test]
+fn compass_walks_north_whichever_way_you_face_and_turns_you_to_it() {
+    use second_person::shooter::ControlScheme;
+    let mut app = app();
+    set_controls(&mut app, ControlScheme::Compass);
+    let shooter = single::<Shooter>(&mut app);
+    let start = Vec3::new(-15.0, 0.9, 15.0);
+    place(&mut app, shooter, start, std::f32::consts::FRAC_PI_2); // facing -X
+    app.update();
+
+    let (pos, yaw) = hold(&mut app, KeyCode::ArrowUp, 0.6);
+    assert!(pos.z < start.z - 1.5, "Up walks north (-Z): {pos}");
+    assert!((pos.x - start.x).abs() < 0.3, "and only north: {pos}");
+    assert!(yaw.abs() < 0.05, "turned to face north: yaw {yaw}");
+
+    let (pos2, yaw) = hold(&mut app, KeyCode::ArrowRight, 0.6);
+    assert!(pos2.x > pos.x + 1.5, "Right walks east (+X): {pos2}");
+    assert!((yaw + std::f32::consts::FRAC_PI_2).abs() < 0.05, "facing east: yaw {yaw}");
+}
+
+#[test]
+fn magnetic_up_walks_straight_at_him() {
+    use second_person::shooter::ControlScheme;
+    let mut app = app();
+    set_controls(&mut app, ControlScheme::Magnetic);
+    let shooter = single::<Shooter>(&mut app);
+    let target = single::<Target>(&mut app);
+    // Off to one side and facing away, so the only thing pointing at him is the scheme.
+    let start = Vec3::new(10.0, 0.9, 10.0);
+    place(&mut app, shooter, start, 0.0);
+    app.update();
+    let him = app.world().get::<GlobalTransform>(target).unwrap().translation();
+    let before = start.with_y(0.0).distance(him.with_y(0.0));
+
+    let (pos, _) = hold(&mut app, KeyCode::ArrowUp, 0.5);
+    let after = pos.with_y(0.0).distance(him.with_y(0.0));
+    assert!(before - after > 2.0, "closed in on him: {before} -> {after}");
+    let facing = app.world().get::<Transform>(shooter).unwrap().forward();
+    let to_him = (him - pos).with_y(0.0).normalize();
+    assert!(facing.dot(to_him) > 0.95, "and faces him: {facing} vs {to_him}");
+}
+
+#[test]
+fn snake_never_stops_unless_you_hold_down() {
+    use second_person::shooter::ControlScheme;
+    let mut app = app();
+    set_controls(&mut app, ControlScheme::Snake);
+    let shooter = single::<Shooter>(&mut app);
+    let start = Vec3::new(-15.0, 0.9, 15.0);
+    place(&mut app, shooter, start, 0.0);
+    app.update();
+    step(&mut app, 0.5);
+    let pos = app.world().get::<Transform>(shooter).unwrap().translation;
+    assert!(pos.z < start.z - 1.0, "walks on its own: {pos}");
+    let (held, _) = hold(&mut app, KeyCode::ArrowDown, 0.5);
+    assert!(held.distance(pos) < 0.6, "Down stands still: {pos} -> {held}");
+}
+
+#[test]
+fn on_ice_you_keep_sliding_after_you_let_go() {
+    use second_person::shooter::ControlScheme;
+    let mut app = app();
+    set_controls(&mut app, ControlScheme::Ice);
+    let shooter = single::<Shooter>(&mut app);
+    place(&mut app, shooter, Vec3::new(-15.0, 0.9, 15.0), 0.0);
+    app.update();
+    let (released, _) = hold(&mut app, KeyCode::ArrowUp, 0.8);
+    step(&mut app, 0.5);
+    let slid = app.world().get::<Transform>(shooter).unwrap().translation;
+    assert!(slid.distance(released) > 1.0, "still sliding: {released} -> {slid}");
+}

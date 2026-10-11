@@ -20,7 +20,7 @@ use virtual_joystick::{
     create_joystick,
 };
 
-use crate::shooter::{Shooter, ShooterAction};
+use crate::shooter::{ControlScheme, Shooter, ShooterAction};
 
 /// On while the last input was a touch (see `start::follow_last_input`): the stick is up and the
 /// HUD shows touch buttons instead of key hints.
@@ -101,6 +101,7 @@ fn touch_to_actions(
     window: Single<&Window, With<PrimaryWindow>>,
     egui: Res<EguiWantsInput>,
     mut whistle: ResMut<TouchWhistle>,
+    scheme: Res<ControlScheme>,
     sticks: Query<&VirtualJoystickState>,
     mut actions: Query<&mut ActionState<ShooterAction>, With<Shooter>>,
 ) {
@@ -111,7 +112,12 @@ fn touch_to_actions(
         return;
     };
     if let Some(stick) = sticks.iter().find(|s| s.pointer_state.is_some()) {
-        actions.set_axis_pair(&ShooterAction::Drive, snap_8way(stick.delta));
+        // Snapping only helps the tank-style schemes; walking where you point wants the full circle.
+        let drive = match *scheme {
+            ControlScheme::Tank | ControlScheme::Snake => snap_8way(stick.delta),
+            _ => analog(stick.delta),
+        };
+        actions.set_axis_pair(&ShooterAction::Drive, drive);
     }
     // One shot per tap, like Space: press only on the touch's first frame and let the
     // keyboard pass release it on the next.
@@ -140,6 +146,15 @@ pub fn snap_8way(delta: Vec2) -> Vec2 {
     let held = |v: f32| if v.abs() > 0.5 { v.signum() } else { 0.0 };
     let n = delta.normalize();
     Vec2::new(held(n.x), held(n.y))
+}
+
+/// The stick as it lies, past the dead zone, rescaled so the edge of the dead zone is 0.
+pub fn analog(delta: Vec2) -> Vec2 {
+    let len = delta.length();
+    if len < DEAD_ZONE {
+        return Vec2::ZERO;
+    }
+    delta / len * ((len.min(1.0) - DEAD_ZONE) / (1.0 - DEAD_ZONE))
 }
 
 /// An anti-aliased white disc (or ring, if `hole` > 0) tinted per use by `ImageNode::color`.

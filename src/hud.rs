@@ -10,7 +10,7 @@ use crate::{
     layout::ScreenLayout,
     radar::RadarMode,
     round::{GameState, TargetMobile},
-    shooter::{SHOOTER_MAX_HP, Shooter, Stunned},
+    shooter::{ControlScheme, SHOOTER_MAX_HP, Shooter, Stunned},
     start::Started,
     target::{Activity, Suspicion, Target},
     touch::{TouchControls, TouchWhistle, WHISTLE_SIZE},
@@ -118,6 +118,7 @@ fn draw_hud(
     state: Res<State<GameState>>,
     mut mobile: ResMut<TargetMobile>,
     mut radar_mode: ResMut<RadarMode>,
+    mut controls: ResMut<ControlScheme>,
     mut next: ResMut<NextState<GameState>>,
     touch: Res<TouchControls>,
     started: Res<Started>,
@@ -217,6 +218,9 @@ fn draw_hud(
                             mobile.0 = !mobile.0;
                         }
                     });
+                    if ui.button(format!("controls: {:?}", *controls)).clicked() {
+                        *controls = controls.next();
+                    }
                 }
             });
         });
@@ -263,7 +267,9 @@ fn draw_hud(
                 ui.add(
                     egui::Label::new(
                         egui::RichText::new(format!(
-                            "Up/Down move   Left/Right turn (double-tap: hop)   Space fire   W whistle   M target walks: {}   Tab radar: {:?}   L arena: {}   F1 inspector",
+                            "C controls: {:?}   {}   Space fire   W whistle   M target walks: {}   Tab radar: {:?}   L arena: {}   F1 inspector",
+                            *controls,
+                            controls.hint(),
                             if mobile.0 { "on" } else { "off" },
                             *radar_mode,
                             arena.name,
