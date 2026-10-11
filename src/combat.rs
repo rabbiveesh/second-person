@@ -302,7 +302,7 @@ fn bullet_hits(
 
         if let Ok((_, mut target, target_t, mut suspicion)) = targets.get_mut(other) {
             let kind = HitKind::of(suspicion.sees_shooter, *target_t.forward(), bullet.origin - target_t.translation);
-            let damage = kind.damage(rand::rng().random_range(-1.0..1.0)) * scheme.damage_dealt();
+            let damage = kind.damage(rand::rng().random_range(-1.0..1.0)) * tuning.damage_dealt(*scheme);
             target.hp = (target.hp - damage).max(0.0);
             suspicion.bump(0.6);
             suspicion.last_known = Some(bullet.origin);

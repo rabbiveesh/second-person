@@ -21,6 +21,7 @@ use crate::{
     adapt::{self, AdaptEvent, BASE_BAND, Band, Cue, PlayerProfile, RoundResult, Skill, profile::BASELINE_ASSISTS},
     combat::{self, TargetHit},
     round::{GameState, SpawnRound},
+    shooter::ControlScheme,
     target::{self, Suspicion, Target},
 };
 
@@ -48,7 +49,20 @@ impl Tuning {
     pub fn help(&self) -> AssistLevers {
         AssistLevers::from_dial(self.assists)
     }
+
+    /// What your shots do with `scheme` this round. The easy schemes' penalty
+    /// (`ControlScheme::damage_dealt`, the band-5 amount) scales with how good you are: barely
+    /// there while you're struggling, much steeper once you're strong, so leaning on them stops
+    /// paying exactly when you no longer need them.
+    pub fn damage_dealt(&self, scheme: ControlScheme) -> f32 {
+        let bite = |b| by_band(b, 0.3, 1.0, 2.0);
+        let scale = (bite(self.stealth) + bite(self.gunfight)) / 2.0;
+        (1.0 - (1.0 - scheme.damage_dealt()) * scale).max(MIN_DAMAGE_DEALT)
+    }
 }
+
+/// However good you are, an easy scheme still does this much.
+pub const MIN_DAMAGE_DEALT: f32 = 0.35;
 
 /// Interpolate a knob over the bands: `lo` at band 1, `base` (today's value) at [`BASE_BAND`],
 /// `hi` at band 10, linear in between.
@@ -339,6 +353,21 @@ mod tests {
         assert!((help.magnet_range - combat::MAGNET_RANGE).abs() < 1e-4);
         assert!((help.sonar_period.unwrap() - crate::radar::SONAR_PERIOD).abs() < 1e-4);
         assert_eq!(help.damage_taken, 1.0);
+    }
+
+    #[test]
+    fn easy_schemes_cost_more_as_you_get_better() {
+        let at = |b| Tuning { stealth: b, gunfight: b, ..Tuning::default() };
+        for s in ControlScheme::ALL {
+            assert!((at(BASE_BAND).damage_dealt(s) - s.damage_dealt()).abs() < 1e-6, "band 5 is the hand-tuned {s:?}");
+        }
+        assert_eq!(at(10).damage_dealt(ControlScheme::Tank), 1.0, "tank never pays");
+        for b in adapt::MIN_BAND..adapt::MAX_BAND {
+            let (lo, hi) = (at(b).damage_dealt(ControlScheme::Magnetic), at(b + 1).damage_dealt(ControlScheme::Magnetic));
+            assert!(hi < lo, "band {b}: {lo} -> {hi}");
+        }
+        assert!(at(1).damage_dealt(ControlScheme::Magnetic) > 0.9, "barely a cost while struggling");
+        assert!(at(10).damage_dealt(ControlScheme::Magnetic) >= MIN_DAMAGE_DEALT);
     }
 
     #[test]
