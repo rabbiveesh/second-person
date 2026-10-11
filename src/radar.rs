@@ -1,22 +1,24 @@
 //! Radar: a top-down orthographic camera in a corner viewport. It sees the arena plus a
 //! radar-only render layer holding contacts.
 //!
-//! `RadarMode` is the difficulty knob:
+//! `RadarMode` is the player's pick (Tab):
+//! - `Auto` (default): sonar at the pace the assist dial sets (`difficulty::AssistLevers`),
+//!   quicker when you struggle, slower as you win, and no sweeps at all once the help has faded.
 //! - `Full`: live blips, shooter heading, target view cone.
-//! - `Sonar` (default): positions only, revealed by a periodic ping, then fading. Gunshots
+//! - `Sonar`: positions only, revealed by a ping every `SONAR_PERIOD`, then fading. Gunshots
 //!   also ping the shooter's position.
 //! - `Off`: no radar.
 
 use bevy::{
-    camera::{ScalingMode, Viewport, visibility::RenderLayers},
+    camera::{ScalingMode, visibility::RenderLayers},
     prelude::*,
-    window::PrimaryWindow,
 };
 
 use crate::{
-    arena::ARENA_HALF,
+    arena::Layout,
     combat::Gunshot,
-    round::{GameState, RoundEntity},
+    difficulty::Tuning,
+    round::{Attract, GameState, RoundEntity},
 };
 
 pub const RADAR_LAYER: usize = 1;
@@ -24,17 +26,15 @@ pub const RADAR_LAYER: usize = 1;
 /// radar can never see them directly — only via blips/contacts.
 pub const WORLD_AND_RADAR: &[usize] = &[0, RADAR_LAYER];
 
-/// Fraction of the window's shorter side that the radar occupies.
-const RADAR_FRACTION: f32 = 0.34;
-const RADAR_MARGIN: f32 = 16.0;
-const SONAR_PERIOD: f32 = 2.0;
+pub const SONAR_PERIOD: f32 = 2.0;
 const CONTACT_FADE: f32 = 1.8;
 const BLIP_HEIGHT: f32 = 4.0;
 
 #[derive(Resource, Default, Clone, Copy, PartialEq, Eq, Debug)]
 pub enum RadarMode {
-    Full,
     #[default]
+    Auto,
+    Full,
     Sonar,
     Off,
 }
@@ -42,9 +42,19 @@ pub enum RadarMode {
 impl RadarMode {
     pub fn next(self) -> Self {
         match self {
+            Self::Auto => Self::Full,
             Self::Full => Self::Sonar,
             Self::Sonar => Self::Off,
-            Self::Off => Self::Full,
+            Self::Off => Self::Auto,
+        }
+    }
+
+    /// Seconds between sonar sweeps (`None`: no sonar) this round.
+    pub fn sonar_period(self, tuning: &Tuning) -> Option<f32> {
+        match self {
+            Self::Auto => tuning.help().sonar_period,
+            Self::Sonar => Some(SONAR_PERIOD),
+            Self::Full | Self::Off => None,
         }
     }
 }
@@ -57,8 +67,9 @@ pub struct LiveBlip;
 #[derive(Component)]
 pub struct RadarContact(pub Color);
 
+/// Laid out by `layout::ScreenLayout`.
 #[derive(Component)]
-struct RadarCamera;
+pub struct RadarCamera;
 
 /// A fading sonar contact or sweep ring.
 #[derive(Component)]
@@ -75,17 +86,11 @@ struct RadarAssets {
     ring: Handle<Mesh>,
 }
 
-/// Where the radar is on screen, in logical pixels, so the HUD can frame it.
-#[derive(Resource, Default)]
-pub struct RadarRect(pub Rect);
-
 pub fn plugin(app: &mut App) {
-    app.init_resource::<RadarRect>()
-        .init_resource::<RadarMode>()
+    app.init_resource::<RadarMode>()
         .add_systems(Startup, spawn_radar)
-        .add_systems(Update, (apply_mode, fade))
-        .add_systems(Update, (sonar_sweep, gunshot_pings).run_if(in_state(GameState::Playing)))
-        .add_systems(PostUpdate, fit_viewport);
+        .add_systems(Update, (apply_mode, fade, frame_layout.run_if(resource_changed::<Layout>)))
+        .add_systems(Update, (sonar_sweep, gunshot_pings).run_if(in_state(GameState::Playing)));
 }
 
 fn spawn_radar(mut commands: Commands, mut meshes: ResMut<Assets<Mesh>>) {
@@ -103,9 +108,8 @@ fn spawn_radar(mut commands: Commands, mut meshes: ResMut<Assets<Mesh>>) {
             ..default()
         },
         Projection::Orthographic(OrthographicProjection {
-            scaling_mode: ScalingMode::FixedVertical {
-                viewport_height: ARENA_HALF * 2.0 + 2.0,
-            },
+            // Fitted to the arena by `frame_layout`.
+            scaling_mode: ScalingMode::FixedVertical { viewport_height: 62.0 },
             ..OrthographicProjection::default_3d()
         }),
         // North (-Z) is up on the radar.
@@ -121,12 +125,25 @@ fn spawn_radar(mut commands: Commands, mut meshes: ResMut<Assets<Mesh>>) {
     ));
 }
 
+/// Centre the radar on the arena and zoom so the whole floor fits.
+fn frame_layout(layout: Res<Layout>, mut camera: Single<(&mut Projection, &mut Transform), With<RadarCamera>>) {
+    let bounds = layout.bounds();
+    let (projection, transform) = &mut *camera;
+    if let Projection::Orthographic(ortho) = &mut **projection {
+        let side = bounds.size().max_element() + 2.0;
+        ortho.scaling_mode = ScalingMode::FixedVertical { viewport_height: side };
+    }
+    let c = bounds.center();
+    **transform = Transform::from_xyz(c.x, 60.0, c.y).looking_at(Vec3::new(c.x, 0.0, c.y), Vec3::NEG_Z);
+}
+
 fn apply_mode(
     mode: Res<RadarMode>,
+    attract: Res<Attract>,
     mut camera: Single<&mut Camera, With<RadarCamera>>,
     mut blips: Query<&mut Visibility, With<LiveBlip>>,
 ) {
-    camera.is_active = *mode != RadarMode::Off;
+    camera.is_active = *mode != RadarMode::Off && !attract.0;
     let vis = if *mode == RadarMode::Full {
         Visibility::Inherited
     } else {
@@ -137,51 +154,60 @@ fn apply_mode(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn sonar_sweep(
     mut commands: Commands,
     time: Res<Time>,
     mode: Res<RadarMode>,
+    tuning: Res<Tuning>,
     mut timer: Local<Option<Timer>>,
     assets: Res<RadarAssets>,
+    layout: Res<Layout>,
     mut materials: ResMut<Assets<StandardMaterial>>,
     contacts: Query<(&GlobalTransform, &RadarContact)>,
 ) {
-    let timer = timer.get_or_insert_with(|| Timer::from_seconds(SONAR_PERIOD, TimerMode::Repeating));
-    if *mode != RadarMode::Sonar || !timer.tick(time.delta()).just_finished() {
+    let Some(period) = mode.sonar_period(&tuning) else { return };
+    let timer = timer.get_or_insert_with(|| Timer::from_seconds(period, TimerMode::Repeating));
+    if timer.duration().as_secs_f32() != period {
+        timer.set_duration(std::time::Duration::from_secs_f32(period));
+    }
+    if !timer.tick(time.delta()).just_finished() {
         return;
     }
     for (t, contact) in &contacts {
         spawn_contact(&mut commands, &assets, &mut materials, t.translation(), contact.0);
     }
-    // Sweep ring from the centre of the arena.
+    // Sweep ring from the centre of the arena out to its corners.
+    let bounds = layout.bounds();
     let material = fading_material(&mut materials, Color::srgb(0.3, 1.0, 0.5), 0.6);
     commands.spawn((
         Name::new("Sonar sweep"),
         RoundEntity,
         Mesh3d(assets.ring.clone()),
         MeshMaterial3d(material.clone()),
-        Transform::from_xyz(0.0, BLIP_HEIGHT, 0.0)
+        Transform::from_xyz(bounds.center().x, BLIP_HEIGHT, bounds.center().y)
             .with_rotation(Quat::from_rotation_x(-std::f32::consts::FRAC_PI_2)),
         RenderLayers::layer(RADAR_LAYER),
         Fading {
             timer: Timer::from_seconds(0.9, TimerMode::Once),
             material,
             base_alpha: 0.6,
-            grow_to: Some(ARENA_HALF * 1.45),
+            grow_to: Some(bounds.half_size().length() * 1.03),
         },
     ));
 }
 
-/// Gunshots give away the shooter's position on the radar (in any mode that has one).
+/// Gunshots give away the shooter's position on the radar while it's sweeping.
 fn gunshot_pings(
     mut commands: Commands,
     mode: Res<RadarMode>,
+    tuning: Res<Tuning>,
     assets: Res<RadarAssets>,
     mut materials: ResMut<Assets<StandardMaterial>>,
     mut shots: MessageReader<Gunshot>,
 ) {
     for shot in shots.read() {
-        if *mode == RadarMode::Sonar {
+        if mode.sonar_period(&tuning).is_some() {
             spawn_contact(&mut commands, &assets, &mut materials, shot.muzzle, Color::srgb(1.0, 0.8, 0.3));
         }
     }
@@ -239,33 +265,5 @@ fn fade(
         if f.timer.is_finished() {
             commands.entity(e).despawn();
         }
-    }
-}
-
-/// Keep the radar square in the bottom-right corner, whatever the window size.
-fn fit_viewport(
-    window: Single<&Window, With<PrimaryWindow>>,
-    mut camera: Single<&mut Camera, With<RadarCamera>>,
-    mut rect: ResMut<RadarRect>,
-) {
-    let scale = window.scale_factor();
-    let (w, h) = (window.width(), window.height());
-    let side = w.min(h) * RADAR_FRACTION;
-    if side < 1.0 {
-        return;
-    }
-    let min = Vec2::new(w - side - RADAR_MARGIN, h - side - RADAR_MARGIN);
-    rect.0 = Rect::from_corners(min, min + side);
-
-    let viewport = Viewport {
-        physical_position: (min * scale).as_uvec2(),
-        physical_size: UVec2::splat((side * scale) as u32),
-        ..default()
-    };
-    let unchanged = camera.viewport.as_ref().is_some_and(|v| {
-        v.physical_position == viewport.physical_position && v.physical_size == viewport.physical_size
-    });
-    if !unchanged {
-        camera.viewport = Some(viewport);
     }
 }

@@ -1918,9 +1918,9 @@ dependencies = [
 
 [[package]]
 name = "bevy_replicon"
-version = "0.44.2"
+version = "0.44.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "105c6962fd1da3f4943d798f0a74f4a22dec584c0dd40ff72210d5ac47885a18"
+checksum = "b753246502ffbdbcb0fd426712c311cb2ae2b32ee302ccd75b5153c90704d4e2"
 dependencies = [
  "bevy",
  "bitflags 2.13.2",
@@ -7828,15 +7828,20 @@ dependencies = [
  "bevy_egui",
  "bevy_firework",
  "bevy_kira_audio",
+ "earcut",
  "getrandom 0.3.4",
  "getrandom 0.4.3",
  "hound",
+ "js-sys",
  "leafwing-input-manager",
  "lightyear",
  "rand 0.9.5",
  "serde",
  "sfxr",
+ "virtual_joystick",
  "vleue_navigator",
+ "wasm-bindgen",
+ "web-sys",
 ]
 
 [[package]]
@@ -9094,6 +9099,16 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0b928f33d975fc6ad9f86c8f283853ad26bdd5b10b7f1542aa2fa15e2289105a"
 
 [[package]]
+name = "virtual_joystick"
+version = "2.8.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ce37337642964c07d2e639c60dfda4b80625ea62dc935380fb078bf03961dfae"
+dependencies = [
+ "bevy",
+ "variadics_please 2.0.0",
+]
+
+[[package]]
 name = "vleue_navigator"
 version = "0.16.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -10260,9 +10275,9 @@ dependencies = [
 
 [[package]]
 name = "zeroize"
-version = "1.9.0"
+version = "1.9.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e13c156562582aa81c60cb29407084cdb54c4164760106ab78e6c5b0858cf64e"
+checksum = "e13084392c5e4bc371903e2935a5eaeed24905a7511356b883835e18a78f6879"
 dependencies = [
  "zeroize_derive",
 ]

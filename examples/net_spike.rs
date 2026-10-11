@@ -37,10 +37,14 @@ use lightyear::input::client::InputSystems;
 use lightyear::netcode::client_plugin::NetcodeConfig;
 use lightyear::prelude::input::native::InputMarker;
 use rand::Rng;
-use second_person::arena::{self, ARENA_HALF};
+use second_person::arena::{ArenaMode, Layout};
+use second_person::round::GameState;
 use serde::{Deserialize, Serialize};
 
 const TICK_HZ: f64 = 60.0;
+
+/// The duel always uses the classic arena: the sim reads it, so both sides must agree on it.
+static ARENA: std::sync::LazyLock<Layout> = std::sync::LazyLock::new(Layout::classic);
 const DT: f32 = 1.0 / TICK_HZ as f32;
 const PORT: u16 = 5888;
 const PROTOCOL_ID: u64 = 0x5EC0_4D;
@@ -234,10 +238,10 @@ fn angle_diff(a: f32, b: f32) -> f32 {
 fn step(pose: &mut Pose, i: &Inputs) {
     pose.yaw += i.turn.signum() as f32 * TURN_SPEED * DT;
     let d = dir(pose.yaw) * i.fwd.signum() as f32 * MOVE_SPEED * DT;
-    if arena::is_clear(pose.pos + Vec2::new(d.x, 0.0), RADIUS) {
+    if ARENA.is_clear(pose.pos + Vec2::new(d.x, 0.0), RADIUS) {
         pose.pos.x += d.x;
     }
-    if arena::is_clear(pose.pos + Vec2::new(0.0, d.y), RADIUS) {
+    if ARENA.is_clear(pose.pos + Vec2::new(0.0, d.y), RADIUS) {
         pose.pos.y += d.y;
     }
 }
@@ -245,11 +249,9 @@ fn step(pose: &mut Pose, i: &Inputs) {
 fn random_spawn(other: Option<Vec2>) -> Pose {
     let mut rng = rand::rng();
     loop {
-        let p = Vec2::new(
-            rng.random_range(-ARENA_HALF + 3.0..ARENA_HALF - 3.0),
-            rng.random_range(-ARENA_HALF + 3.0..ARENA_HALF - 3.0),
-        );
-        if arena::is_clear(p, 1.0) && other.is_none_or(|o| o.distance(p) > 25.0) {
+        let b = ARENA.bounds().inflate(-3.0);
+        let p = Vec2::new(rng.random_range(b.min.x..b.max.x), rng.random_range(b.min.y..b.max.y));
+        if ARENA.is_clear(p, 1.0) && other.is_none_or(|o| o.distance(p) > 25.0) {
             return Pose { pos: p, yaw: rng.random_range(0.0..std::f32::consts::TAU) };
         }
     }
@@ -619,7 +621,7 @@ fn server_bullets(
             if done {
                 break;
             }
-            if !arena::is_clear(p, 0.05) {
+            if !ARENA.is_clear(p, 0.05) {
                 events.push(NetEvent::Impact { at: p });
                 done = true;
                 break;
@@ -740,7 +742,10 @@ fn client_plugin(app: &mut App, id: u64, server: SocketAddr, lag: u64, bot: bool
         .add_systems(FixedUpdate, sim_move.in_set(SimSet))
         .add_systems(Update, (receive_events, log_state));
     if !headless {
-        app.add_systems(Startup, setup_view).add_plugins(arena::plugin);
+        app.add_systems(Startup, setup_view)
+            .insert_resource(ArenaMode::Classic)
+            .add_plugins(second_person::arena::plugin)
+            .init_state::<GameState>();
         client_view_systems(app);
     }
 }
@@ -775,7 +780,7 @@ fn write_inputs(
             // Close our eyes when they're facing us down a clear line: blind them, then reposition.
             let to_me = me.pos - them_now.pos;
             let they_aim_at_me = angle_diff((-to_me.x).atan2(-to_me.y), them_now.yaw).abs() < 0.3
-                && !arena::los_blocked(me.pos, them_now.pos);
+                && !ARENA.los_blocked(me.pos, them_now.pos);
             if brain.blink_for == 0
                 && they_aim_at_me
                 && my_lids.is_some_and(|l| !l.closed && l.cooldown == 0)
@@ -793,14 +798,14 @@ fn write_inputs(
             }
             brain.retarget -= 1;
             let to = them.pos - me.pos;
-            let clear_shot = !arena::los_blocked(me.pos, them.pos);
+            let clear_shot = !ARENA.los_blocked(me.pos, them.pos);
             // No line of sight: flank around the cover instead of staring at it.
             let flank = if clear_shot { 0.0 } else { 1.1 };
             let want = (-to.x).atan2(-to.y) + brain.aim_error + flank;
             let err = angle_diff(want, me.yaw);
             i.turn = if err > 0.04 { 1 } else if err < -0.04 { -1 } else { 0 };
             let ahead = me.pos + dir(me.yaw) * 1.2;
-            if !arena::is_clear(ahead, RADIUS) {
+            if !ARENA.is_clear(ahead, RADIUS) {
                 i.turn = 1;
                 i.fwd = -1;
             } else if to.length() > 9.0 || !clear_shot {
@@ -905,7 +910,7 @@ fn setup_view(mut commands: Commands) {
             ..default()
         },
         Projection::Orthographic(OrthographicProjection {
-            scaling_mode: ScalingMode::FixedVertical { viewport_height: ARENA_HALF * 2.0 + 2.0 },
+            scaling_mode: ScalingMode::FixedVertical { viewport_height: ARENA.bounds().height() + 2.0 },
             ..OrthographicProjection::default_3d()
         }),
         Transform::from_xyz(0.0, 60.0, 0.0).looking_at(Vec3::ZERO, Vec3::NEG_Z),
@@ -1035,7 +1040,7 @@ fn tick_fx(
     for (e, mut b, mut t) in &mut bullets {
         b.life -= dt;
         t.translation += Vec3::new(b.vel.x, 0.0, b.vel.y) * dt;
-        if b.life <= 0.0 || !arena::is_clear(t.translation.xz(), 0.05) {
+        if b.life <= 0.0 || !ARENA.is_clear(t.translation.xz(), 0.05) {
             commands.entity(e).despawn();
         }
     }

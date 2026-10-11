@@ -1,3 +1,7 @@
+# Per-checkout overrides (e.g. `[build] rustc-wrapper = "kache"`) go in the gitignored
+# `.cargo/config.local.toml`. Worktrees under .claude/worktrees inherit it from the main checkout.
+include = [{ path = "config.local.toml", optional = true }]
+
 [target.x86_64-unknown-linux-gnu]
 linker = "clang"
 rustflags = ["-C", "link-arg=-fuse-ld=mold"]

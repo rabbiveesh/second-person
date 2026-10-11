@@ -9,9 +9,9 @@ use rand::Rng;
 
 use crate::{
     Layer,
-    arena::{self, ARENA_HALF},
+    arena::Layout,
     radar::{LiveBlip, RADAR_LAYER, RadarContact},
-    round::{GameState, RoundEntity, SpawnRound},
+    round::{Attract, GameState, RoundEntity, SpawnRound},
 };
 
 pub const SHOOTER_MAX_HP: f32 = 100.0;
@@ -23,11 +23,12 @@ const TURN_SPEED: f32 = 2.4;
 
 #[derive(Actionlike, PartialEq, Eq, Clone, Copy, Hash, Debug, Reflect)]
 pub enum ShooterAction {
-    Forward,
-    Back,
-    TurnLeft,
-    TurnRight,
+    /// x: turn (right positive), y: throttle (forward positive). Analog, so a touch stick or
+    /// gamepad gives partial speed; arrow keys drive it as a d-pad.
+    #[actionlike(DualAxis)]
+    Drive,
     Fire,
+    Whistle,
 }
 
 #[derive(Component, Reflect)]
@@ -37,22 +38,90 @@ pub struct Shooter {
 }
 
 /// The shooter took a step (heard by the target).
-#[derive(Message, Clone, Copy)]
+#[derive(Message, Clone, Copy, Debug)]
 pub struct Footstep {
     pub at: Vec3,
 }
 
+/// The shooter walked into a wall or cover: a thud (so you notice you're stuck) and a knock back.
+#[derive(Message, Clone, Copy, Debug)]
+pub struct Bump {
+    pub at: Vec3,
+}
+
+/// You whistled: a loud, far-carrying sound so you can find yourself by ear. He can hear it too.
+#[derive(Message, Clone, Copy, Debug)]
+pub struct Whistle {
+    pub at: Vec3,
+}
+
+const WHISTLE_COOLDOWN: f32 = 2.0;
+
+/// While > 0, the shooter is being knocked back by `push` and can't walk (only turn).
+#[derive(Component, Reflect, Default)]
+#[reflect(Component)]
+pub struct Stagger {
+    pub left: f32,
+    pub push: Vec3,
+}
+
+/// Caught by his grappling hook: no walking, turning or firing until `left` runs out. While
+/// `pull_to` is set you're being reeled toward that point.
+#[derive(Component, Reflect, Default)]
+#[reflect(Component)]
+pub struct Stunned {
+    pub left: f32,
+    pub pull_to: Option<Vec3>,
+}
+
+const PULL_SPEED: f32 = 14.0;
+
+impl Stagger {
+    /// Knocked back at `push` (m/s), easing off over the stagger.
+    pub fn knock(push: Vec3) -> Self {
+        Self { left: STAGGER_SECS, push }
+    }
+}
+
+/// Double-tap left or right (arrows, or a double flick of the touch stick) to hop sideways
+/// without turning.
+#[derive(Component, Reflect, Default)]
+#[reflect(Component)]
+pub struct Sidestep {
+    /// The first tap of a possible double: its side (-1 left, +1 right), when, and the facing
+    /// before it, since a tap on a turn key also turns you a little.
+    first: Option<(f32, f32, Quat)>,
+    /// Whether the stick is pushed left/right right now (to catch each fresh push).
+    held: f32,
+    /// Seconds of hop left, and its velocity.
+    pub left: f32,
+    pub velocity: Vec3,
+    cooldown: f32,
+}
+
+/// Both taps have to land within this.
+const DOUBLE_TAP_WINDOW: f32 = 0.3;
+const HOP_SPEED: f32 = 12.0;
+const HOP_SECS: f32 = 0.2;
+const HOP_COOLDOWN: f32 = 0.8;
+
 const STEP_INTERVAL: f32 = 0.42;
+const BUMP_REACH: f32 = 0.15;
+const KNOCKBACK_SPEED: f32 = 4.0;
+const STAGGER_SECS: f32 = 0.25;
 
 pub fn plugin(app: &mut App) {
     app.add_plugins(InputManagerPlugin::<ShooterAction>::default())
         .add_message::<Footstep>()
-        .add_systems(OnEnter(GameState::Playing), spawn_shooter.in_set(SpawnRound))
-        .add_systems(Update, drive.run_if(in_state(GameState::Playing)));
+        .add_message::<Bump>()
+        .add_message::<Whistle>()
+        .add_systems(OnEnter(GameState::Playing), spawn_shooter.in_set(SpawnRound).run_if(|attract: Res<Attract>| !attract.0))
+        .add_systems(Update, ((drive, bump).chain(), whistle).run_if(in_state(GameState::Playing)));
 }
 
 fn spawn_shooter(
     mut commands: Commands,
+    layout: Res<Layout>,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
 ) {
@@ -66,19 +135,17 @@ fn spawn_shooter(
         Name::new("Shooter"),
         RoundEntity,
         Shooter { hp: SHOOTER_MAX_HP },
-        InputMap::new([
-            (ShooterAction::Forward, KeyCode::ArrowUp),
-            (ShooterAction::Back, KeyCode::ArrowDown),
-            (ShooterAction::TurnLeft, KeyCode::ArrowLeft),
-            (ShooterAction::TurnRight, KeyCode::ArrowRight),
-            (ShooterAction::Fire, KeyCode::Space),
-        ]),
+        (Stagger::default(), Stunned::default(), Sidestep::default()),
+        InputMap::default()
+            .with_dual_axis(ShooterAction::Drive, VirtualDPad::arrow_keys())
+            .with(ShooterAction::Fire, KeyCode::Space)
+            .with(ShooterAction::Whistle, KeyCode::KeyW),
         RigidBody::Dynamic,
         Collider::capsule(RADIUS, 1.0),
         LockedAxes::ROTATION_LOCKED,
         Friction::ZERO.with_combine_rule(CoefficientCombine::Min),
         CollisionLayers::new(Layer::Shooter, [Layer::World, Layer::Target]),
-        random_start(&mut rand::rng()),
+        random_start(&mut rand::rng(), &layout),
         Mesh3d(meshes.add(Capsule3d::new(0.35, 1.0))),
         MeshMaterial3d(materials.add(Color::srgb(0.95, 0.5, 0.1))),
         RadarContact(Color::srgb(0.2, 1.0, 0.3)),
@@ -120,15 +187,15 @@ fn spawn_shooter(
 }
 
 /// A random start: clear of cover, away from the target, facing anywhere.
-pub fn random_start(rng: &mut impl Rng) -> Transform {
-    let r = ARENA_HALF - 2.0;
-    loop {
-        let p = Vec2::new(rng.random_range(-r..r), rng.random_range(-r..r));
-        if p.length() >= MIN_START_DISTANCE && arena::is_clear(p, RADIUS + 0.3) {
-            return Transform::from_xyz(p.x, 0.9, p.y)
-                .with_rotation(Quat::from_rotation_y(rng.random_range(0.0..TAU)));
-        }
-    }
+pub fn random_start(rng: &mut impl Rng, layout: &Layout) -> Transform {
+    // Room to turn and fire without the bullet hitting a wall straight away.
+    let clear = RADIUS + 1.2;
+    let p = layout
+        .random_point(rng, clear, |p| p.length() >= MIN_START_DISTANCE)
+        // A cramped arena: anywhere clear will do.
+        .or_else(|| layout.random_point(rng, clear, |_| true))
+        .unwrap_or(Vec2::new(0.0, MIN_START_DISTANCE));
+    Transform::from_xyz(p.x, 0.9, p.y).with_rotation(Quat::from_rotation_y(rng.random_range(0.0..TAU)))
 }
 
 /// Tank controls, relative to the shooter's own facing.
@@ -136,20 +203,82 @@ fn drive(
     time: Res<Time>,
     mut step: Local<f32>,
     mut steps: MessageWriter<Footstep>,
-    mut q: Query<(&ActionState<ShooterAction>, &Transform, &mut Rotation, &mut LinearVelocity), With<Shooter>>,
+    mut q: Query<
+        (
+            &ActionState<ShooterAction>,
+            &Transform,
+            &mut Rotation,
+            &mut LinearVelocity,
+            &mut Stagger,
+            &mut Stunned,
+            &mut Sidestep,
+        ),
+        With<Shooter>,
+    >,
 ) {
-    for (actions, t, mut rot, mut vel) in &mut q {
-        let turn = actions.pressed(&ShooterAction::TurnLeft) as i8 as f32
-            - actions.pressed(&ShooterAction::TurnRight) as i8 as f32;
-        rot.0 = Quat::from_rotation_y(turn * TURN_SPEED * time.delta_secs()) * rot.0;
+    let now = time.elapsed_secs();
+    let dt = time.delta_secs();
+    for (actions, t, mut rot, mut vel, mut stagger, mut stunned, mut side) in &mut q {
+        let input = actions.clamped_axis_pair(&ShooterAction::Drive);
+        side.cooldown -= dt;
+        // A fresh push straight left or right (not a diagonal, which is driving while turning).
+        let pushed = if input.x.abs() > 0.5 && input.y.abs() < 0.5 { input.x.signum() } else { 0.0 };
+        let tap = (pushed != 0.0 && side.held != pushed).then_some(pushed);
+        side.held = pushed;
+        if stunned.left > 0.0 || stagger.left > 0.0 {
+            side.first = None;
+        } else if let Some(dir) = tap {
+            match side.first {
+                Some((first, at, facing)) if first == dir && now - at <= DOUBLE_TAP_WINDOW && side.cooldown <= 0.0 => {
+                    // Undo the little turn the two taps made, then hop square to the side.
+                    rot.0 = facing;
+                    side.first = None;
+                    side.left = HOP_SECS;
+                    side.cooldown = HOP_COOLDOWN;
+                    side.velocity = rot.0 * Vec3::X * dir * HOP_SPEED;
+                }
+                _ => side.first = Some((dir, now, rot.0)),
+            }
+        }
 
-        let throttle = actions.pressed(&ShooterAction::Forward) as i8 as f32
-            - actions.pressed(&ShooterAction::Back) as i8 as f32;
+        if stunned.left > 0.0 {
+            stunned.left -= time.delta_secs();
+            let pull = stunned.pull_to.map_or(Vec3::ZERO, |p| (p - t.translation).with_y(0.0).normalize_or_zero() * PULL_SPEED);
+            vel.0 = Vec3::new(pull.x, vel.0.y, pull.z);
+            stagger.left = 0.0;
+            side.left = 0.0;
+            *step = 0.0;
+            continue;
+        }
+        // A knock back (his laser, a wall) cuts a hop short.
+        if stagger.left > 0.0 {
+            side.left = 0.0;
+        }
+        if side.left > 0.0 {
+            side.left -= dt;
+            vel.0 = Vec3::new(side.velocity.x, vel.0.y, side.velocity.z);
+            if side.left <= 0.0 {
+                // Landing scuffs like a step, so he can hear it.
+                steps.write(Footstep { at: t.translation });
+            }
+            *step = 0.0;
+            continue;
+        }
+        rot.0 = Quat::from_rotation_y(-input.x * TURN_SPEED * time.delta_secs()) * rot.0;
+
+        let throttle = input.y;
         let forward = rot.0 * Vec3::NEG_Z;
+        if stagger.left > 0.0 {
+            stagger.left -= time.delta_secs();
+            let push = stagger.push * (stagger.left / STAGGER_SECS).max(0.0);
+            vel.0 = Vec3::new(push.x, vel.0.y, push.z);
+            *step = 0.0;
+            continue;
+        }
         let planar = forward * throttle * MOVE_SPEED;
         vel.0 = Vec3::new(planar.x, vel.0.y, planar.z);
 
-        if throttle != 0.0 {
+        if throttle.abs() > 0.1 {
             *step -= time.delta_secs();
             if *step <= 0.0 {
                 *step = STEP_INTERVAL;
@@ -157,6 +286,49 @@ fn drive(
             }
         } else {
             *step = 0.0;
+        }
+    }
+}
+
+/// Walking into something solid: thud and get knocked back, so you notice you're stuck.
+fn bump(
+    spatial: SpatialQuery,
+    mut bumps: MessageWriter<Bump>,
+    mut q: Query<(&Transform, &mut LinearVelocity, &mut Stagger, &Stunned, &mut Sidestep), With<Shooter>>,
+) {
+    for (t, mut vel, mut stagger, stunned, mut side) in &mut q {
+        if stagger.left > 0.0 || stunned.left > 0.0 {
+            continue;
+        }
+        let Ok(dir) = Dir3::new(Vec3::new(vel.0.x, 0.0, vel.0.z)) else { continue };
+        let Some(hit) = spatial.cast_ray(
+            t.translation,
+            dir,
+            RADIUS + BUMP_REACH,
+            true,
+            &SpatialQueryFilter::from_mask(Layer::World),
+        ) else {
+            continue;
+        };
+        let normal = Vec3::new(hit.normal.x, 0.0, hit.normal.z).normalize_or(-dir.as_vec3());
+        bumps.write(Bump { at: t.translation + dir * hit.distance });
+        side.left = 0.0;
+        *stagger = Stagger::knock(normal * KNOCKBACK_SPEED);
+        vel.0 = Vec3::new(stagger.push.x, vel.0.y, stagger.push.z);
+    }
+}
+
+fn whistle(
+    time: Res<Time>,
+    mut cooldown: Local<f32>,
+    mut whistles: MessageWriter<Whistle>,
+    q: Query<(&ActionState<ShooterAction>, &Transform), With<Shooter>>,
+) {
+    *cooldown -= time.delta_secs();
+    for (actions, t) in &q {
+        if actions.just_pressed(&ShooterAction::Whistle) && *cooldown <= 0.0 {
+            *cooldown = WHISTLE_COOLDOWN;
+            whistles.write(Whistle { at: t.translation });
         }
     }
 }

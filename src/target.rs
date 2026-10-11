@@ -20,11 +20,13 @@ use bevy::{camera::visibility::RenderLayers, prelude::*};
 use rand::Rng;
 
 use crate::{
+    combat::Grapple,
+    difficulty::Tuning,
     Layer,
-    arena::{self, ARENA_HALF, Cover},
-    nav::{MoveTo, Route},
+    arena::{Cover, Layout},
+    nav::{Evade, MoveTo, Route},
     radar::{LiveBlip, RADAR_LAYER, RadarContact},
-    round::{GameState, RoundEntity, SpawnRound, TargetMobile},
+    round::{Attract, GameState, RoundEntity, SpawnRound, TargetMobile},
     shooter::Shooter,
 };
 
@@ -33,8 +35,8 @@ const BODY_CENTER: f32 = 0.9;
 const EYE_OFFSET: f32 = 0.7;
 pub const TARGET_MAX_HP: u32 = 3;
 
-const VIEW_RANGE: f32 = 40.0;
-const VIEW_HALF_ANGLE: f32 = 0.6; // ~34°, a bit narrower than the camera so "seen" means clearly on screen
+pub const VIEW_RANGE: f32 = 40.0;
+pub const VIEW_HALF_ANGLE: f32 = 0.6; // ~34°, a bit narrower than the camera so "seen" means clearly on screen
 const WALK_SPEED: f32 = 2.2;
 const RUN_SPEED: f32 = 5.5;
 /// "Close enough" for every arrival check (walk itself homes in to 0.2m).
@@ -44,6 +46,8 @@ const ARRIVE: f32 = 0.5;
 #[reflect(Component)]
 pub struct Target {
     pub hp: u32,
+    /// Hit points he started the round with (the Gunfight band sets it).
+    pub max_hp: u32,
 }
 
 /// Pitch node between the body (yaw) and the camera.
@@ -128,13 +132,21 @@ struct Fighting {
     peeking: bool,
     timer: Timer,
     hp_at_start: u32,
+    /// The side he's peeking from this time.
+    peek: Vec2,
+    /// Peeks left before he moves to a different cover.
+    peeks_left: u32,
 }
+
+/// Leave this cover spot: the next cover plan avoids it.
+#[derive(Component)]
+pub struct Relocate(pub Vec2);
 
 pub fn plugin(app: &mut App) {
     app.add_systems(OnEnter(GameState::Playing), spawn_target.in_set(SpawnRound))
         .add_systems(
             Update,
-            (perceive, gaze, walk).chain().run_if(in_state(GameState::Playing)),
+            (perceive, gaze, walk, roll).chain().run_if(in_state(GameState::Playing)),
         );
 }
 
@@ -143,7 +155,9 @@ fn spawn_target(
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
     mut trees: ResMut<Assets<BehaviorTreeRoot>>,
+    tuning: Res<Tuning>,
 ) {
+    let him = tuning.him();
     let blip = materials.add(StandardMaterial {
         base_color: Color::srgb(1.0, 0.2, 0.2),
         unlit: true,
@@ -160,7 +174,7 @@ fn spawn_target(
     commands.spawn((
         Name::new("Target"),
         RoundEntity,
-        Target { hp: TARGET_MAX_HP },
+        Target { hp: him.hp, max_hp: him.hp },
         Suspicion::default(),
         RadarContact(Color::srgb(1.0, 0.2, 0.2)),
         LookGoal {
@@ -188,7 +202,7 @@ fn spawn_target(
                         ..default()
                     },
                     Projection::Perspective(PerspectiveProjection {
-                        fov: 70f32.to_radians(),
+                        fov: crate::layout::BASE_VFOV,
                         ..default()
                     }),
                 )],
@@ -204,7 +218,7 @@ fn spawn_target(
             (
                 Name::new("Radar view cone"),
                 // Sector points +Y in its own plane; lay it flat, pointing forward (-Z).
-                Mesh3d(meshes.add(CircularSector::new(VIEW_RANGE * 0.5, VIEW_HALF_ANGLE))),
+                Mesh3d(meshes.add(CircularSector::new(VIEW_RANGE * 0.5, him.view_half_angle))),
                 MeshMaterial3d(cone),
                 Transform::from_xyz(0.0, 3.0, 0.0).with_rotation(Quat::from_rotation_x(-PI / 2.0)),
                 RenderLayers::layer(RADAR_LAYER),
@@ -227,7 +241,7 @@ fn behaviour() -> impl Node {
         ])),
         Box::new(Sequence::new(vec![
             Box::new(CheckIf::new(Cond(|| cond(is_alerted)))),
-            task(|| checker(investigate), || insert_while_running(Activity::Investigating)),
+            task(|| checker(investigate), investigate_listeners),
         ])),
         Box::new(Sequence::new(vec![
             Box::new(CheckIf::new(Cond(|| cond(is_mobile)))),
@@ -292,8 +306,8 @@ fn is_alerted(In(e): In<Entity>, q: Query<(), With<Alert>>) -> bool {
     q.contains(e)
 }
 
-fn is_mobile(In(_): In<Entity>, mobile: Res<TargetMobile>) -> bool {
-    mobile.0
+fn is_mobile(In(_): In<Entity>, mobile: Res<TargetMobile>, attract: Res<Attract>) -> bool {
+    mobile.0 || attract.0
 }
 
 /// True if a higher-priority branch wants control.
@@ -307,19 +321,29 @@ fn take_cover_listeners() -> Listeners {
     l.push((
         TaskEvent::Exit,
         listener(|In(e): In<Entity>, mut commands: Commands| {
-            commands.entity(e).try_remove::<MoveTo>();
+            commands.entity(e).try_remove::<(MoveTo, Evade)>();
         }),
     ));
     l
 }
 
-fn plan_cover(In(e): In<Entity>, mut commands: Commands, q: Query<(&Transform, &Suspicion)>) {
-    let Ok((t, s)) = q.get(e) else { return };
+fn plan_cover(
+    In(e): In<Entity>,
+    mut commands: Commands,
+    layout: Res<Layout>,
+    q: Query<(&Transform, &Suspicion, Option<&Relocate>)>,
+) {
+    let Ok((t, s, relocate)) = q.get(e) else { return };
     let here = t.translation.xz();
     let threat = s.last_known.map_or(here + t.forward().xz() * 10.0, |p| p.xz());
-    let cover = arena::find_cover(here, threat).unwrap_or(Cover { spot: here, peek: here });
+    let cover = layout
+        .find_cover_avoiding(here, threat, relocate.map(|r| r.0))
+        .or_else(|| layout.find_cover(here, threat))
+        .unwrap_or(Cover { spot: here, peek: here, alt_peek: here });
+    commands.entity(e).try_remove::<Relocate>();
     commands.entity(e).insert((
         CoverPlan(cover),
+        Evade(threat),
         MoveTo {
             dest: cover.spot.extend(BODY_CENTER).xzy(),
             speed: RUN_SPEED,
@@ -341,10 +365,13 @@ fn fight_listeners() -> Listeners {
         TaskEvent::Enter,
         listener(|In(e): In<Entity>, mut commands: Commands, q: Query<&Target>| {
             let hp = q.get(e).map_or(0, |t| t.hp);
+            let mut rng = rand::rng();
             commands.entity(e).insert(Fighting {
                 peeking: false,
-                timer: Timer::from_seconds(rand::rng().random_range(0.8..1.6), TimerMode::Once),
+                timer: Timer::from_seconds(rng.random_range(0.5..1.6), TimerMode::Once),
                 hp_at_start: hp,
+                peek: Vec2::ZERO,
+                peeks_left: rng.random_range(1..=3),
             });
         }),
     ));
@@ -357,8 +384,9 @@ fn fight_listeners() -> Listeners {
     l
 }
 
-/// Hide behind cover, then peek out to shoot, then hide again. Succeeds (so the tree
-/// re-plans cover) when he's no longer engaged or gets hit.
+/// Hide behind cover, then peek out to shoot, then hide again. Each peek picks a random side
+/// and duration (sometimes just a quick glance). Succeeds (so the tree re-plans cover) when
+/// he's no longer engaged, or, moving to a *different* cover, when he gets hit or after a few peeks.
 fn fight(
     In(e): In<Entity>,
     time: Res<Time>,
@@ -371,19 +399,34 @@ fn fight(
         &mut LookGoal,
         Option<&mut Fighting>,
         Has<MoveTo>,
+        Has<Grapple>,
+        Has<Relocate>,
     )>,
 ) -> TaskStatus {
-    let Ok((t, target, suspicion, plan, mut look, Some(mut fighting), moving)) = q.get_mut(e) else {
+    let Ok((t, target, suspicion, plan, mut look, Some(mut fighting), moving, grappling, relocate)) =
+        q.get_mut(e)
+    else {
         return RUNNING;
     };
-    if !suspicion.engaged || target.hp < fighting.hp_at_start {
+    // The grapple (`combat::grapple`) takes over; when it's done he runs for other cover.
+    if grappling {
+        return RUNNING;
+    }
+    if relocate {
+        return SUCCESS;
+    }
+    if !suspicion.engaged {
+        return SUCCESS;
+    }
+    if target.hp < fighting.hp_at_start {
+        commands.entity(e).insert(Relocate(plan.0.spot));
         return SUCCESS;
     }
     if let Some(p) = suspicion.last_known {
         look.point = p + Vec3::Y * EYE_OFFSET;
         look.turn_speed = 4.0;
     }
-    let goal = if fighting.peeking { plan.0.peek } else { plan.0.spot };
+    let goal = if fighting.peeking { fighting.peek } else { plan.0.spot };
     if t.translation.xz().distance(goal) >= ARRIVE {
         if !moving {
             commands.entity(e).insert(MoveTo {
@@ -395,13 +438,28 @@ fn fight(
         return RUNNING;
     }
     if fighting.timer.tick(time.delta()).is_finished() {
+        let mut rng = rand::rng();
         let peeking = !fighting.peeking;
-        let next = if peeking { plan.0.peek } else { plan.0.spot };
+        if !peeking {
+            fighting.peeks_left = fighting.peeks_left.saturating_sub(1);
+        } else if fighting.peeks_left == 0 {
+            // Done here: run to another cover instead of peeking from the same spot again.
+            commands.entity(e).insert(Relocate(plan.0.spot));
+            return SUCCESS;
+        }
+        if peeking {
+            fighting.peek = if rng.random_bool(0.5) { plan.0.peek } else { plan.0.alt_peek };
+        }
+        let next = if peeking { fighting.peek } else { plan.0.spot };
         fighting.peeking = peeking;
-        fighting.timer = Timer::from_seconds(
-            if peeking { 1.8 } else { rand::rng().random_range(0.8..2.0) },
-            TimerMode::Once,
-        );
+        let secs = if !peeking {
+            rng.random_range(0.5..2.2)
+        } else if rng.random_bool(0.3) {
+            rng.random_range(0.3..0.6) // quick glance
+        } else {
+            rng.random_range(1.2..2.6)
+        };
+        fighting.timer = Timer::from_seconds(secs, TimerMode::Once);
         commands.entity(e).insert(MoveTo {
             dest: next.extend(BODY_CENTER).xzy(),
             speed: RUN_SPEED,
@@ -411,18 +469,52 @@ fn fight(
     RUNNING
 }
 
+fn investigate_listeners() -> Listeners {
+    let mut l = insert_while_running(Activity::Investigating);
+    l.push((
+        TaskEvent::Exit,
+        listener(|In(e): In<Entity>, mut commands: Commands| {
+            commands.entity(e).try_remove::<MoveTo>();
+        }),
+    ));
+    l
+}
+
+/// Look toward the noise. If cover blocks the view (say he's hiding behind a pillar), walk
+/// toward it until he can see the spot, so he never stares at a wall forever.
 fn investigate(
     In(e): In<Entity>,
     time: Res<Time>,
     mut commands: Commands,
-    mut q: Query<(&Suspicion, &mut Alert, &mut LookGoal)>,
+    layout: Res<Layout>,
+    mut q: Query<(&Transform, &Suspicion, &mut Alert, &mut LookGoal, Has<MoveTo>)>,
 ) -> TaskStatus {
-    let Ok((suspicion, mut alert, mut goal)) = q.get_mut(e) else {
+    let Ok((t, suspicion, mut alert, mut goal, moving)) = q.get_mut(e) else {
         return FAILURE;
     };
     if suspicion.engaged {
         return FAILURE;
     }
+    let (here, there) = (t.translation.xz(), alert.at.xz());
+    if layout.los_blocked(here, there) && here.distance(there) > 3.0 {
+        if !moving {
+            // Head for a clear spot near the noise (it's often right up against cover).
+            let dest = (0..=20)
+                .map(|i| there.lerp(here, i as f32 / 20.0))
+                .find(|&p| layout.is_clear(p, 0.8))
+                .unwrap_or(here);
+            commands.entity(e).insert(MoveTo {
+                dest: dest.extend(BODY_CENTER).xzy(),
+                speed: WALK_SPEED,
+                strafe: false,
+            });
+        }
+        return RUNNING;
+    }
+    if moving {
+        commands.entity(e).remove::<MoveTo>();
+    }
+    // Only once he's stopped: while walking, `walk` steers his gaze along the route.
     goal.point = alert.at;
     goal.turn_speed = 3.5;
     if alert.timer.tick(time.delta()).is_finished() {
@@ -480,10 +572,10 @@ fn wander_listeners() -> Listeners {
     let mut l = insert_while_running(Activity::Wandering);
     l.push((
         TaskEvent::Enter,
-        listener(|In(e): In<Entity>, mut commands: Commands| {
-            let mut rng = rand::rng();
-            let r = ARENA_HALF - 4.0;
-            let dest = Vec3::new(rng.random_range(-r..r), BODY_CENTER, rng.random_range(-r..r));
+        listener(|In(e): In<Entity>, mut commands: Commands, layout: Res<Layout>, q: Query<&Transform>| {
+            let here = q.get(e).map_or(Vec2::ZERO, |t| t.translation.xz());
+            let spot = layout.random_point(&mut rand::rng(), 1.5, |_| true).unwrap_or(here);
+            let dest = spot.extend(BODY_CENTER).xzy();
             commands.entity(e).insert(MoveTo {
                 dest,
                 speed: WALK_SPEED,
@@ -503,6 +595,7 @@ fn wander_listeners() -> Listeners {
 fn wander(
     In(e): In<Entity>,
     mobile: Res<TargetMobile>,
+    attract: Res<Attract>,
     suspicion: Query<&Suspicion>,
     alerts: Query<(), With<Alert>>,
     q: Query<(&Transform, Option<&MoveTo>)>,
@@ -510,7 +603,7 @@ fn wander(
     if interrupted(e, &suspicion, &alerts) {
         return FAILURE;
     }
-    if !mobile.0 {
+    if !mobile.0 && !attract.0 {
         return SUCCESS;
     }
     let Ok((t, Some(m))) = q.get(e) else {
@@ -533,8 +626,10 @@ fn perceive(
     eyes: Single<&GlobalTransform, With<MainCamera>>,
     mut target: Single<(Entity, &mut Suspicion), With<Target>>,
     shooter: Single<(Entity, &Transform, &LinearVelocity), With<Shooter>>,
+    tuning: Res<Tuning>,
     mut commands: Commands,
 ) {
+    let him = tuning.him();
     let (target_e, ref mut suspicion) = *target;
     let (shooter_e, shooter_t, shooter_v) = *shooter;
     let eye = eyes.translation();
@@ -543,7 +638,7 @@ fn perceive(
     let angle = eyes.forward().angle_between(to_shooter);
 
     let sees = dist < VIEW_RANGE
-        && angle < VIEW_HALF_ANGLE
+        && angle < him.view_half_angle
         && Dir3::new(to_shooter).is_ok_and(|dir| {
             spatial
                 .cast_ray(
@@ -561,19 +656,30 @@ fn perceive(
     }
 
     let dt = time.delta_secs();
-    if sees {
+    if sees && suspicion.engaged {
+        // Mid-fight, any sighting is contact: he knows exactly where you are, so it re-arms the
+        // full engagement. Otherwise a still shooter at range only trickles suspicion back in on
+        // each peek, the hides drain it faster, and he talks himself out of a fight he's winning.
+        suspicion.level = 1.0;
+    } else if sees {
         let closeness = 1.0 - dist / VIEW_RANGE;
-        let centred = 1.0 - angle / VIEW_HALF_ANGLE;
+        let centred = 1.0 - angle / him.view_half_angle;
         let moving = if shooter_v.length() > 0.5 { 1.0 } else { 0.25 };
-        suspicion.bump((0.08 + 0.6 * closeness) * (0.4 + 0.6 * centred) * moving * dt);
+        suspicion.bump((0.08 + 0.6 * closeness) * (0.4 + 0.6 * centred) * moving * him.spot_rate * dt);
         // Half-sure: glance over.
         if suspicion.level > 0.5 && !suspicion.engaged {
             commands.entity(target_e).insert(Alert::new(shooter_t.translation, 1.5));
         }
     } else {
-        suspicion.level = (suspicion.level - 0.12 * dt).max(0.0);
-        if suspicion.level <= 0.0 {
+        // Mid-fight he stays keyed up for longer: hiding and switching cover shouldn't make him forget you.
+        let decay = if suspicion.engaged { 0.05 } else { 0.12 };
+        suspicion.level = (suspicion.level - decay * dt).max(0.0);
+        if suspicion.level <= 0.0 && suspicion.engaged {
             suspicion.engaged = false;
+            // Lost you: go check where you were last.
+            if let Some(p) = suspicion.last_known {
+                commands.entity(target_e).insert(Alert::new(p, 3.0));
+            }
         }
     }
 }
@@ -600,6 +706,39 @@ fn gaze(
     let (pitch, _, _) = head.rotation.to_euler(EulerRot::XYZ);
     let new_pitch = pitch + (desired_pitch - pitch).clamp(-step, step);
     head.rotation = Quat::from_rotation_x(new_pitch);
+}
+
+/// Diving sideways out of the line of fire (see `combat::dodge`). Overrides walking while it lasts;
+/// `t` counts up to `ROLL_SECS`.
+#[derive(Component, Reflect)]
+#[reflect(Component)]
+pub struct Roll {
+    pub t: f32,
+    pub velocity: Vec3,
+}
+
+pub const ROLL_SECS: f32 = 0.7;
+
+fn roll(
+    mut commands: Commands,
+    time: Res<Time>,
+    mut q: Query<(Entity, &mut Roll, &mut LinearVelocity, Option<&MoveTo>)>,
+) {
+    for (e, mut roll, mut v, moving) in &mut q {
+        roll.t += time.delta_secs();
+        if roll.t >= ROLL_SECS {
+            v.0 = Vec3::ZERO;
+            commands.entity(e).remove::<Roll>();
+            // Re-plan from where he landed, or he'd walk back to the waypoint he dived away from.
+            if let Some(&m) = moving {
+                commands.entity(e).insert(m);
+            }
+        } else {
+            // Explosive launch, bleeding off through the tumble to a standstill as he comes up.
+            // Averages to `velocity`, so he still covers the full distance.
+            v.0 = roll.velocity * 2.0 * (1.0 - roll.t / ROLL_SECS);
+        }
+    }
 }
 
 /// Follow the `Route` planned for `MoveTo`, looking where he's going; turn before moving.
@@ -631,7 +770,11 @@ fn walk(
         }
         look.point = Vec3::new(w.x, t.translation.y + EYE_OFFSET, w.y);
         look.turn_speed = 7.0;
-        v.0 = if t.forward().angle_between(d3) < 0.5 { d3.normalize() * m.speed } else { Vec3::ZERO };
+        // Full speed once facing the waypoint; keep going, slower, through a swerve (e.g. a weave)
+        // rather than stopping dead to turn; stop only to turn right round.
+        let off = t.forward().angle_between(d3);
+        let pace = if off < 0.5 { 1.0 } else if off < 1.2 { 0.5 } else { 0.0 };
+        v.0 = d3.normalize() * m.speed * pace;
     }
 }
 

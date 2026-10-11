@@ -1,19 +1,27 @@
-//! Second-person shooter: you see the world through your target's eyes while
+//! HIM, a second person shooter: you see the world through your target's eyes while
 //! driving the shooter who's hunting him.
 //!
 //! Split into `gameplay` (headless-testable simulation) and `presentation`
 //! (rendering-only: HUD, radar, FX, audio). Tests build an app from `gameplay` alone.
 
+pub mod adapt;
 pub mod arena;
 pub mod audio;
 pub mod combat;
+pub mod debug;
+pub mod difficulty;
 pub mod fx;
 pub mod hud;
+pub mod intro;
+pub mod juice;
+pub mod layout;
 pub mod nav;
 pub mod radar;
 pub mod round;
 pub mod shooter;
+pub mod start;
 pub mod target;
+pub mod touch;
 
 use avian3d::prelude::*;
 use bevy::prelude::*;
@@ -41,10 +49,11 @@ pub fn gameplay(app: &mut App) {
         target::plugin,
         shooter::plugin,
         combat::plugin,
+        difficulty::plugin,
     ));
 }
 
 /// Everything that only matters when there's a screen and speakers.
 pub fn presentation(app: &mut App) {
-    app.add_plugins((fx::plugin, audio::plugin, radar::plugin, hud::plugin));
+    app.add_plugins((juice::plugin, layout::plugin, fx::plugin, audio::plugin, radar::plugin, hud::plugin, touch::plugin, start::plugin, intro::plugin, debug::plugin));
 }
