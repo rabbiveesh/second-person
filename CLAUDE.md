@@ -97,6 +97,19 @@ Fyrox (small ecosystem), macroquad/three-d (too thin, would mean rolling our own
   While engaged, any sighting tops it back up to 1.0 (contact); out of sight it drains, and at 0 he lets go.
   Peek spots keep `PEEK_SLACK` clear of every corner and stay inside his `VIEW_RANGE`, or peeks see nothing and the fight stalls.
   The engine supports a moving target: the camera is parented to him, and walking is just velocity on a kinematic body.
+- `scramble.rs`: his scramble dart. While fighting and seeing you within `DART_RANGE` he winds up (`Charging`; violet
+  glow on the HUD, a whine timed to the wind-up), then throws a slow dart (`Dart`, moved by hand with a swept test)
+  that sets the shooter's `Scrambled { left, into }`: you drive with `into` instead of your own `ControlScheme`. Cover
+  stops it and a sidestep beats it. One of his moves at a time: never while you're grappled, staggered or scrambled,
+  and no grapple while a dart flies. While you're scrambled he stays out peeking and, at the top bands, sweeps his gaze
+  so the view-relative schemes swim. Every knob is `difficulty::ScrambleLevers` (Gunfight band: unlock, wind-up, speed,
+  lead, duration, cooldown, which scheme); `scramble_into` never picks the scheme you already drive. `Armed(false)`
+  takes it away (A/B runs).
+- `examples/duel_sim.rs`: bot rounds on the real gameplay plugins, for balancing his moves. The bot writes the
+  shooter's `ActionState` (like `touch`), knows where he is, walks the navmesh to a clear shot, aims with an error and
+  fires; it reads the dart's wind-up and sidesteps after a reaction time, and when scrambled drives with the wrong
+  scheme for a while before adapting. `--player sharp|average|novice --scheme tank --gunfight 10 --dart on|off
+  --immortal on` (nobody dies, for the dart's own numbers). About 7x real time per core.
 - `nav.rs`: vleue_navigator navmesh, built synchronously from `NavObstacle` colliders (the arena blocks) inside the
   layout's outline (`fit_navmesh` updates it each round).
   `MoveTo { dest, speed, strafe }` is planned into a `Route` and followed by `target::walk`. With `strafe` he moves

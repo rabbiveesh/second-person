@@ -27,7 +27,7 @@ use crate::{
     nav::{Evade, MoveTo, Route},
     radar::{LiveBlip, RADAR_LAYER, RadarContact},
     round::{Attract, GameState, RoundEntity, SpawnRound, TargetMobile},
-    shooter::Shooter,
+    shooter::{ControlScheme, Scrambled, Shooter},
 };
 
 /// Body capsule center height; eyes sit `EYE_OFFSET` above it (~1.6m).
@@ -42,6 +42,11 @@ const WALK_SPEED: f32 = 2.2;
 const RUN_SPEED: f32 = 5.5;
 /// "Close enough" for every arrival check (walk itself homes in to 0.2m).
 const ARRIVE: f32 = 0.5;
+/// While you're scrambled into a view-relative scheme he sweeps his gaze this far either side of
+/// you (radians), this fast (rad/s of phase), turning this fast.
+const SPIN_SWING: f32 = 0.55;
+const SPIN_RATE: f32 = 2.2;
+const SPIN_TURN_SPEED: f32 = 7.0;
 
 #[derive(Component, Reflect)]
 #[reflect(Component)]
@@ -334,7 +339,9 @@ fn plan_cover(
     layout: Res<Layout>,
     q: Query<(&Transform, &Suspicion, Option<&Relocate>)>,
 ) {
-    let Ok((t, s, relocate)) = q.get(e) else { return };
+    let Ok((t, s, relocate)) = q.get(e) else {
+        return;
+    };
     let here = t.translation.xz();
     let threat = s.last_known.map_or(here + t.forward().xz() * 10.0, |p| p.xz());
     let cover = layout
@@ -403,6 +410,8 @@ fn fight(
         Has<Grapple>,
         Has<Relocate>,
     )>,
+    you: Query<&Scrambled, With<Shooter>>,
+    tuning: Res<Tuning>,
 ) -> TaskStatus {
     let Ok((t, target, suspicion, plan, mut look, Some(mut fighting), moving, grappling, relocate)) =
         q.get_mut(e)
@@ -427,6 +436,26 @@ fn fight(
         look.point = p + Vec3::Y * EYE_OFFSET;
         look.turn_speed = 4.0;
     }
+    // You're scrambled: he presses it. He steps out to his peek spot and stays there shooting,
+    // and if your controls follow his view he sweeps it on purpose to throw you.
+    let exploiting = you.single().is_ok_and(|s| s.active());
+    if exploiting {
+        if !fighting.peeking {
+            fighting.peeking = true;
+            fighting.peek = plan.0.peek;
+            commands.entity(e).try_remove::<MoveTo>();
+        }
+        let spin = tuning.him().scramble.is_some_and(|l| l.spin);
+        let follows_view = you
+            .single()
+            .is_ok_and(|s| matches!(s.into, ControlScheme::Eyes | ControlScheme::Mirror | ControlScheme::Ice));
+        if spin && follows_view {
+            let eye = t.translation + Vec3::Y * EYE_OFFSET;
+            let swing = SPIN_SWING * (time.elapsed_secs() * SPIN_RATE).sin();
+            look.point = eye + Quat::from_rotation_y(swing) * (look.point - eye);
+            look.turn_speed = SPIN_TURN_SPEED;
+        }
+    }
     let goal = if fighting.peeking { fighting.peek } else { plan.0.spot };
     if t.translation.xz().distance(goal) >= ARRIVE {
         if !moving {
@@ -438,7 +467,7 @@ fn fight(
         }
         return RUNNING;
     }
-    if fighting.timer.tick(time.delta()).is_finished() {
+    if !exploiting && fighting.timer.tick(time.delta()).is_finished() {
         let mut rng = rand::rng();
         let peeking = !fighting.peeking;
         if !peeking {

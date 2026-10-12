@@ -110,6 +110,26 @@ impl ControlScheme {
     }
 }
 
+/// His scramble dart hit you: until `left` runs out you drive with `into` instead of your own
+/// `ControlScheme` (see `scramble`).
+#[derive(Component, Reflect, Default, Clone, Copy, Debug)]
+#[reflect(Component)]
+pub struct Scrambled {
+    pub left: f32,
+    pub into: ControlScheme,
+}
+
+impl Scrambled {
+    pub fn active(&self) -> bool {
+        self.left > 0.0
+    }
+
+    /// The scheme you're driving with right now.
+    pub fn scheme(&self, chosen: ControlScheme) -> ControlScheme {
+        if self.active() { self.into } else { chosen }
+    }
+}
+
 /// How fast the direct schemes swing you round to face where you're walking (rad/s).
 const FACE_TURN_SPEED: f32 = 10.0;
 /// Snake: walking pace with nothing held, and how much Up adds.
@@ -236,7 +256,7 @@ fn spawn_shooter(
         Name::new("Shooter"),
         RoundEntity,
         Shooter { hp: SHOOTER_MAX_HP },
-        (Stagger::default(), Stunned::default(), Sidestep::default()),
+        (Stagger::default(), Stunned::default(), Sidestep::default(), Scrambled::default()),
         InputMap::default()
             .with_dual_axis(ShooterAction::Drive, VirtualDPad::arrow_keys())
             .with(ShooterAction::Fire, KeyCode::Space)
@@ -317,16 +337,19 @@ fn drive(
             &mut Stagger,
             &mut Stunned,
             &mut Sidestep,
+            &mut Scrambled,
         ),
         With<Shooter>,
     >,
 ) {
     let now = time.elapsed_secs();
     let dt = time.delta_secs();
-    let scheme = *scheme;
+    let chosen = *scheme;
     let him = him.single().ok().map(|t| t.translation());
     let eyes = eyes.single().ok();
-    for (actions, t, mut rot, mut vel, mut stagger, mut stunned, mut side) in &mut q {
+    for (actions, t, mut rot, mut vel, mut stagger, mut stunned, mut side, mut scrambled) in &mut q {
+        let scheme = scrambled.scheme(chosen);
+        scrambled.left = (scrambled.left - dt).max(0.0);
         let input = actions.clamped_axis_pair(&ShooterAction::Drive);
         side.cooldown -= dt;
         // A fresh push straight left or right (not a diagonal, which is driving while turning).
@@ -424,7 +447,9 @@ fn face(rot: &mut Rotation, dir: Vec3, push: f32, dt: f32) {
     if push < 0.1 {
         return;
     }
-    let Ok(dir) = Dir3::new(dir.with_y(0.0)) else { return };
+    let Ok(dir) = Dir3::new(dir.with_y(0.0)) else {
+        return;
+    };
     let goal = Quat::from_rotation_y(f32::atan2(-dir.x, -dir.z));
     let angle = rot.0.angle_between(goal);
     if angle > 1e-4 {
@@ -442,7 +467,9 @@ fn bump(
         if stagger.left > 0.0 || stunned.left > 0.0 {
             continue;
         }
-        let Ok(dir) = Dir3::new(Vec3::new(vel.0.x, 0.0, vel.0.z)) else { continue };
+        let Ok(dir) = Dir3::new(Vec3::new(vel.0.x, 0.0, vel.0.z)) else {
+            continue;
+        };
         let Some(hit) = spatial.cast_ray(
             t.translation,
             dir,

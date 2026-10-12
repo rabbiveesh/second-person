@@ -10,7 +10,8 @@ use crate::{
     layout::ScreenLayout,
     radar::RadarMode,
     round::{GameState, TargetMobile},
-    shooter::{ControlScheme, SHOOTER_MAX_HP, Shooter, Stunned},
+    scramble::Charging,
+    shooter::{ControlScheme, SHOOTER_MAX_HP, Scrambled, Shooter, Stunned},
     start::Started,
     target::{Activity, Suspicion, Target},
     touch::{TouchControls, TouchWhistle, WHISTLE_SIZE},
@@ -64,6 +65,9 @@ const WIN_BANNERS: &[&str] = &[
 
 /// Won without taking a scratch.
 const FLAWLESS_BANNER: &str = "FLAWLESS VICTORY";
+
+/// The scramble dart's colour, everywhere it shows.
+const SCRAMBLE_VIOLET: egui::Color32 = egui::Color32::from_rgb(196, 107, 255);
 
 pub fn plugin(app: &mut App) {
     app.init_resource::<Flashes>()
@@ -142,8 +146,8 @@ fn draw_hud(
     arena: Res<Layout>,
     flashes: Res<Flashes>,
     layout: Res<ScreenLayout>,
-    shooter: Option<Single<(&Shooter, &Stunned)>>,
-    target: Option<Single<(&Target, &Suspicion, Option<&Activity>)>>,
+    shooter: Option<Single<(&Shooter, &Stunned, &Scrambled)>>,
+    target: Option<Single<(&Target, &Suspicion, Option<&Activity>, Option<&Charging>)>>,
 ) -> Result {
     let ctx = contexts.ctx_mut()?;
     let screen = ctx.content_rect();
@@ -179,9 +183,14 @@ fn draw_hud(
             egui::Frame::popup(ui.style()).show(ui, |ui| {
                 ui.set_width(240.0);
                 if let Some(shooter) = &shooter {
-                    let (shooter, stunned) = **shooter;
+                    let (shooter, stunned, scrambled) = **shooter;
                     if stunned.left > 0.0 {
                         ui.colored_label(egui::Color32::from_rgb(255, 120, 60), "YOU (the shooter) · STUNNED");
+                    } else if scrambled.active() {
+                        ui.colored_label(
+                            SCRAMBLE_VIOLET,
+                            format!("YOU · SCRAMBLED: {:?} {:.1}s", scrambled.into, scrambled.left),
+                        );
                     } else {
                         ui.label("YOU (the shooter)");
                     }
@@ -192,7 +201,7 @@ fn draw_hud(
                     );
                 }
                 if let Some(target) = &target {
-                    let (target, suspicion, activity) = **target;
+                    let (target, suspicion, activity, _) = **target;
                     ui.add_space(6.0);
                     ui.label("TARGET");
                     health_bar(ui, target.hp / target.max_hp.max(1.0), flashes.ghost);
@@ -282,7 +291,7 @@ fn draw_hud(
                         egui::RichText::new(format!(
                             "C controls: {:?}   {}   Space fire   W whistle   M target walks: {}   Tab radar: {:?}   L arena: {}   F1 inspector",
                             *controls,
-                            controls.hint(),
+                            shooter.as_ref().map_or(*controls, |s| s.2.scheme(*controls)).hint(),
                             if mobile.0 { "on" } else { "off" },
                             *radar_mode,
                             arena.name,
@@ -331,6 +340,21 @@ fn draw_hud(
             let width = view.width().min(view.height()) * (0.12 + 0.18 * strength);
             vignette(&painter, view, width, egui::Color32::from_rgba_unmultiplied(150, 0, 0, (strength * 200.0) as u8));
         }
+    }
+    // His dart hand glows violet in his view as he winds up, brighter as it's about to fly.
+    if let Some(target) = &target
+        && let Some(charging) = target.3
+    {
+        let pulse = 0.6 + 0.4 * (charging.left * 30.0).sin().abs();
+        let strength = (1.0 - charging.left.min(1.0)).max(0.35) * pulse;
+        let width = view.width().min(view.height()) * 0.18;
+        vignette(&painter, view, width, SCRAMBLE_VIOLET.gamma_multiply(strength));
+    }
+    // Scrambled: a violet rim on the view for as long as it lasts.
+    if let Some(shooter) = &shooter
+        && shooter.2.active()
+    {
+        painter.rect_stroke(view.shrink(3.0), 0.0, egui::Stroke::new(6.0, SCRAMBLE_VIOLET), egui::StrokeKind::Inside);
     }
     // He's dead: the view dims to dark red as he lies there.
     if *state.get() == GameState::Won {

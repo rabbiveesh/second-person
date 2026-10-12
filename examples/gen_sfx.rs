@@ -62,6 +62,8 @@ fn main() {
     }
     bufs.push(("bump".into(), bump()));
     bufs.push(("whistle".into(), whistle()));
+    bufs.push(("dart_charge".into(), dart_charge()));
+    bufs.push(("dart_hit".into(), dart_hit()));
 
     for (name, mut buf) in bufs {
         // Trim trailing silence and normalise.
@@ -190,6 +192,42 @@ fn whistle() -> Vec<f32> {
             let gap = if (0.22..0.28).contains(&t) { 0.3 } else { 1.0 };
             let env = (t / 0.02).min(1.0) * ((0.55 - t) / 0.08).clamp(0.0, 1.0) * gap;
             (phase.sin() + breath[n] * 0.08) * env
+        })
+        .collect()
+}
+
+/// His scramble dart winding up: a whine rising over a second, warbling faster as it climbs.
+/// Played at `1 / windup` speed, so a quicker wind-up is also a higher one.
+fn dart_charge() -> Vec<f32> {
+    let len = RATE as usize;
+    let dt = 1.0 / RATE as f32;
+    let mut phase = 0.0f32;
+    (0..len)
+        .map(|n| {
+            let t = n as f32 * dt;
+            let f = 500.0 + 1300.0 * t * t;
+            let warble = 1.0 + 0.04 * (std::f32::consts::TAU * (8.0 + 20.0 * t) * t).sin();
+            phase += std::f32::consts::TAU * f * warble * dt;
+            let env = (t / 0.05).min(1.0) * ((1.0 - t) / 0.02).clamp(0.0, 1.0) * (0.4 + 0.6 * t);
+            (phase.sin() + 0.3 * (2.0 * phase).sin()) * env
+        })
+        .collect()
+}
+
+/// The dart landing: a woozy, detuned wobble sliding down, as your sense of direction goes.
+fn dart_hit() -> Vec<f32> {
+    let len = (RATE as f32 * 0.7) as usize;
+    let dt = 1.0 / RATE as f32;
+    let (mut a, mut b) = (0.0f32, 0.0f32);
+    (0..len)
+        .map(|n| {
+            let t = n as f32 * dt;
+            let f = 900.0 * (-t / 0.35).exp() + 180.0;
+            let wobble = 1.0 + 0.15 * (std::f32::consts::TAU * 11.0 * t).sin();
+            a += std::f32::consts::TAU * f * wobble * dt;
+            b += std::f32::consts::TAU * f * 1.07 / wobble * dt;
+            let env = (t / 0.005).min(1.0) * (-t / 0.25).exp();
+            (a.sin() + b.sin()) * 0.5 * env
         })
         .collect()
 }

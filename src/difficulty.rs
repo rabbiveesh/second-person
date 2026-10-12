@@ -93,6 +93,48 @@ pub struct HisLevers {
     /// Dodge roll cooldown; `None` = he doesn't roll.
     pub roll_cooldown: Option<f32>,
     pub hp: f32,
+    /// His scramble dart; `None` = he doesn't have it.
+    pub scramble: Option<ScrambleLevers>,
+}
+
+/// The scramble dart (see `scramble`), from the Gunfight band. Every knob gets nastier as the
+/// band rises: what you're scrambled into, for how long, how quickly he winds up, how fast the
+/// dart flies and how well he leads you.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct ScrambleLevers {
+    pub cooldown: f32,
+    /// Seconds of telegraph (glow + whine) before the dart leaves his hand.
+    pub windup: f32,
+    /// Dart speed, m/s.
+    pub speed: f32,
+    /// Seconds you stay scrambled.
+    pub secs: f32,
+    pub into: ControlScheme,
+    /// While you're on `Eyes`/`Mirror` he sweeps his head on purpose: your controls are his view.
+    pub spin: bool,
+    /// How much he leads your movement when he aims (0 = at you, 1 = where you'll be).
+    pub lead: f32,
+}
+
+/// Lowest Gunfight band at which he has the scramble dart.
+pub const SCRAMBLE_FROM_BAND: Band = 3;
+
+impl ScrambleLevers {
+    pub fn from_band(gunfight: Band) -> Option<Self> {
+        (gunfight >= SCRAMBLE_FROM_BAND).then(|| ScrambleLevers {
+            cooldown: by_band(gunfight, 22.0, 16.0, 8.0),
+            windup: by_band(gunfight, 1.2, 0.9, 0.45),
+            speed: by_band(gunfight, 9.0, 12.0, 22.0),
+            secs: by_band(gunfight, 2.5, 3.0, 5.0),
+            into: match gunfight {
+                ..=4 => ControlScheme::Compass,
+                5..=6 => ControlScheme::Eyes,
+                _ => ControlScheme::Mirror,
+            },
+            spin: gunfight >= 9,
+            lead: by_band(gunfight, 0.0, 0.0, 1.0),
+        })
+    }
 }
 
 /// Lowest Gunfight band at which he uses the grappling hook...
@@ -113,6 +155,7 @@ impl HisLevers {
             roll_cooldown: (gunfight >= ROLL_FROM_BAND).then(|| by_band(gunfight, 4.0, combat::ROLL_COOLDOWN, 1.6)),
             // A bar, not a count, so the dial can move it by any amount without it showing.
             hp: by_band(gunfight, 70.0, target::TARGET_MAX_HP, 140.0),
+            scramble: ScrambleLevers::from_band(gunfight),
         }
     }
 }
@@ -137,6 +180,8 @@ pub struct AssistLevers {
     pub countdown: f32,
     /// Whether the overhead shot shows which way he's facing.
     pub reveal_facing: bool,
+    /// Extra seconds of scramble-dart wind-up, on top of his band's.
+    pub scramble_windup: f32,
 }
 
 /// Below this dial the `Auto` radar stops sweeping: a player good enough to fade the help out
@@ -158,6 +203,7 @@ impl AssistLevers {
             countdown: 2.0 + 2.0 * a,
             // Like the sonar: a player good enough to play the bare map finds his facing for themselves.
             reveal_facing: a >= SONAR_FROM,
+            scramble_windup: 0.6 * a,
         }
     }
 }

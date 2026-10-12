@@ -341,7 +341,9 @@ fn peeks_see_the_threat_with_some_slack() {
                 continue;
             }
             for from in [Vec2::ZERO, Vec2::new(15.0, -15.0), Vec2::new(-15.0, 15.0)] {
-                let Some(cover) = layout.find_cover(from, threat) else { continue };
+                let Some(cover) = layout.find_cover(from, threat) else {
+                    continue;
+                };
                 for peek in [cover.peek, cover.alt_peek] {
                     assert!(peek.distance(threat) < VIEW_RANGE - 1.0, "{cover:?}: peek out of eyesight of {threat}");
                     for (&him, &you) in ring.iter().flat_map(|a| ring.iter().map(move |b| (a, b))) {
@@ -1365,4 +1367,62 @@ fn hit_kinds_and_their_damage() {
     assert!(HitKind::Seen.damage(-1.0) < HitKind::Seen.damage(1.0));
     assert!(HitKind::Blind.damage(-1.0) > HitKind::Seen.damage(1.0));
     assert!((HitKind::Behind.damage(0.0) - SHOT_DAMAGE * BEHIND_BONUS).abs() < 1e-3);
+}
+
+#[test]
+fn his_scramble_dart_scrambles_a_shooter_who_stands_still() {
+    use second_person::difficulty::Tuning;
+    use second_person::scramble::{DartThrown, ScrambledHit};
+    use second_person::shooter::{ControlScheme, Scrambled};
+    let mut app = app_with(|app| {
+        app.insert_resource(Tuning { stealth: 10, gunfight: 10, assists: 0.0 });
+        count::<DartThrown>(app);
+        count::<ScrambledHit>(app);
+    });
+    let shooter = single::<Shooter>(&mut app);
+    // In the open, in front of him, close enough for the dart but not the roll.
+    stage(&mut app, Vec3::new(0.0, 0.9, 12.0), Vec3::new(0.0, 0.9, 12.0));
+    // Already onto you: skip the slow build-up of suspicion.
+    let target = single::<Target>(&mut app);
+    app.world_mut().get_mut::<Suspicion>(target).unwrap().bump(1.0);
+    let mut scrambled_at = None;
+    for i in 0..(30.0 / DT) as usize {
+        app.world_mut().get_mut::<Shooter>(shooter).unwrap().hp = 1e6;
+        app.update();
+        let s = *app.world().get::<Scrambled>(shooter).unwrap();
+        if std::env::var("TRACE").is_ok() && i % 15 == 0 {
+            let w = app.world_mut();
+            let mut q = w.query_filtered::<(
+                &Transform,
+                &Suspicion,
+                Option<&Activity>,
+                Has<second_person::combat::Grapple>,
+                Has<second_person::scramble::Charging>,
+            ), With<Target>>();
+            let (t, su, act, g, c) = q.single(w).unwrap();
+            let (t, sees, eng, act) = (t.translation, su.sees_shooter, su.engaged, act.copied());
+            let you = w.get::<Transform>(shooter).unwrap().translation;
+            eprintln!(
+                "t={:.2} him={:.1?} you={:.1?} act={:?} sees={} eng={} grapple={} charging={} scr={:?}",
+                i as f32 * DT,
+                t.xz(),
+                you.xz(),
+                act,
+                sees,
+                eng,
+                g,
+                c,
+                s
+            );
+        }
+        if s.active() && scrambled_at.is_none() {
+            scrambled_at = Some((i as f32 * DT, s));
+        }
+    }
+    assert!(counted::<DartThrown>(&app) >= 1, "he threw a dart");
+    let (at, s) = scrambled_at.expect("and it scrambled you");
+    assert_eq!(counted::<ScrambledHit>(&app) >= 1, true);
+    assert_eq!(s.into, ControlScheme::Mirror, "band 10 scrambles you into Mirror");
+    assert!(at > 4.0, "never in the opening seconds: {at}");
+    assert!(at < 30.0, "but soon after: {at}");
 }

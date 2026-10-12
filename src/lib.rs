@@ -19,6 +19,7 @@ pub mod music;
 pub mod nav;
 pub mod radar;
 pub mod round;
+pub mod scramble;
 pub mod shooter;
 pub mod start;
 pub mod target;
@@ -50,6 +51,7 @@ pub fn gameplay(app: &mut App) {
         target::plugin,
         shooter::plugin,
         combat::plugin,
+        scramble::plugin,
         difficulty::plugin,
     ));
 }

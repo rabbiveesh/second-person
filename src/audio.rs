@@ -17,6 +17,7 @@ use crate::{
     arena::{Floor, Floors, Layout},
     combat::{BulletImpact, GrappleFired, Gunshot, HitKind, ShooterHit, TargetHit, WarningShot},
     round::{GameState, RoundEntity},
+    scramble::{DartCharging, ScrambledHit},
     shooter::{Bump, Footstep, Whistle},
     target::MainCamera,
 };
@@ -71,6 +72,8 @@ pub struct Sfx {
     bump: Sound,
     whistle: Sound,
     grapple: Sound,
+    dart_charge: Sound,
+    dart_hit: Sound,
 }
 
 /// A playing sound placed in the world. Its two instances are re-mixed every frame.
@@ -110,6 +113,8 @@ fn load(mut commands: Commands, assets: Res<AssetServer>) {
         bump: Sound::load(&assets, "bump"),
         whistle: Sound::load(&assets, "whistle"),
         grapple: Sound::load(&assets, "grapple"),
+        dart_charge: Sound::load(&assets, "dart_charge"),
+        dart_hit: Sound::load(&assets, "dart_hit"),
     });
 }
 
@@ -171,6 +176,7 @@ fn play_events(
     mut shooter_hits: MessageReader<ShooterHit>,
     mut warnings: MessageReader<WarningShot>,
     mut grapples: MessageReader<GrappleFired>,
+    mut darts: (MessageReader<DartCharging>, MessageReader<ScrambledHit>),
     floors: Res<Floors>,
     layout: Res<Layout>,
     mut steps: MessageReader<Footstep>,
@@ -212,6 +218,14 @@ fn play_events(
     }
     for g in grapples.read() {
         play(&sfx.grapple, g.from, 0.0, 40.0, 1.0, 1.0);
+    }
+    let (dart_charges, dart_hits) = &mut darts;
+    for c in dart_charges.read() {
+        // Its length is the wind-up's, so you can time the dodge by ear.
+        play(&sfx.dart_charge, ear.translation(), -3.0, 40.0, 1.0, 1.0 / c.windup.max(0.1) as f64);
+    }
+    for h in dart_hits.read() {
+        play(&sfx.dart_hit, h.at, 0.0, 40.0, 1.0, 1.0);
     }
     for w in warnings.read() {
         play(&sfx.return_fire, w.from, -2.0, 30.0, 1.0, 1.0);
