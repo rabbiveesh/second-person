@@ -10,7 +10,7 @@ RUN cargo build --release --no-default-features --example net_spike \
 
 FROM debian:bookworm-slim
 RUN apt-get update && apt-get install -y --no-install-recommends \
-        libasound2 libudev1 libxkbcommon0 libwayland-client0 ca-certificates \
+        libasound2 libudev1 libcap2 libxkbcommon0 libwayland-client0 ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 COPY --from=build /net_spike /usr/local/bin/net_spike
 CMD ["net_spike", "server"]
