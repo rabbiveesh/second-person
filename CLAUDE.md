@@ -109,6 +109,11 @@ Fyrox (small ecosystem), macroquad/three-d (too thin, would mean rolling our own
   Walking into the world emits `Bump` and a `Stagger` knockback (can't walk, only turn); his laser staggers you too.
   `Sidestep`: a double-tap straight left/right on `Drive` (arrows, or a double flick of the stick, since both feed the same
   axis) hops 2.4m sideways with the facing restored to before the taps; the landing writes a `Footstep`. Stagger cuts it.
+- `shooter.rs` `ControlScheme` (spike; C cycles, touch has a button): `Tank` (above), and direct schemes that walk where
+  you point and swing you to face it, differing only in the frame Up/Right push along (`ControlScheme::basis`):
+  `Compass` (radar up), `Eyes` (his view, so his turning turns your controls), `Mirror` (`Eyes` turned round),
+  `Magnetic` (Up at him, Left/Right circle). Plus `Snake` (always walking) and `Ice` (`Eyes` with momentum).
+  The direct schemes read the touch stick in analog (`touch::analog`); only `Tank` and `Snake` snap to 8 ways and hop.
 - `touch.rs`: phone controls, spawned on the first touch. A floating `virtual_joystick` stick (left half,
   snapped to 8 arrow-key directions by `snap_8way`) and tap-right-to-fire write the shooter's `ActionState` in
   leafwing's `ManualControl` set. The HUD swaps the R/M/Tab hints for egui buttons once touch is on, plus a big
@@ -133,6 +138,11 @@ Fyrox (small ecosystem), macroquad/three-d (too thin, would mean rolling our own
   suspicion), target hitscan return fire while engaged (`Aim`: out of sight he holds the angle where you vanished, so re-peeking
   the same corner within `HOLD_ANGLE_SECS` draws a shot after `REACQUIRE_SECS`), warning shots (`WarningShot`, deliberate misses near
   `last_known`) while suspicious but not engaged, win/lose check.
+  His hit points are a bar (`TARGET_MAX_HP` at band 5), not a count. Each hit is a `HitKind`: `Seen` does about a
+  third (`SHOT_DAMAGE`), `Blind` (out of his view) and `Behind` hit harder, and every hit varies (`SEEN_SPREAD`,
+  `BLIND_SPREAD`) so the bar never shows a fixed number of shots and the bands can move his HP unnoticed.
+  `ControlScheme::damage_dealt` trims the damage for the schemes that do more of the work for you, and
+  `Tuning::damage_dealt` scales that trim with the bands: next to nothing at band 1, double at band 10.
 - `layout.rs` (presentation): `ScreenLayout` (view, deck, radar rects) refit from the window every frame, so
   rotation and resizes just work. Landscape: full-window view, radar in the corner over it. Portrait (h ≥ 1.3w): a
   deck below the view holds the radar and whistle, and the left thumb drives from it. FOV is Hor+ with a floor:

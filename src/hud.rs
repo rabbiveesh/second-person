@@ -6,11 +6,11 @@ use rand::seq::IndexedRandom;
 
 use crate::{
     arena::Layout,
-    combat::{ShooterHit, TargetHit},
+    combat::{HitKind, ShooterHit, TargetHit},
     layout::ScreenLayout,
     radar::RadarMode,
     round::{GameState, TargetMobile},
-    shooter::{SHOOTER_MAX_HP, Shooter, Stunned},
+    shooter::{ControlScheme, SHOOTER_MAX_HP, Shooter, Stunned},
     start::Started,
     target::{Activity, Suspicion, Target},
     touch::{TouchControls, TouchWhistle, WHISTLE_SIZE},
@@ -22,6 +22,12 @@ use crate::{
 struct Flashes {
     hurt: f32,
     hit: f32,
+    /// The last hit on him, for the marker: a blind or in-the-back shot reads bigger.
+    hit_kind: Option<HitKind>,
+    /// His bar's trailing ghost (fraction of full): it holds where the bar was, then drains
+    /// down to it, so each hit's chunk shows.
+    ghost: f32,
+    ghost_hold: f32,
     ended: f32,
     /// End-of-round headline, picked when the round ends.
     banner: &'static str,
@@ -88,6 +94,7 @@ fn track_flashes(
     mut hurt: MessageReader<ShooterHit>,
     mut hit: MessageReader<TargetHit>,
     shooter: Option<Single<&Shooter>>,
+    target: Option<Single<&Target>>,
 ) {
     let decay = time.delta_secs() * 2.5;
     if flashes.ended == 0.0 && *state.get() != GameState::Playing {
@@ -107,8 +114,17 @@ fn track_flashes(
     if hurt.read().count() > 0 {
         flashes.hurt = 0.6;
     }
-    if hit.read().count() > 0 {
-        flashes.hit = 0.7;
+    if let Some(h) = hit.read().last() {
+        flashes.hit = if h.kind == HitKind::Seen { 0.7 } else { 1.0 };
+        flashes.hit_kind = Some(h.kind);
+        flashes.ghost_hold = 0.45;
+    }
+    let now = target.map_or(1.0, |t| t.hp / t.max_hp.max(1.0));
+    flashes.ghost_hold -= time.delta_secs();
+    if flashes.ghost < now {
+        flashes.ghost = now;
+    } else if flashes.ghost_hold <= 0.0 {
+        flashes.ghost = (flashes.ghost - time.delta_secs() * 0.8).max(now);
     }
 }
 
@@ -118,6 +134,7 @@ fn draw_hud(
     state: Res<State<GameState>>,
     mut mobile: ResMut<TargetMobile>,
     mut radar_mode: ResMut<RadarMode>,
+    mut controls: ResMut<ControlScheme>,
     mut next: ResMut<NextState<GameState>>,
     touch: Res<TouchControls>,
     started: Res<Started>,
@@ -177,11 +194,8 @@ fn draw_hud(
                 if let Some(target) = &target {
                     let (target, suspicion, activity) = **target;
                     ui.add_space(6.0);
-                    ui.label(format!(
-                        "TARGET  {}{}",
-                        "♥".repeat(target.hp as usize),
-                        "♡".repeat(target.max_hp.saturating_sub(target.hp) as usize)
-                    ));
+                    ui.label("TARGET");
+                    health_bar(ui, target.hp / target.max_hp.max(1.0), flashes.ghost);
                     let colour = if suspicion.engaged {
                         egui::Color32::from_rgb(220, 50, 40)
                     } else {
@@ -217,6 +231,9 @@ fn draw_hud(
                             mobile.0 = !mobile.0;
                         }
                     });
+                    if ui.button(format!("controls: {:?}", *controls)).clicked() {
+                        *controls = controls.next();
+                    }
                 }
             });
         });
@@ -263,7 +280,9 @@ fn draw_hud(
                 ui.add(
                     egui::Label::new(
                         egui::RichText::new(format!(
-                            "Up/Down move   Left/Right turn (double-tap: hop)   Space fire   W whistle   M target walks: {}   Tab radar: {:?}   L arena: {}   F1 inspector",
+                            "C controls: {:?}   {}   Space fire   W whistle   M target walks: {}   Tab radar: {:?}   L arena: {}   F1 inspector",
+                            *controls,
+                            controls.hint(),
                             if mobile.0 { "on" } else { "off" },
                             *radar_mode,
                             arena.name,
@@ -302,11 +321,11 @@ fn draw_hud(
     }
     if flashes.hit > 0.0 {
         painter.rect_filled(view, 0.0, egui::Color32::from_rgba_unmultiplied(255, 255, 255, (flashes.hit * 60.0) as u8));
-        hit_marker(&painter, view.center(), flashes.hit);
+        hit_marker(&painter, view.center(), flashes.hit, flashes.hit_kind);
     }
     // His view reddens at the edges as he's wounded, pulsing on each hit.
     if let Some(target) = &target {
-        let wounds = 1.0 - target.0.hp as f32 / target.0.max_hp.max(1) as f32;
+        let wounds = 1.0 - target.0.hp / target.0.max_hp.max(1.0);
         let strength = (wounds * 0.7 + flashes.hit * 0.5).min(1.0);
         if strength > 0.0 {
             let width = view.width().min(view.height()) * (0.12 + 0.18 * strength);
@@ -397,12 +416,30 @@ fn fill_around(painter: &egui::Painter, outer: egui::Rect, hole: egui::Rect, col
 }
 
 /// An X of four short strokes around `at`, fading with `alpha`.
-fn hit_marker(painter: &egui::Painter, at: egui::Pos2, alpha: f32) {
+/// His bar: no number on it, and a pale ghost where it was before the last hit.
+fn health_bar(ui: &mut egui::Ui, frac: f32, ghost: f32) {
+    let (rect, _) = ui.allocate_exact_size(egui::vec2(ui.available_width(), 12.0), egui::Sense::hover());
+    let p = ui.painter();
+    let part = |f: f32| egui::Rect::from_min_size(rect.min, egui::vec2(rect.width() * f.clamp(0.0, 1.0), rect.height()));
+    p.rect_filled(rect, 2.0, egui::Color32::from_gray(45));
+    p.rect_filled(part(ghost), 2.0, egui::Color32::from_rgb(255, 225, 200));
+    p.rect_filled(part(frac), 2.0, egui::Color32::from_rgb(200, 40, 35));
+}
+
+fn hit_marker(painter: &egui::Painter, at: egui::Pos2, alpha: f32, kind: Option<HitKind>) {
     let a = alpha.min(1.0);
-    let fill = egui::Color32::from_rgba_unmultiplied(255, 60, 40, (a * 255.0) as u8);
+    let blind = kind.is_some_and(|k| k != HitKind::Seen);
+    // Blind hits are amber and bigger, and say so, so players learn why some shots land harder.
+    let (r, g, b) = if blind { (255, 190, 40) } else { (255, 60, 40) };
+    let fill = egui::Color32::from_rgba_unmultiplied(r, g, b, (a * 255.0) as u8);
     let edge = egui::Color32::from_rgba_unmultiplied(0, 0, 0, (a * 200.0) as u8);
+    let s = if blind { 1.5 } else { 1.0 };
+    if blind {
+        let text = if kind == Some(HitKind::Behind) { "IN THE BACK" } else { "BLIND SHOT" };
+        painter.text(at + egui::vec2(0.0, 62.0), egui::Align2::CENTER_TOP, text, egui::FontId::monospace(20.0), fill);
+    }
     // Pops out a little as it fades.
-    let (inner, outer) = (12.0 + 10.0 * (1.0 - a), 34.0 + 10.0 * (1.0 - a));
+    let (inner, outer) = ((12.0 + 10.0 * (1.0 - a)) * s, (34.0 + 10.0 * (1.0 - a)) * s);
     for (x, y) in [(1.0, 1.0), (1.0, -1.0), (-1.0, 1.0), (-1.0, -1.0)] {
         let d = egui::vec2(x, y) * std::f32::consts::FRAC_1_SQRT_2;
         let stroke = [at + d * inner, at + d * outer];

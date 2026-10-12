@@ -21,6 +21,7 @@ use crate::{
     adapt::{self, AdaptEvent, BASE_BAND, Band, Cue, PlayerProfile, RoundResult, Skill, profile::BASELINE_ASSISTS},
     combat::{self, TargetHit},
     round::{GameState, SpawnRound},
+    shooter::ControlScheme,
     target::{self, Suspicion, Target},
 };
 
@@ -48,7 +49,20 @@ impl Tuning {
     pub fn help(&self) -> AssistLevers {
         AssistLevers::from_dial(self.assists)
     }
+
+    /// What your shots do with `scheme` this round. The easy schemes' penalty
+    /// (`ControlScheme::damage_dealt`, the band-5 amount) scales with how good you are: barely
+    /// there while you're struggling, much steeper once you're strong, so leaning on them stops
+    /// paying exactly when you no longer need them.
+    pub fn damage_dealt(&self, scheme: ControlScheme) -> f32 {
+        let bite = |b| by_band(b, 0.3, 1.0, 2.0);
+        let scale = (bite(self.stealth) + bite(self.gunfight)) / 2.0;
+        (1.0 - (1.0 - scheme.damage_dealt()) * scale).max(MIN_DAMAGE_DEALT)
+    }
 }
+
+/// However good you are, an easy scheme still does this much.
+pub const MIN_DAMAGE_DEALT: f32 = 0.35;
 
 /// Interpolate a knob over the bands: `lo` at band 1, `base` (today's value) at [`BASE_BAND`],
 /// `hi` at band 10, linear in between.
@@ -78,7 +92,7 @@ pub struct HisLevers {
     pub grapple_cooldown: Option<f32>,
     /// Dodge roll cooldown; `None` = he doesn't roll.
     pub roll_cooldown: Option<f32>,
-    pub hp: u32,
+    pub hp: f32,
 }
 
 /// Lowest Gunfight band at which he uses the grappling hook...
@@ -97,11 +111,8 @@ impl HisLevers {
             hold_angle_secs: by_band(gunfight, 0.5, combat::HOLD_ANGLE_SECS, 2.5),
             grapple_cooldown: (gunfight >= GRAPPLE_FROM_BAND).then(|| by_band(gunfight, 20.0, combat::GRAPPLE_COOLDOWN, 9.0)),
             roll_cooldown: (gunfight >= ROLL_FROM_BAND).then(|| by_band(gunfight, 4.0, combat::ROLL_COOLDOWN, 1.6)),
-            hp: match gunfight {
-                ..=2 => target::TARGET_MAX_HP - 1,
-                9.. => target::TARGET_MAX_HP + 1,
-                _ => target::TARGET_MAX_HP,
-            },
+            // A bar, not a count, so the dial can move it by any amount without it showing.
+            hp: by_band(gunfight, 70.0, target::TARGET_MAX_HP, 140.0),
         }
     }
 }
@@ -345,6 +356,21 @@ mod tests {
     }
 
     #[test]
+    fn easy_schemes_cost_more_as_you_get_better() {
+        let at = |b| Tuning { stealth: b, gunfight: b, ..Tuning::default() };
+        for s in ControlScheme::ALL {
+            assert!((at(BASE_BAND).damage_dealt(s) - s.damage_dealt()).abs() < 1e-6, "band 5 is the hand-tuned {s:?}");
+        }
+        assert_eq!(at(10).damage_dealt(ControlScheme::Tank), 1.0, "tank never pays");
+        for b in adapt::MIN_BAND..adapt::MAX_BAND {
+            let (lo, hi) = (at(b).damage_dealt(ControlScheme::Magnetic), at(b + 1).damage_dealt(ControlScheme::Magnetic));
+            assert!(hi < lo, "band {b}: {lo} -> {hi}");
+        }
+        assert!(at(1).damage_dealt(ControlScheme::Magnetic) > 0.9, "barely a cost while struggling");
+        assert!(at(10).damage_dealt(ControlScheme::Magnetic) >= MIN_DAMAGE_DEALT);
+    }
+
+    #[test]
     fn higher_bands_make_him_better() {
         for b in adapt::MIN_BAND..adapt::MAX_BAND {
             let (lo, hi) = (HisLevers::from_bands(b, b), HisLevers::from_bands(b + 1, b + 1));
@@ -354,7 +380,7 @@ mod tests {
             assert!(hi.hold_angle_secs > lo.hold_angle_secs);
             assert!(hi.grapple_cooldown.is_some() >= lo.grapple_cooldown.is_some());
             assert!(hi.roll_cooldown.is_some() >= lo.roll_cooldown.is_some());
-            assert!(hi.hp >= lo.hp);
+            assert!(hi.hp > lo.hp);
         }
         let weakest = HisLevers::from_bands(1, 1);
         assert_eq!((weakest.grapple_cooldown, weakest.roll_cooldown), (None, None));

@@ -33,7 +33,8 @@ use crate::{
 /// Body capsule center height; eyes sit `EYE_OFFSET` above it (~1.6m).
 const BODY_CENTER: f32 = 0.9;
 const EYE_OFFSET: f32 = 0.7;
-pub const TARGET_MAX_HP: u32 = 3;
+/// His hit points at band 5. A shot he sees coming does about a third (see `combat::SHOT_DAMAGE`).
+pub const TARGET_MAX_HP: f32 = 100.0;
 
 pub const VIEW_RANGE: f32 = 40.0;
 pub const VIEW_HALF_ANGLE: f32 = 0.6; // ~34°, a bit narrower than the camera so "seen" means clearly on screen
@@ -45,9 +46,9 @@ const ARRIVE: f32 = 0.5;
 #[derive(Component, Reflect)]
 #[reflect(Component)]
 pub struct Target {
-    pub hp: u32,
+    pub hp: f32,
     /// Hit points he started the round with (the Gunfight band sets it).
-    pub max_hp: u32,
+    pub max_hp: f32,
 }
 
 /// Pitch node between the body (yaw) and the camera.
@@ -131,7 +132,7 @@ pub struct CoverPlan(pub Cover);
 struct Fighting {
     peeking: bool,
     timer: Timer,
-    hp_at_start: u32,
+    hp_at_start: f32,
     /// The side he's peeking from this time.
     peek: Vec2,
     /// Peeks left before he moves to a different cover.
@@ -364,7 +365,7 @@ fn fight_listeners() -> Listeners {
     l.push((
         TaskEvent::Enter,
         listener(|In(e): In<Entity>, mut commands: Commands, q: Query<&Target>| {
-            let hp = q.get(e).map_or(0, |t| t.hp);
+            let hp = q.get(e).map_or(0.0, |t| t.hp);
             let mut rng = rand::rng();
             commands.entity(e).insert(Fighting {
                 peeking: false,

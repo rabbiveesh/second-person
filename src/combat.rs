@@ -11,7 +11,7 @@ use crate::{
     difficulty::{AssistLevers, HisLevers, Tuning},
     round::{GameState, RoundEntity},
     nav::MoveTo,
-    shooter::{Bump, Footstep, Whistle, Shooter, ShooterAction, Stagger, Stunned},
+    shooter::{Bump, ControlScheme, Footstep, Whistle, Shooter, ShooterAction, Stagger, Stunned},
     target::{Activity, Alert, MainCamera, ROLL_SECS, Relocate, Roll, Suspicion, Target},
 };
 
@@ -88,6 +88,55 @@ pub struct TargetHit {
     pub at: Vec3,
     /// Which way the bullet was travelling (unit, horizontal-ish).
     pub dir: Vec3,
+    pub damage: f32,
+    pub kind: HitKind,
+}
+
+/// Whether he saw the shot coming. Shots from outside his view hit harder: you're most
+/// dangerous when you can't see yourself either.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Reflect)]
+pub enum HitKind {
+    /// He had you in sight.
+    Seen,
+    /// You were out of his view (behind cover, or off to the side).
+    Blind,
+    /// From behind him.
+    Behind,
+}
+
+/// A shot he sees coming: about a third of his band-5 bar.
+pub const SHOT_DAMAGE: f32 = 34.0;
+pub const BLIND_BONUS: f32 = 1.6;
+pub const BEHIND_BONUS: f32 = 2.2;
+/// A shot from further round than this off his facing counts as from behind.
+pub const BEHIND_ANGLE: f32 = 110.0_f32.to_radians();
+/// Each hit varies by up to this much either way, so the bar never shows a fixed number of
+/// shots (and his hit points can move with the bands without it being countable).
+pub const SEEN_SPREAD: f32 = 0.12;
+pub const BLIND_SPREAD: f32 = 0.25;
+
+impl HitKind {
+    /// `facing` is his (horizontal) facing, `to_shooter` from him to where the shot came from.
+    pub fn of(sees_shooter: bool, facing: Vec3, to_shooter: Vec3) -> Self {
+        let (f, s) = (facing.with_y(0.0), to_shooter.with_y(0.0));
+        if f.length_squared() > 0.0 && s.length_squared() > 0.0 && f.angle_between(s) > BEHIND_ANGLE {
+            HitKind::Behind
+        } else if sees_shooter {
+            HitKind::Seen
+        } else {
+            HitKind::Blind
+        }
+    }
+
+    /// Damage before the scheme's factor; `roll` is uniform in -1..1.
+    pub fn damage(self, roll: f32) -> f32 {
+        let (bonus, spread) = match self {
+            HitKind::Seen => (1.0, SEEN_SPREAD),
+            HitKind::Blind => (BLIND_BONUS, BLIND_SPREAD),
+            HitKind::Behind => (BEHIND_BONUS, BLIND_SPREAD),
+        };
+        SHOT_DAMAGE * bonus * (1.0 + spread * roll.clamp(-1.0, 1.0))
+    }
 }
 
 /// The target fired a deliberate miss near where he thinks you are: a warning, no damage.
@@ -232,6 +281,7 @@ fn bullet_hits(
     mut hits: MessageWriter<TargetHit>,
     mut impacts: MessageWriter<BulletImpact>,
     tuning: Res<Tuning>,
+    scheme: Res<ControlScheme>,
 ) {
     let near_miss = NEAR_MISS_RANGE * tuning.him().hearing;
     let mut spent = Vec::new();
@@ -251,12 +301,14 @@ fn bullet_hits(
         commands.entity(bullet_e).despawn();
 
         if let Ok((_, mut target, target_t, mut suspicion)) = targets.get_mut(other) {
-            target.hp = target.hp.saturating_sub(1);
+            let kind = HitKind::of(suspicion.sees_shooter, *target_t.forward(), bullet.origin - target_t.translation);
+            let damage = kind.damage(rand::rng().random_range(-1.0..1.0)) * tuning.damage_dealt(*scheme);
+            target.hp = (target.hp - damage).max(0.0);
             suspicion.bump(0.6);
             suspicion.last_known = Some(bullet.origin);
             commands.entity(other).insert(Alert::new(bullet.origin, 3.0));
             let dir = (target_t.translation - bullet.origin).normalize_or_zero();
-            hits.write(TargetHit { at: target_t.translation, dir });
+            hits.write(TargetHit { at: target_t.translation, dir, damage, kind });
         } else {
             impacts.write(BulletImpact { at: bullet_t.translation });
             // Near miss: he hears the impact and looks toward where it came from.
@@ -517,7 +569,7 @@ pub fn check_outcome(
     shooter: Single<&Shooter>,
     mut next: ResMut<NextState<GameState>>,
 ) {
-    if target.hp == 0 {
+    if target.hp <= 0.0 {
         next.set(GameState::Won);
     } else if shooter.hp <= 0.0 {
         next.set(GameState::Lost);

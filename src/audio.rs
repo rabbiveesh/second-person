@@ -15,7 +15,7 @@ use rand::Rng;
 
 use crate::{
     arena::{Floor, Floors, Layout},
-    combat::{BulletImpact, GrappleFired, Gunshot, ShooterHit, TargetHit, WarningShot},
+    combat::{BulletImpact, GrappleFired, Gunshot, HitKind, ShooterHit, TargetHit, WarningShot},
     round::{GameState, RoundEntity},
     shooter::{Bump, Footstep, Whistle},
     target::MainCamera,
@@ -206,7 +206,9 @@ fn play_events(
         play(&sfx.impact, i.at, -4.0, 30.0, 1.0, 1.0);
     }
     for h in target_hits.read() {
-        play(&sfx.target_hit, h.at, 0.0, 10.0, 1.0, 1.0);
+        // A shot he never saw coming lands heavier: louder and pitched down.
+        let blind = h.kind != HitKind::Seen;
+        play(&sfx.target_hit, h.at, if blind { 3.0 } else { 0.0 }, 10.0, 1.0, if blind { 0.72 } else { 1.0 });
     }
     for g in grapples.read() {
         play(&sfx.grapple, g.from, 0.0, 40.0, 1.0, 1.0);

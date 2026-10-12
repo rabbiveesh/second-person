@@ -147,7 +147,9 @@ fn shooting_the_target_hurts_and_alerts_him() {
 
     assert_eq!(counted::<TargetHit>(&app), 1);
     let target = single::<Target>(&mut app);
-    assert_eq!(app.world().get::<Target>(target).unwrap().hp, TARGET_MAX_HP - 1);
+    // From behind, so it lands in the back: well over a seen shot's third of his bar.
+    let hp = app.world().get::<Target>(target).unwrap().hp;
+    assert!(hp < TARGET_MAX_HP - 50.0, "a shot in the back hits hard: {hp}");
     assert!(app.world().get::<Suspicion>(target).unwrap().level > 0.5);
 }
 
@@ -178,7 +180,7 @@ fn killing_him_drops_his_view_to_the_floor() {
     let mut app = app();
     stage(&mut app, Vec3::new(0.0, 0.9, 6.0), Vec3::new(0.0, 0.9, -10.0));
     let target = single::<Target>(&mut app);
-    app.world_mut().get_mut::<Target>(target).unwrap().hp = 1;
+    app.world_mut().get_mut::<Target>(target).unwrap().hp = 1.0;
     press(&mut app, KeyCode::Space);
     step(&mut app, 0.5);
     assert_eq!(*app.world().resource::<State<GameState>>().get(), GameState::Won);
@@ -1072,7 +1074,7 @@ fn magnetised_fire_down_the_line_misses_most_shots_on_a_cover_run() {
         let (mut shots_seen, mut hits_seen) = (0, 0);
         run_for_cover(him, shooter_pos, |app, target, shooter| {
             // He can take it: we're counting hits, not ending the round.
-            app.world_mut().get_mut::<Target>(target).unwrap().hp = 1000;
+            app.world_mut().get_mut::<Target>(target).unwrap().hp = 1000.0;
             // Keep the gun on him (magnetism does the rest) and fire as fast as allowed.
             let at = app.world().get::<Transform>(target).unwrap().translation;
             place(app, shooter, shooter_at, yaw_towards(shooter_at, at));
@@ -1120,7 +1122,8 @@ fn his_hit_points_follow_the_gunfight_band() {
     });
     let target = single::<Target>(&mut app);
     let t = app.world().get::<Target>(target).unwrap();
-    assert_eq!((t.hp, t.max_hp), (TARGET_MAX_HP - 1, TARGET_MAX_HP - 1));
+    assert_eq!(t.hp, t.max_hp);
+    assert!(t.max_hp < TARGET_MAX_HP, "weaker at band 1: {}", t.max_hp);
 }
 
 #[test]
@@ -1137,7 +1140,7 @@ fn adaptive_rounds_are_tuned_by_the_engine_and_reported_back() {
 
     // Kill him from behind before he ever engages: a win, and a clean one for Stealth.
     stage(&mut app, Vec3::new(0.0, 0.9, 6.0), Vec3::new(0.0, 0.9, -10.0));
-    app.world_mut().get_mut::<Target>(target).unwrap().hp = 1;
+    app.world_mut().get_mut::<Target>(target).unwrap().hp = 1.0;
     press(&mut app, KeyCode::Space);
     step(&mut app, 0.5);
     assert_eq!(*app.world().resource::<State<GameState>>().get(), GameState::Won);
@@ -1185,4 +1188,181 @@ fn the_debug_dump_reports_the_difficulty_and_recent_events() {
     for needle in ["=== adaptive difficulty ===", "stealth  center", "his levers", "Tuning = ", "=== target ===", "Suspicion", "Gunshot"] {
         assert!(report.contains(needle), "missing {needle:?} in:\n{report}");
     }
+}
+
+fn set_controls(app: &mut App, scheme: second_person::shooter::ControlScheme) {
+    app.insert_resource(scheme);
+}
+
+/// Hold `key` for `secs`, then let go; returns where the shooter got to and its yaw.
+fn hold(app: &mut App, key: KeyCode, secs: f32) -> (Vec3, f32) {
+    let shooter = single::<Shooter>(app);
+    key.press(app.world_mut());
+    step(app, secs);
+    key.release(app.world_mut());
+    app.update();
+    let t = *app.world().get::<Transform>(shooter).unwrap();
+    (t.translation, t.rotation.to_euler(EulerRot::YXZ).0)
+}
+
+#[test]
+fn c_cycles_the_control_schemes() {
+    use second_person::shooter::ControlScheme;
+    let mut app = app();
+    assert_eq!(*app.world().resource::<ControlScheme>(), ControlScheme::Tank);
+    for want in &ControlScheme::ALL[1..] {
+        press(&mut app, KeyCode::KeyC);
+        assert_eq!(app.world().resource::<ControlScheme>(), want);
+    }
+    press(&mut app, KeyCode::KeyC);
+    assert_eq!(*app.world().resource::<ControlScheme>(), ControlScheme::Tank);
+}
+
+#[test]
+fn direct_schemes_push_along_their_own_frames() {
+    use second_person::shooter::ControlScheme;
+    let me = Vec3::new(4.0, 0.9, 10.0);
+    let him = Vec3::new(4.0, 0.9, 0.0);
+    // His eyes look along +X.
+    let eyes = GlobalTransform::from(Transform::from_xyz(0.0, 1.6, 0.0).looking_to(Vec3::X, Vec3::Y));
+    let near = |a: Vec3, b: Vec3| a.distance(b) < 1e-4;
+    let basis = |s: ControlScheme| s.basis(me, Some(him), Some(&eyes)).unwrap();
+
+    let (f, r) = basis(ControlScheme::Compass);
+    assert!(near(f, Vec3::NEG_Z) && near(r, Vec3::X), "north is up the radar: {f} {r}");
+    let (f, r) = basis(ControlScheme::Eyes);
+    assert!(near(f, Vec3::X) && near(r, Vec3::Z), "up goes where he looks, right is his right: {f} {r}");
+    let (f, r) = basis(ControlScheme::Mirror);
+    assert!(near(f, Vec3::NEG_X) && near(r, Vec3::NEG_Z), "mirror turns it round: {f} {r}");
+    let (f, r) = basis(ControlScheme::Magnetic);
+    assert!(near(f, Vec3::NEG_Z) && near(r, Vec3::X), "up walks at him: {f} {r}");
+    assert!(ControlScheme::Tank.basis(me, Some(him), Some(&eyes)).is_none());
+}
+
+#[test]
+fn compass_walks_north_whichever_way_you_face_and_turns_you_to_it() {
+    use second_person::shooter::ControlScheme;
+    let mut app = app();
+    set_controls(&mut app, ControlScheme::Compass);
+    let shooter = single::<Shooter>(&mut app);
+    let start = Vec3::new(-15.0, 0.9, 15.0);
+    place(&mut app, shooter, start, std::f32::consts::FRAC_PI_2); // facing -X
+    app.update();
+
+    let (pos, yaw) = hold(&mut app, KeyCode::ArrowUp, 0.6);
+    assert!(pos.z < start.z - 1.5, "Up walks north (-Z): {pos}");
+    assert!((pos.x - start.x).abs() < 0.3, "and only north: {pos}");
+    assert!(yaw.abs() < 0.05, "turned to face north: yaw {yaw}");
+
+    let (pos2, yaw) = hold(&mut app, KeyCode::ArrowRight, 0.6);
+    assert!(pos2.x > pos.x + 1.5, "Right walks east (+X): {pos2}");
+    assert!((yaw + std::f32::consts::FRAC_PI_2).abs() < 0.05, "facing east: yaw {yaw}");
+}
+
+#[test]
+fn magnetic_up_walks_straight_at_him() {
+    use second_person::shooter::ControlScheme;
+    let mut app = app();
+    set_controls(&mut app, ControlScheme::Magnetic);
+    let shooter = single::<Shooter>(&mut app);
+    let target = single::<Target>(&mut app);
+    // Off to one side and facing away, so the only thing pointing at him is the scheme.
+    let start = Vec3::new(10.0, 0.9, 10.0);
+    place(&mut app, shooter, start, 0.0);
+    app.update();
+    let him = app.world().get::<GlobalTransform>(target).unwrap().translation();
+    let before = start.with_y(0.0).distance(him.with_y(0.0));
+
+    let (pos, _) = hold(&mut app, KeyCode::ArrowUp, 0.5);
+    let after = pos.with_y(0.0).distance(him.with_y(0.0));
+    assert!(before - after > 2.0, "closed in on him: {before} -> {after}");
+    let facing = app.world().get::<Transform>(shooter).unwrap().forward();
+    let to_him = (him - pos).with_y(0.0).normalize();
+    assert!(facing.dot(to_him) > 0.95, "and faces him: {facing} vs {to_him}");
+}
+
+#[test]
+fn snake_never_stops_unless_you_hold_down() {
+    use second_person::shooter::ControlScheme;
+    let mut app = app();
+    set_controls(&mut app, ControlScheme::Snake);
+    let shooter = single::<Shooter>(&mut app);
+    let start = Vec3::new(-15.0, 0.9, 15.0);
+    place(&mut app, shooter, start, 0.0);
+    app.update();
+    step(&mut app, 0.5);
+    let pos = app.world().get::<Transform>(shooter).unwrap().translation;
+    assert!(pos.z < start.z - 1.0, "walks on its own: {pos}");
+    let (held, _) = hold(&mut app, KeyCode::ArrowDown, 0.5);
+    assert!(held.distance(pos) < 0.6, "Down stands still: {pos} -> {held}");
+}
+
+#[test]
+fn on_ice_you_keep_sliding_after_you_let_go() {
+    use second_person::shooter::ControlScheme;
+    let mut app = app();
+    set_controls(&mut app, ControlScheme::Ice);
+    let shooter = single::<Shooter>(&mut app);
+    place(&mut app, shooter, Vec3::new(-15.0, 0.9, 15.0), 0.0);
+    app.update();
+    let (released, _) = hold(&mut app, KeyCode::ArrowUp, 0.8);
+    step(&mut app, 0.5);
+    let slid = app.world().get::<Transform>(shooter).unwrap().translation;
+    assert!(slid.distance(released) > 1.0, "still sliding: {released} -> {slid}");
+}
+
+/// Fire one shot at him from `from` while he faces `faces`; returns the damage it did.
+fn shot_damage_from(app: &mut App, from: Vec3, faces: Vec3) -> f32 {
+    stage(app, from, faces);
+    let target = single::<Target>(app);
+    let before = app.world().get::<Target>(target).unwrap().hp;
+    press(app, KeyCode::Space);
+    step(app, 0.4);
+    before - app.world().get::<Target>(target).unwrap().hp
+}
+
+#[test]
+fn shots_he_never_sees_hit_harder_and_easy_controls_hit_softer() {
+    use second_person::combat::{BLIND_BONUS, SEEN_SPREAD, SHOT_DAMAGE};
+    use second_person::shooter::ControlScheme;
+    // Inside his dodge-roll range, so a shot he sees still lands.
+    let from = Vec3::new(0.0, 0.9, 4.0);
+    // Face to face: he sees it coming.
+    let mut a = app();
+    let target = single::<Target>(&mut a);
+    // Let him actually see you first.
+    stage(&mut a, from, from);
+    step(&mut a, 0.3);
+    assert!(a.world().get::<Suspicion>(target).unwrap().sees_shooter);
+    let seen = shot_damage_from(&mut a, from, from);
+    assert!((seen - SHOT_DAMAGE).abs() <= SHOT_DAMAGE * SEEN_SPREAD + 0.01, "a seen shot: {seen}");
+
+    // Side on, out of his view cone but not behind him: blind.
+    let mut a = app();
+    let blind = shot_damage_from(&mut a, from, Vec3::new(10.0, 0.9, 0.0));
+    assert!(blind > SHOT_DAMAGE * BLIND_BONUS * 0.74, "a blind shot: {blind}");
+
+    // Magnetic walks you at him, so it pays in damage.
+    let mut a = app();
+    a.insert_resource(ControlScheme::Magnetic);
+    let target = single::<Target>(&mut a);
+    stage(&mut a, from, from);
+    step(&mut a, 0.3);
+    assert!(a.world().get::<Suspicion>(target).unwrap().sees_shooter);
+    let weak = shot_damage_from(&mut a, from, from);
+    let most = SHOT_DAMAGE * (1.0 + SEEN_SPREAD) * ControlScheme::Magnetic.damage_dealt();
+    assert!(weak > 0.0 && weak <= most + 0.01, "magnetic hits softer: {weak}");
+}
+
+#[test]
+fn hit_kinds_and_their_damage() {
+    use second_person::combat::{BEHIND_BONUS, HitKind, SHOT_DAMAGE};
+    let ahead = Vec3::NEG_Z;
+    assert_eq!(HitKind::of(true, ahead, Vec3::new(0.0, 0.0, -5.0)), HitKind::Seen);
+    assert_eq!(HitKind::of(false, ahead, Vec3::new(5.0, 0.0, 0.0)), HitKind::Blind);
+    assert_eq!(HitKind::of(false, ahead, Vec3::new(1.0, 0.0, 5.0)), HitKind::Behind);
+    // Every kind varies, and the worst blind shot still beats the best seen one.
+    assert!(HitKind::Seen.damage(-1.0) < HitKind::Seen.damage(1.0));
+    assert!(HitKind::Blind.damage(-1.0) > HitKind::Seen.damage(1.0));
+    assert!((HitKind::Behind.damage(0.0) - SHOT_DAMAGE * BEHIND_BONUS).abs() < 1e-3);
 }
