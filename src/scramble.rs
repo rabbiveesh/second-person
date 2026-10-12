@@ -24,6 +24,8 @@ pub const DART_RANGE: std::ops::Range<f32> = 6.0..22.0;
 const DART_LIFETIME: f32 = 3.0;
 /// Hit radius: the dart's own plus the shooter's capsule.
 const DART_HIT_RADIUS: f32 = 0.35 + 0.25;
+/// The dart appears this far in front of him.
+const DART_LAUNCH_AHEAD: f32 = 0.8;
 /// No dart for this long after a round starts, so the opening isn't decided by one.
 const FIRST_DART_AFTER: f32 = 4.0;
 
@@ -210,7 +212,8 @@ fn charge(
         Dart { velocity, left: DART_LIFETIME },
         Mesh3d(look.mesh.clone()),
         MeshMaterial3d(look.material.clone()),
-        Transform::from_translation(from.with_y(you.translation.y)),
+        // A step out from his eyes, so it isn't a blob filling his view on the first frame.
+        Transform::from_translation((from + velocity.normalize_or_zero() * DART_LAUNCH_AHEAD).with_y(you.translation.y)),
     ));
     thrown.write(DartThrown { from, velocity });
 }

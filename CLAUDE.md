@@ -109,7 +109,8 @@ Fyrox (small ecosystem), macroquad/three-d (too thin, would mean rolling our own
   shooter's `ActionState` (like `touch`), knows where he is, walks the navmesh to a clear shot, aims with an error and
   fires; it reads the dart's wind-up and sidesteps after a reaction time, and when scrambled drives with the wrong
   scheme for a while before adapting. `--player sharp|average|novice --scheme tank --gunfight 10 --dart on|off
-  --immortal on` (nobody dies, for the dart's own numbers). About 7x real time per core.
+  --immortal on` (nobody dies, for the dart's own numbers). About 7x real time per core. The bot lives in
+  `examples/common/bot.rs`; `examples/duel_clip.rs` renders a bot match from his eyes to PNG frames (see its header).
 - `nav.rs`: vleue_navigator navmesh, built synchronously from `NavObstacle` colliders (the arena blocks) inside the
   layout's outline (`fit_navmesh` updates it each round).
   `MoveTo { dest, speed, strafe }` is planned into a `Route` and followed by `target::walk`. With `strafe` he moves
