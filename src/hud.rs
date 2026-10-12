@@ -8,7 +8,7 @@ use crate::{
     arena::Layout,
     combat::{HitKind, ShooterHit, TargetHit},
     layout::ScreenLayout,
-    radar::RadarMode,
+    radar::{RadarCamera, RadarMode},
     round::{GameState, TargetMobile},
     shooter::{ControlScheme, SHOOTER_MAX_HP, Shooter, Stunned},
     start::Started,
@@ -144,17 +144,24 @@ fn draw_hud(
     layout: Res<ScreenLayout>,
     shooter: Option<Single<(&Shooter, &Stunned)>>,
     target: Option<Single<(&Target, &Suspicion, Option<&Activity>)>>,
+    radar_camera: Option<Single<&Camera, With<RadarCamera>>>,
 ) -> Result {
     let ctx = contexts.ctx_mut()?;
     let screen = ctx.content_rect();
     let view = rect(layout.view);
 
     // Portrait deck under the view, holding the radar and whistle. Filled around the radar, not
-    // under it: egui draws after every camera, so a full fill would paint over the radar.
+    // under it: egui draws after every camera, so a full fill would paint over the radar. With
+    // the radar off nothing renders into its viewport, so the hole would show the bare clear colour.
     if layout.portrait() {
         let deck = rect(layout.deck);
         let painter = ctx.layer_painter(egui::LayerId::background());
-        fill_around(&painter, deck, rect(layout.radar), egui::Color32::from_rgb(14, 20, 17));
+        let colour = egui::Color32::from_rgb(14, 20, 17);
+        if radar_camera.is_some_and(|c| c.is_active) {
+            fill_around(&painter, deck, rect(layout.radar), colour);
+        } else {
+            painter.rect_filled(deck, 0.0, colour);
+        }
         painter.hline(deck.x_range(), deck.top(), egui::Stroke::new(2.0, egui::Color32::from_rgb(40, 90, 60)));
         if touch.0 {
             painter.text(
@@ -187,7 +194,7 @@ fn draw_hud(
                     }
                     ui.add(
                         egui::ProgressBar::new(shooter.hp / SHOOTER_MAX_HP)
-                            .text(format!("{:.0} HP", shooter.hp))
+                            .text(hp_label(shooter.hp))
                             .fill(egui::Color32::from_rgb(60, 170, 80)),
                     );
                 }
@@ -465,4 +472,23 @@ fn vignette(painter: &egui::Painter, rect: egui::Rect, width: f32, colour: egui:
         mesh.add_triangle(2 * i + 1, 2 * j, 2 * j + 1);
     }
     painter.add(egui::Shape::mesh(mesh));
+}
+
+/// Whole HP for display, rounded up: any health left reads as at least 1, so the bar never says
+/// 0 while you're still standing (death is `hp <= 0`, and assisted damage leaves fractions).
+fn hp_label(hp: f32) -> String {
+    format!("{} HP", hp.ceil() as i32)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::hp_label;
+
+    #[test]
+    fn alive_never_reads_zero() {
+        assert_eq!(hp_label(0.3), "1 HP");
+        assert_eq!(hp_label(0.0), "0 HP");
+        assert_eq!(hp_label(99.2), "100 HP");
+        assert_eq!(hp_label(100.0), "100 HP");
+    }
 }
