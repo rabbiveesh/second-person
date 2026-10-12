@@ -97,6 +97,8 @@ Fyrox (small ecosystem), macroquad/three-d (too thin, would mean rolling our own
   While engaged, any sighting tops it back up to 1.0 (contact); out of sight it drains, and at 0 he lets go.
   Peek spots keep `PEEK_SLACK` clear of every corner and stay inside his `VIEW_RANGE`, or peeks see nothing and the fight stalls.
   The engine supports a moving target: the camera is parented to him, and walking is just velocity on a kinematic body.
+  His body (torso, head, visor, gun) is on `target::BODY_LAYER`, which the `MainCamera` only renders from outside him:
+  `intro::fly_camera` adds the layer for the overhead shot and drops it `BODY_HIDE_DIST` before the swoop reaches his eyes.
 - `scramble.rs`: his scramble dart. While fighting and seeing you within `DART_RANGE` he winds up (`Charging`; violet
   glow on the HUD, a whine timed to the wind-up), then throws a slow dart (`Dart`, moved by hand with a swept test)
   that sets the shooter's `Scrambled { left, into }`: you drive with `into` instead of your own `ControlScheme`. Cover

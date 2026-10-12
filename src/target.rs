@@ -33,6 +33,9 @@ use crate::{
 /// Body capsule center height; eyes sit `EYE_OFFSET` above it (~1.6m).
 const BODY_CENTER: f32 = 0.9;
 const EYE_OFFSET: f32 = 0.7;
+/// His body's own render layer. The camera lives in his head, so it only looks at this layer from
+/// outside him (the round intro's overhead shot); in his eyes it would be in the way.
+pub const BODY_LAYER: usize = 2;
 /// His hit points at band 5. A shot he sees coming does about a third (see `combat::SHOT_DAMAGE`).
 pub const TARGET_MAX_HP: f32 = 100.0;
 
@@ -169,6 +172,12 @@ fn spawn_target(
         unlit: true,
         ..default()
     });
+    let skin = materials.add(Color::srgb(0.6, 0.14, 0.12));
+    let visor = materials.add(StandardMaterial {
+        base_color: Color::srgb(0.15, 0.02, 0.02),
+        emissive: LinearRgba::rgb(1.6, 0.15, 0.1),
+        ..default()
+    });
     let cone = materials.add(StandardMaterial {
         base_color: Color::srgba(1.0, 0.9, 0.3, 0.25),
         alpha_mode: AlphaMode::Blend,
@@ -195,23 +204,53 @@ fn spawn_target(
         BehaviorTree::from_node(behaviour(), &mut trees),
         children![
             (
+                Name::new("Torso"),
+                Mesh3d(meshes.add(Capsule3d::new(0.32, 1.0))),
+                MeshMaterial3d(skin.clone()),
+                Transform::from_xyz(0.0, -0.08, 0.0),
+                RenderLayers::layer(BODY_LAYER),
+            ),
+            (
+                Name::new("Gun"),
+                Mesh3d(meshes.add(Cuboid::new(0.1, 0.1, 0.6))),
+                MeshMaterial3d(materials.add(Color::srgb(0.12, 0.12, 0.12))),
+                Transform::from_xyz(0.3, 0.35, -0.4),
+                RenderLayers::layer(BODY_LAYER),
+            ),
+            (
                 Name::new("Head"),
                 TargetHead,
                 Transform::from_xyz(0.0, EYE_OFFSET, 0.0),
                 Visibility::default(),
-                children![(
-                    Name::new("Eyes"),
-                    MainCamera,
-                    Camera3d::default(),
-                    Camera {
-                        order: 0,
-                        ..default()
-                    },
-                    Projection::Perspective(PerspectiveProjection {
-                        fov: crate::layout::BASE_VFOV,
-                        ..default()
-                    }),
-                )],
+                children![
+                    (
+                        Name::new("Skull"),
+                        Mesh3d(meshes.add(Sphere::new(0.22))),
+                        MeshMaterial3d(skin),
+                        RenderLayers::layer(BODY_LAYER),
+                    ),
+                    (
+                        Name::new("Visor"),
+                        Mesh3d(meshes.add(Cuboid::new(0.3, 0.08, 0.12))),
+                        MeshMaterial3d(visor),
+                        Transform::from_xyz(0.0, 0.02, -0.17),
+                        RenderLayers::layer(BODY_LAYER),
+                    ),
+                    (
+                        Name::new("Eyes"),
+                        MainCamera,
+                        Camera3d::default(),
+                        Camera {
+                            order: 0,
+                            ..default()
+                        },
+                        RenderLayers::layer(0),
+                        Projection::Perspective(PerspectiveProjection {
+                            fov: crate::layout::BASE_VFOV,
+                            ..default()
+                        }),
+                    ),
+                ],
             ),
             (
                 Name::new("Radar blip"),
