@@ -1,0 +1,27 @@
+# THROWAWAY: one duel server for a playtest. `fly deploy --remote-only --ha=false`.
+app = "him-duel-spike"
+primary_region = "fra"
+
+[build]
+  dockerfile = "Dockerfile.spike"
+
+[env]
+  # Fly delivers UDP only to this address, on the same port as outside.
+  SPIKE_BIND = "fly-global-services:5888"
+  SPIKE_LOOP_MS = "16"
+  # Give players time to connect after `fly machine start`.
+  MATCH_WAIT_S = "600"
+
+[[services]]
+  internal_port = 5888
+  protocol = "udp"
+
+  [[services.ports]]
+    port = 5888
+
+# The liveness killer exits the process; never restart it, so the Machine stays stopped.
+[[restart]]
+  policy = "never"
+
+[[vm]]
+  size = "performance-1x"

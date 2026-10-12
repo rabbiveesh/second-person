@@ -1,0 +1,16 @@
+# THROWAWAY: the net_spike duel server for a Fly.io playtest. Delete with the spike.
+FROM rust:1.96-bookworm AS build
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        clang mold libudev-dev libasound2-dev libwayland-dev libxkbcommon-dev \
+    && rm -rf /var/lib/apt/lists/*
+WORKDIR /src
+COPY . .
+RUN cargo build --release --no-default-features --example net_spike \
+    && cp target/release/examples/net_spike /net_spike
+
+FROM debian:bookworm-slim
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        libasound2 libudev1 libxkbcommon0 libwayland-client0 ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+COPY --from=build /net_spike /usr/local/bin/net_spike
+CMD ["net_spike", "server"]

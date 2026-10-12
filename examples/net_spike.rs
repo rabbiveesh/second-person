@@ -299,7 +299,7 @@ fn main() {
         Some("server") => {
             app.add_plugins((
                 MinimalPlugins.set(bevy::app::ScheduleRunnerPlugin::run_loop(Duration::from_millis(
-                    std::env::var("SPIKE_LOOP_MS").ok().and_then(|s| s.parse().ok()).unwrap_or(2),
+                    std::env::var("SPIKE_LOOP_MS").ok().and_then(|s| s.parse().ok()).unwrap_or(16),
                 ))),
                 bevy::log::LogPlugin::default(),
                 bevy::state::app::StatesPlugin,
@@ -386,12 +386,12 @@ fn server_plugin(app: &mut App, lag: u64) {
                         private_key: KEY,
                         ..default()
                     }),
-                    LocalAddr(SocketAddr::from(([0, 0, 0, 0], PORT))),
+                    LocalAddr(bind_addr()),
                     ServerUdpIo::default(),
                 ))
                 .id();
             commands.trigger(Start { entity: server });
-            info!("server listening on udp :{PORT}");
+            info!("server listening on udp {}", bind_addr());
         })
         .add_observer(|t: On<Add, LinkOf>, mut commands: Commands| {
             commands.entity(t.entity).insert(ReplicationSender);
@@ -485,6 +485,16 @@ fn liveness(
         info!("LIVENESS: shutting down after {now:.0}s: {reason}");
         exit.write(AppExit::Success);
     }
+}
+
+/// Fly routes UDP only to `fly-global-services:<port>`, so the bind address is configurable.
+fn bind_addr() -> SocketAddr {
+    use std::net::ToSocketAddrs;
+    let spec = std::env::var("SPIKE_BIND").unwrap_or(format!("0.0.0.0:{PORT}"));
+    spec.to_socket_addrs()
+        .ok()
+        .and_then(|mut a| a.find(SocketAddr::is_ipv4))
+        .unwrap_or_else(|| panic!("SPIKE_BIND {spec} doesn't resolve to an IPv4 address"))
 }
 
 fn on_connected(
