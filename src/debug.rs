@@ -1,4 +1,4 @@
-//! Debug dump: press F9 for a plain-text report of everything relevant: build info, every
+//! Debug dump: press F9 (or tap with three fingers) for a plain-text report of everything relevant: build info, every
 //! reflected game resource (found through the type registry, so new ones show up for free),
 //! the target's and shooter's components, the adaptive difficulty state and round history,
 //! and a log of recent gameplay events. On the web it downloads as a `.txt`; on native it's
@@ -20,7 +20,7 @@ use crate::{
 
 pub fn plugin(app: &mut App) {
     app.init_resource::<EventLog>()
-        .add_systems(Update, dump.run_if(f9_pressed));
+        .add_systems(Update, dump.run_if(f9_pressed.or(three_finger_tap)));
     log_messages::<StateTransitionEvent<GameState>>(app);
     log_messages::<Gunshot>(app);
     log_messages::<BulletImpact>(app);
@@ -53,6 +53,14 @@ fn log_messages<M: Message + Debug>(app: &mut App) {
 
 fn f9_pressed(keys: Option<Res<ButtonInput<KeyCode>>>) -> bool {
     keys.is_some_and(|k| k.just_pressed(KeyCode::F9))
+}
+
+/// Touch has no F9: a third finger landing while two are already down asks for the dump.
+fn three_finger_tap(touches: Option<Res<Touches>>) -> bool {
+    touches.is_some_and(|t| {
+        let down = t.iter().count();
+        down >= 3 && down - t.iter_just_pressed().count() < 3
+    })
 }
 
 /// Build the whole report.
@@ -170,6 +178,7 @@ fn save_report(text: &str, name: &str) -> Result<String, String> {
     a.set_href(&url);
     a.set_download(name);
     a.click();
-    let _ = web_sys::Url::revoke_object_url(&url);
+    // The object URL is deliberately not revoked: mobile browsers start the download after this
+    // returns, and revoking now can cancel it. A few KB per dump is a fine leak.
     Ok(format!("downloaded {name}"))
 }

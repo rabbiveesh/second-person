@@ -171,7 +171,7 @@ Fyrox (small ecosystem), macroquad/three-d (too thin, would mean rolling our own
   are exactly the hand-tuned constants, which stay in `target`/`combat`/`radar` (a test pins this). `AdaptiveDifficulty`
   is only inserted by `main.rs`, so headless tests and staged examples keep the fixed tuning. Never shown to the player.
   The 1v1 duel will have no assists.
-- `debug.rs` (presentation): F9 writes a plain-text dump (web: downloads it): build info, the adaptive state and round
+- `debug.rs` (presentation): F9 or a three-finger tap writes a plain-text dump (web: downloads it): build info, the adaptive state and round
   history (`difficulty::debug_text`), every reflected `second_person::` resource, the target's and shooter's components,
   and the last 300 gameplay messages. New reflected resources show up for free; log a new message with `log_messages`.
 - `fx.rs`: bevy_firework particle bursts (muzzle, impacts, hits), a muzzle point light (lights up the area
