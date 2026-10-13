@@ -97,6 +97,8 @@ Fyrox (small ecosystem), macroquad/three-d (too thin, would mean rolling our own
   While engaged, any sighting tops it back up to 1.0 (contact); out of sight it drains, and at 0 he lets go.
   Peek spots keep `PEEK_SLACK` clear of every corner and stay inside his `VIEW_RANGE`, or peeks see nothing and the fight stalls.
   The engine supports a moving target: the camera is parented to him, and walking is just velocity on a kinematic body.
+  His body (torso, head, visor, gun) is on `target::BODY_LAYER`, which the `MainCamera` only renders from outside him:
+  `intro::fly_camera` adds the layer for the overhead shot and drops it `BODY_HIDE_DIST` before the swoop reaches his eyes.
 - `nav.rs`: vleue_navigator navmesh, built synchronously from `NavObstacle` colliders (the arena blocks) inside the
   layout's outline (`fit_navmesh` updates it each round).
   `MoveTo { dest, speed, strafe }` is planned into a `Route` and followed by `target::walk`. With `strafe` he moves

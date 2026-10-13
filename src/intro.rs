@@ -13,6 +13,7 @@
 //! intro ends the pose has arrived at his head, so juice takes over with no seam.
 
 use bevy::{
+    camera::visibility::RenderLayers,
     input::{ButtonState, keyboard::KeyboardInput, mouse::MouseButtonInput, touch::TouchInput},
     prelude::*,
     transform::TransformSystems,
@@ -28,7 +29,7 @@ use crate::{
     round::{GameState, RoundEntity, SpawnRound},
     shooter::{Shooter, ShooterAction},
     start::{self, Started},
-    target::{MainCamera, Target, TargetHead},
+    target::{BODY_LAYER, MainCamera, Target, TargetHead},
 };
 
 /// The swoop down into his eyes after the countdown (real seconds).
@@ -39,6 +40,8 @@ const BUSY_MAX: f32 = 1.5;
 /// A press this soon after the game starts is the one that dismissed the start screen, not a skip.
 const SKIP_GRACE: f32 = 0.25;
 const MARKER_RADIUS: f32 = 1.6;
+/// The swoop stops drawing his body this close to his eyes, before it flies in through his head.
+const BODY_HIDE_DIST: f32 = 1.0;
 const YOU: Color = Color::srgb(0.2, 1.0, 0.3);
 const HIM: Color = Color::srgb(1.0, 0.25, 0.2);
 
@@ -225,9 +228,12 @@ fn fly_camera(
     layout: Res<Layout>,
     target: Single<(&Transform, &Children), (With<Target>, Without<MainCamera>)>,
     heads: Query<&Transform, (With<TargetHead>, Without<MainCamera>)>,
-    mut cam: Single<(&mut Transform, &Projection), With<MainCamera>>,
+    mut cam: Single<(&mut Transform, &Projection, &mut RenderLayers), With<MainCamera>>,
 ) {
-    let Some(t) = intro.0 else { return };
+    let Some(t) = intro.0 else {
+        cam.2.set_if_neq(RenderLayers::layer(0));
+        return;
+    };
     let (body, children) = *target;
     let Some(head) = children.iter().find_map(|c| heads.get(c).ok()) else { return };
     // Computed from local transforms, so it's right on a round's first frame too.
@@ -235,6 +241,11 @@ fn fly_camera(
     let Projection::Perspective(p) = cam.1 else { return };
     let from = overhead(&layout, body.rotation, p.fov, p.aspect_ratio);
     let world = pose(t, from, eyes);
+    cam.2.set_if_neq(if world.translation.distance(eyes.translation) > BODY_HIDE_DIST {
+        RenderLayers::from_layers(&[0, BODY_LAYER])
+    } else {
+        RenderLayers::layer(0)
+    });
     *cam.0 = Transform::from_matrix((eyes.compute_affine().inverse() * world.compute_affine()).into());
 }
 
