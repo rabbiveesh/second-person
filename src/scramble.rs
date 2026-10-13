@@ -106,10 +106,10 @@ pub fn plugin(app: &mut App) {
 
 fn load(mut commands: Commands, mut meshes: ResMut<Assets<Mesh>>, mut materials: ResMut<Assets<StandardMaterial>>) {
     commands.insert_resource(DartLook {
-        mesh: meshes.add(Sphere::new(0.25)),
+        mesh: meshes.add(Sphere::new(0.35)),
         material: materials.add(StandardMaterial {
-            base_color: Color::srgb(0.77, 0.42, 1.0),
-            emissive: LinearRgba::rgb(4.0, 1.5, 8.0),
+            base_color: Color::srgb(0.85, 0.55, 1.0),
+            emissive: LinearRgba::rgb(10.0, 4.0, 20.0),
             ..default()
         }),
     });

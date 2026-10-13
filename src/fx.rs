@@ -16,6 +16,7 @@ use bevy_firework::{
 
 use crate::{
     combat::{BulletImpact, Grapple, GrappleFired, Gunshot, ShooterHit, TargetHit, WarningShot},
+    scramble::{Dart, DartMissed, ScrambledHit},
     shooter::Shooter,
     target::MainCamera,
     round::RoundEntity,
@@ -37,7 +38,7 @@ struct Tracer {
 
 pub fn plugin(app: &mut App) {
     app.add_plugins(ParticleSystemPlugin::default())
-        .add_systems(Update, (muzzle_flash, impact_sparks, target_hit, return_fire, thin, expire, draw_tracers, spawn_hook, fly_hook));
+        .add_systems(Update, (muzzle_flash, impact_sparks, target_hit, return_fire, thin, expire, draw_tracers, spawn_hook, fly_hook, dart_glow, dart_lands));
 }
 
 fn muzzle_flash(mut commands: Commands, mut shots: MessageReader<Gunshot>) {
@@ -305,6 +306,61 @@ fn expire(mut commands: Commands, time: Res<Time>, mut q: Query<(Entity, &mut Tt
         if ttl.0.tick(time.delta()).is_finished() {
             commands.entity(e).despawn();
         }
+    }
+}
+
+/// The dart's violet. Matches the HUD's scramble glow.
+const DART_GLOW: LinearRgba = LinearRgba::rgb(6.0, 2.2, 12.0);
+
+/// The dart is small and flies away from his eyes, so it carries its own light (it lights the floor
+/// and cover it passes) and leaves a streak behind it, which reads even once the ball is a dot.
+fn dart_glow(mut commands: Commands, darts: Query<Entity, Added<Dart>>) {
+    for dart in &darts {
+        commands.entity(dart).with_children(|c| {
+            c.spawn((
+                Name::new("Dart light"),
+                PointLight {
+                    color: Color::srgb(0.75, 0.4, 1.0),
+                    intensity: 600_000.0,
+                    range: 9.0,
+                    ..default()
+                },
+            ));
+            c.spawn((
+                Name::new("Dart trail"),
+                NotShadowCaster,
+                ParticleSpawner {
+                    particle_settings: vec![ParticleSettings {
+                        lifetime: RandF32 { min: 0.25, max: 0.4 },
+                        initial_scale: RandF32 { min: 0.12, max: 0.2 },
+                        scale_curve: FireworkCurve::even_samples(vec![1.0, 0.0]),
+                        base_color: FireworkGradient::even_samples(vec![DART_GLOW, DART_GLOW.with_alpha(0.0)]),
+                        emissive_color: FireworkGradient::even_samples(vec![DART_GLOW, DART_GLOW.with_alpha(0.0)]),
+                        blend_mode: BlendMode::Add,
+                        pbr: false,
+                        acceleration: Vec3::ZERO,
+                        fade_scene: 0.0,
+                        ..default()
+                    }],
+                    emission_settings: vec![EmissionSettings {
+                        emission_pacing: EmissionPacing::rate(120.0),
+                        emission_shape: EmissionShape::Point,
+                        ..default()
+                    }],
+                    ..default()
+                },
+            ));
+        });
+    }
+}
+
+/// A violet splash where the dart lands on you, a smaller puff where it misses.
+fn dart_lands(mut commands: Commands, mut hits: MessageReader<ScrambledHit>, mut misses: MessageReader<DartMissed>) {
+    for hit in hits.read() {
+        burst(&mut commands, "Scramble splash", hit.at + Vec3::Y * 0.5, Vec3::Y, 1.2, 40, (3.0, 7.0), DART_GLOW, 0.5);
+    }
+    for miss in misses.read() {
+        burst(&mut commands, "Dart fizzle", miss.at, Vec3::Y, 1.0, 14, (1.5, 4.0), DART_GLOW, 0.3);
     }
 }
 
