@@ -32,7 +32,7 @@ const AFTER_END: u32 = 4 * 60;
 /// A round still undecided after this many frames is cut.
 const MAX_ROUND: u32 = 75 * 60;
 /// `--darts-only`: give up after playing this many rounds.
-const MAX_TRIES: u32 = 12;
+const MAX_TRIES: u32 = 25;
 
 #[derive(Resource)]
 struct Rec {
