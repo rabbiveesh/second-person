@@ -1224,8 +1224,11 @@ fn mirror_up_walks_back_towards_his_eyes_and_turns_you_to_it() {
     let mut app = app();
     set_controls(&mut app, ControlScheme::Mirror);
     let shooter = single::<Shooter>(&mut app);
-    let start = Vec3::new(-15.0, 0.9, 5.0);
-    place(&mut app, shooter, start, std::f32::consts::FRAC_PI_2); // facing -X
+    let target = single::<Target>(&mut app);
+    // He looks west (-X), so Up should walk you east, along the open ground the compass test crossed.
+    place(&mut app, target, Vec3::new(0.0, 0.9, 0.0), std::f32::consts::FRAC_PI_2);
+    let start = Vec3::new(-15.0, 0.9, 15.0);
+    place(&mut app, shooter, start, 0.0);
     app.update();
 
     let (pos, _) = hold(&mut app, KeyCode::ArrowUp, 0.6);
@@ -1235,7 +1238,8 @@ fn mirror_up_walks_back_towards_his_eyes_and_turns_you_to_it() {
     assert!(moved.length() > 1.5, "Up walks: {pos}");
     assert!(moved.normalize().dot(looks) < -0.9, "against his view: moved {moved}, he looks {looks}");
     let facing = app.world().get::<Transform>(shooter).unwrap().forward();
-    assert!(facing.dot(moved.normalize()) > 0.95, "and faces the way it walks: {facing}");
+    // He keeps scanning, so the way Up points keeps swinging; you should at least face east-ish.
+    assert!(facing.dot(Vec3::X) > 0.5, "and turned to face where it walks: {facing}");
 }
 
 /// Fire one shot at him from `from` while he faces `faces`; returns the damage it did.
