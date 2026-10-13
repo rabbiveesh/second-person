@@ -384,6 +384,9 @@ fn server_plugin(app: &mut App, lag: u64) {
                     NetcodeServer::new(lightyear::netcode::server_plugin::NetcodeConfig {
                         protocol_id: PROTOCOL_ID,
                         private_key: KEY,
+                        // Behind Fly's UDP proxy we bind a private address, but clients' tokens
+                        // name the public one, so the address whitelist would reject everybody.
+                        server_addr_check: false,
                         ..default()
                     }),
                     LocalAddr(bind_addr()),
