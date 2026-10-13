@@ -431,7 +431,7 @@ fn grapple(
         if *cooldown <= 0.0
             && !charging
             && darts.is_empty()
-            && !scrambled.active()
+            && (!scrambled.active() || tuning.him().scramble.is_some_and(|l| l.combo))
             && activity == Some(&Activity::Engaging)
             && suspicion.sees_shooter
             && GRAPPLE_RANGE.contains(&dist)

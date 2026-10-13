@@ -166,6 +166,13 @@ pub struct Sidestep {
     cooldown: f32,
 }
 
+impl Sidestep {
+    /// Mid-hop, or landed too recently to hop again.
+    pub fn spent(&self) -> bool {
+        self.left > 0.0 || self.cooldown > 0.0
+    }
+}
+
 /// Both taps have to land within this.
 const DOUBLE_TAP_WINDOW: f32 = 0.3;
 const HOP_SPEED: f32 = 12.0;

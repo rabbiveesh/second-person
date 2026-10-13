@@ -229,7 +229,9 @@ pub fn bot(
         }
     }
     for m in thrown.read() {
-        if bot.noticed && !timed {
+        // A tank that timed its hop to the wind-up and was made to wait still reacts to the throw.
+        let hop_pending = bot.dodge.is_some() || bot.pending.iter().any(|(_, c)| matches!(c, Cue::Hop));
+        if bot.noticed && (!timed || !hop_pending) {
             bot.pending.push((now + bot.p.reaction, Cue::Thrown(m.velocity)));
         }
     }

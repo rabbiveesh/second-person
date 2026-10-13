@@ -100,6 +100,12 @@ pub struct ScrambleLevers {
     pub spin: bool,
     /// How much he leads your movement when he aims (0 = at you, 1 = where you'll be).
     pub lead: f32,
+    /// Seconds he'll hold a ready dart, waiting for you to spend your hop.
+    pub hold: f32,
+    /// How hard the dart homes on you in flight (rad/s it can turn).
+    pub homing: f32,
+    /// He follows a landed dart up with the grappling hook while you're still scrambled.
+    pub combo: bool,
 }
 
 /// Lowest Gunfight band at which he has the scramble dart.
@@ -108,12 +114,15 @@ pub const SCRAMBLE_FROM_BAND: Band = 3;
 impl ScrambleLevers {
     pub fn from_band(gunfight: Band) -> Option<Self> {
         (gunfight >= SCRAMBLE_FROM_BAND).then(|| ScrambleLevers {
-            cooldown: by_band(gunfight, 22.0, 16.0, 8.0),
+            cooldown: by_band(gunfight, 22.0, 16.0, 5.0),
             windup: by_band(gunfight, 1.2, 0.9, 0.45),
             speed: by_band(gunfight, 9.0, 12.0, 22.0),
-            secs: by_band(gunfight, 2.5, 3.0, 5.0),
+            secs: by_band(gunfight, 2.5, 3.0, 7.0),
             spin: gunfight >= 9,
             lead: by_band(gunfight, 0.0, 0.0, 1.0),
+            hold: by_band(gunfight, 0.0, 0.0, 0.8),
+            homing: by_band(gunfight, 0.0, 0.0, 1.4),
+            combo: gunfight >= 8,
         })
     }
 }

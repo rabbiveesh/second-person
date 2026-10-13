@@ -448,11 +448,12 @@ fn fight(
         Has<MoveTo>,
         Has<Grapple>,
         Has<Relocate>,
+        Has<crate::scramble::Charging>,
     )>,
     you: Query<&Scrambled, With<Shooter>>,
     tuning: Res<Tuning>,
 ) -> TaskStatus {
-    let Ok((t, target, suspicion, plan, mut look, Some(mut fighting), moving, grappling, relocate)) =
+    let Ok((t, target, suspicion, plan, mut look, Some(mut fighting), moving, grappling, relocate, charging)) =
         q.get_mut(e)
     else {
         return RUNNING;
@@ -504,7 +505,9 @@ fn fight(
         }
         return RUNNING;
     }
-    if !exploiting && fighting.timer.tick(time.delta()).is_finished() {
+    // Mid wind-up he stays out where he can see you, rather than ducking back with a dart in hand.
+    let throwing = charging && fighting.peeking;
+    if !exploiting && !throwing && fighting.timer.tick(time.delta()).is_finished() {
         let mut rng = rand::rng();
         let peeking = !fighting.peeking;
         if !peeking {

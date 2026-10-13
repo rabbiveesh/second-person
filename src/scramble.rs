@@ -14,12 +14,12 @@ use crate::{
     combat::{Grapple, check_outcome},
     difficulty::Tuning,
     round::{GameState, RoundEntity},
-    shooter::{ControlScheme, Scrambled, Shooter, Stagger, Stunned},
+    shooter::{ControlScheme, Scrambled, Shooter, Sidestep, Stagger, Stunned},
     target::{Activity, MainCamera, Roll, Suspicion, Target},
 };
 
 /// He throws it from this far...
-pub const DART_RANGE: std::ops::Range<f32> = 6.0..22.0;
+pub const DART_RANGE: std::ops::Range<f32> = 3.0..22.0;
 /// ...and it's gone after this long.
 const DART_LIFETIME: f32 = 3.0;
 /// Hit radius: the dart's own plus the shooter's capsule.
@@ -29,11 +29,13 @@ const DART_LAUNCH_AHEAD: f32 = 0.8;
 /// No dart for this long after a round starts, so the opening isn't decided by one.
 const FIRST_DART_AFTER: f32 = 4.0;
 
-/// Winding up a dart, on the target: `left` seconds until it flies.
+/// Winding up a dart, on the target: `left` seconds until it's ready, then up to `hold` more with it
+/// ready (still glowing) while he waits for you to waste your hop.
 #[derive(Component, Reflect, Debug)]
 #[reflect(Component)]
 pub struct Charging {
     pub left: f32,
+    pub hold: f32,
 }
 
 /// A dart in flight.
@@ -140,7 +142,7 @@ fn charge(
         (Entity, &Transform, &Suspicion, Option<&Activity>, Option<&mut Charging>, Has<Grapple>, Has<Roll>),
         With<Target>,
     >,
-    shooter: Single<(&Transform, &LinearVelocity, &Stunned, &Stagger, &Scrambled), With<Shooter>>,
+    shooter: Single<(&Transform, &LinearVelocity, &Stunned, &Stagger, &Scrambled, &Sidestep), With<Shooter>>,
     darts: Query<(), With<Dart>>,
     mut charging_msgs: MessageWriter<DartCharging>,
     mut thrown: MessageWriter<DartThrown>,
@@ -151,7 +153,7 @@ fn charge(
         return;
     };
     let (e, t, suspicion, activity, charging, grappling, rolling) = target.into_inner();
-    let (you, vel, stunned, stagger, scrambled) = *shooter;
+    let (you, vel, stunned, stagger, scrambled, hop) = *shooter;
     let dist = t.translation.xz().distance(you.translation.xz());
 
     let Some(mut charging) = charging else {
@@ -165,7 +167,7 @@ fn charge(
             && DART_RANGE.contains(&dist)
         {
             let windup = levers.windup + tuning.help().scramble_windup;
-            commands.entity(e).insert(Charging { left: windup });
+            commands.entity(e).insert(Charging { left: windup, hold: levers.hold });
             charging_msgs.write(DartCharging { windup });
         }
         return;
@@ -178,6 +180,12 @@ fn charge(
     }
     charging.left -= dt;
     if charging.left > 0.0 {
+        return;
+    }
+    // Ready. The top bands don't throw into a hop you still have: he holds it, and lets go the moment
+    // you hop (leading where you'll land) or your hop is still cooling down.
+    if charging.hold > 0.0 && !hop.spent() && suspicion.sees_shooter {
+        charging.hold -= dt;
         return;
     }
     commands.entity(e).remove::<Charging>();
@@ -218,8 +226,19 @@ fn fly(
 ) {
     let dt = time.delta_secs();
     let (you, mut scrambled, stunned) = shooter.into_inner();
+    let homing = tuning.him().scramble.map_or(0.0, |l| l.homing);
     for (e, mut dart, mut t) in &mut darts {
         let from = t.translation;
+        // Turn toward you, a little, while it can see you: a hop has to come late to beat it.
+        let to_you = (you.translation - from).with_y(0.0);
+        if homing > 0.0
+            && !layout.los_blocked(from.xz(), you.translation.xz())
+            && let (Ok(heading), Ok(want)) = (Dir3::new(dart.velocity), Dir3::new(to_you))
+        {
+            let angle = heading.angle_between(*want);
+            let step = if angle > 1e-4 { (homing * dt / angle).min(1.0) } else { 0.0 };
+            dart.velocity = Quat::IDENTITY.slerp(Quat::from_rotation_arc(*heading, *want), step) * dart.velocity;
+        }
         let to = from + dart.velocity * dt;
         dart.left -= dt;
         // Closest approach to you along this frame's path.

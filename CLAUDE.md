@@ -104,8 +104,10 @@ Fyrox (small ecosystem), macroquad/three-d (too thin, would mean rolling our own
   that sets the shooter's `Scrambled { left, into }`: you drive `Mirror` instead of `Tank` for a while. Cover
   stops it and a sidestep beats it. One of his moves at a time: never while you're grappled, staggered or scrambled,
   and no grapple while a dart flies. While you're scrambled he stays out peeking and, at the top bands, sweeps his gaze
-  so Mirror swims. Every knob is `difficulty::ScrambleLevers` (Gunfight band: unlock, wind-up, speed, lead, duration,
-  cooldown). `Armed(false)` takes it away (A/B runs).
+  so Mirror swims. At the top bands he holds a ready dart (`hold`) until your hop is spent, the dart homes (`homing`),
+  and he may grapple you while you're scrambled (`combo`). He stays out peeking through a wind-up. Every knob is
+  `difficulty::ScrambleLevers` (Gunfight band: unlock, wind-up, speed, lead, duration, cooldown, hold, homing, combo).
+  `Armed(false)` takes it away (A/B runs).
 - `examples/duel_sim.rs`: bot rounds on the real gameplay plugins, for balancing his moves. The bot writes the
   shooter's `ActionState` (like `touch`), knows where he is, walks the navmesh to a clear shot, aims with an error and
   fires; it reads the dart's wind-up and sidesteps after a reaction time, and when scrambled drives with the wrong
