@@ -11,7 +11,7 @@ use crate::{
     difficulty::{AssistLevers, HisLevers, Tuning},
     round::{GameState, RoundEntity},
     nav::MoveTo,
-    shooter::{Bump, ControlScheme, Footstep, Whistle, Shooter, ShooterAction, Stagger, Stunned},
+    shooter::{Bump, Footstep, Whistle, Shooter, ShooterAction, Stagger, Stunned},
     target::{Activity, Alert, MainCamera, ROLL_SECS, Relocate, Roll, Suspicion, Target},
 };
 
@@ -281,7 +281,6 @@ fn bullet_hits(
     mut hits: MessageWriter<TargetHit>,
     mut impacts: MessageWriter<BulletImpact>,
     tuning: Res<Tuning>,
-    scheme: Res<ControlScheme>,
 ) {
     let near_miss = NEAR_MISS_RANGE * tuning.him().hearing;
     let mut spent = Vec::new();
@@ -302,7 +301,7 @@ fn bullet_hits(
 
         if let Ok((_, mut target, target_t, mut suspicion)) = targets.get_mut(other) {
             let kind = HitKind::of(suspicion.sees_shooter, *target_t.forward(), bullet.origin - target_t.translation);
-            let damage = kind.damage(rand::rng().random_range(-1.0..1.0)) * tuning.damage_dealt(*scheme);
+            let damage = kind.damage(rand::rng().random_range(-1.0..1.0));
             target.hp = (target.hp - damage).max(0.0);
             suspicion.bump(0.6);
             suspicion.last_known = Some(bullet.origin);

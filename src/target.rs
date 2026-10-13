@@ -485,9 +485,7 @@ fn fight(
             commands.entity(e).try_remove::<MoveTo>();
         }
         let spin = tuning.him().scramble.is_some_and(|l| l.spin);
-        let follows_view = you
-            .single()
-            .is_ok_and(|s| matches!(s.into, ControlScheme::Eyes | ControlScheme::Mirror | ControlScheme::Ice));
+        let follows_view = you.single().is_ok_and(|s| s.into == ControlScheme::Mirror);
         if spin && follows_view {
             let eye = t.translation + Vec3::Y * EYE_OFFSET;
             let swing = SPIN_SWING * (time.elapsed_secs() * SPIN_RATE).sin();

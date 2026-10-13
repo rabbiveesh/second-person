@@ -1,7 +1,7 @@
 //! Records a whole match from his eyes, with the duel bot (`common/bot.rs`) playing the shooter.
 //!
 //!     ALSA_CONFIG_PATH=scripts/alsa-null.conf xvfb-run -a -s "-screen 0 1280x720x24" \
-//!         cargo run --example duel_clip -- <out dir> --player average --scheme eyes --rounds 2
+//!         cargo run --example duel_clip -- <out dir> --player average --rounds 2
 //!     ffmpeg -framerate 30 -i <out dir>/frame-%05d.png -pix_fmt yuv420p match.mp4
 //!
 //! Time advances a fixed 1/60s per frame and every other frame is saved, so the clip plays at
@@ -54,7 +54,7 @@ fn main() {
     let mut argv = std::env::args().skip(1);
     let dir = PathBuf::from(argv.next().unwrap_or_else(|| "duel_clip".into()));
     std::fs::create_dir_all(&dir).unwrap();
-    let (mut player, mut scheme, mut gunfight, mut rounds, mut seed) = (PLAYERS[1], ControlScheme::Eyes, 10, 2, 1);
+    let (mut player, mut scheme, mut gunfight, mut rounds, mut seed) = (PLAYERS[1], ControlScheme::Tank, 10, 2, 1);
     let mut darts_only = false;
     let rest: Vec<String> = argv.collect();
     for pair in rest.chunks(2) {

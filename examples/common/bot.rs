@@ -208,11 +208,8 @@ pub fn bot(
         .unwrap_or(Vec3::NEG_Z);
     let with_right = |f: Vec3| (f, Vec3::new(-f.z, 0.0, f.x));
     let basis = match scheme {
-        ControlScheme::Tank | ControlScheme::Snake => None,
-        ControlScheme::Compass => Some((Vec3::NEG_Z, Vec3::X)),
-        ControlScheme::Eyes | ControlScheme::Ice => Some(with_right(stale)),
+        ControlScheme::Tank => None,
         ControlScheme::Mirror => Some(with_right(-stale)),
-        ControlScheme::Magnetic => Some(with_right((him - me).with_y(0.0).normalize_or(Vec3::NEG_Z))),
     };
 
     // Darts. A player who reads the wind-up (glow, whine) starts sidestepping on it; when the
@@ -302,7 +299,6 @@ pub fn bot(
                 bot.aim_off = bot.rng.random_range(-max..=max);
             }
             match basis {
-                None if scheme == ControlScheme::Snake => Vec2::new((err * 3.0).clamp(-0.45, 0.45), -1.0),
                 None if err.abs() > 0.8 => Vec2::new(err.signum(), 0.5),
                 None => Vec2::new((err * 3.0).clamp(-0.45, 0.45), 0.0),
                 Some((f, r)) => {

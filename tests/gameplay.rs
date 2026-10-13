@@ -1208,109 +1208,34 @@ fn hold(app: &mut App, key: KeyCode, secs: f32) -> (Vec3, f32) {
 }
 
 #[test]
-fn c_cycles_the_control_schemes() {
+fn mirror_pushes_along_his_view_turned_round() {
     use second_person::shooter::ControlScheme;
-    let mut app = app();
-    assert_eq!(*app.world().resource::<ControlScheme>(), ControlScheme::Tank);
-    for want in &ControlScheme::ALL[1..] {
-        press(&mut app, KeyCode::KeyC);
-        assert_eq!(app.world().resource::<ControlScheme>(), want);
-    }
-    press(&mut app, KeyCode::KeyC);
-    assert_eq!(*app.world().resource::<ControlScheme>(), ControlScheme::Tank);
-}
-
-#[test]
-fn direct_schemes_push_along_their_own_frames() {
-    use second_person::shooter::ControlScheme;
-    let me = Vec3::new(4.0, 0.9, 10.0);
-    let him = Vec3::new(4.0, 0.9, 0.0);
     // His eyes look along +X.
     let eyes = GlobalTransform::from(Transform::from_xyz(0.0, 1.6, 0.0).looking_to(Vec3::X, Vec3::Y));
     let near = |a: Vec3, b: Vec3| a.distance(b) < 1e-4;
-    let basis = |s: ControlScheme| s.basis(me, Some(him), Some(&eyes)).unwrap();
-
-    let (f, r) = basis(ControlScheme::Compass);
-    assert!(near(f, Vec3::NEG_Z) && near(r, Vec3::X), "north is up the radar: {f} {r}");
-    let (f, r) = basis(ControlScheme::Eyes);
-    assert!(near(f, Vec3::X) && near(r, Vec3::Z), "up goes where he looks, right is his right: {f} {r}");
-    let (f, r) = basis(ControlScheme::Mirror);
-    assert!(near(f, Vec3::NEG_X) && near(r, Vec3::NEG_Z), "mirror turns it round: {f} {r}");
-    let (f, r) = basis(ControlScheme::Magnetic);
-    assert!(near(f, Vec3::NEG_Z) && near(r, Vec3::X), "up walks at him: {f} {r}");
-    assert!(ControlScheme::Tank.basis(me, Some(him), Some(&eyes)).is_none());
+    let (f, r) = ControlScheme::Mirror.basis(Some(&eyes)).unwrap();
+    assert!(near(f, Vec3::NEG_X) && near(r, Vec3::NEG_Z), "up comes back at him, right is screen-left: {f} {r}");
+    assert!(ControlScheme::Tank.basis(Some(&eyes)).is_none());
 }
 
 #[test]
-fn compass_walks_north_whichever_way_you_face_and_turns_you_to_it() {
+fn mirror_up_walks_back_towards_his_eyes_and_turns_you_to_it() {
     use second_person::shooter::ControlScheme;
     let mut app = app();
-    set_controls(&mut app, ControlScheme::Compass);
+    set_controls(&mut app, ControlScheme::Mirror);
     let shooter = single::<Shooter>(&mut app);
-    let start = Vec3::new(-15.0, 0.9, 15.0);
+    let start = Vec3::new(-15.0, 0.9, 5.0);
     place(&mut app, shooter, start, std::f32::consts::FRAC_PI_2); // facing -X
     app.update();
 
-    let (pos, yaw) = hold(&mut app, KeyCode::ArrowUp, 0.6);
-    assert!(pos.z < start.z - 1.5, "Up walks north (-Z): {pos}");
-    assert!((pos.x - start.x).abs() < 0.3, "and only north: {pos}");
-    assert!(yaw.abs() < 0.05, "turned to face north: yaw {yaw}");
-
-    let (pos2, yaw) = hold(&mut app, KeyCode::ArrowRight, 0.6);
-    assert!(pos2.x > pos.x + 1.5, "Right walks east (+X): {pos2}");
-    assert!((yaw + std::f32::consts::FRAC_PI_2).abs() < 0.05, "facing east: yaw {yaw}");
-}
-
-#[test]
-fn magnetic_up_walks_straight_at_him() {
-    use second_person::shooter::ControlScheme;
-    let mut app = app();
-    set_controls(&mut app, ControlScheme::Magnetic);
-    let shooter = single::<Shooter>(&mut app);
-    let target = single::<Target>(&mut app);
-    // Off to one side and facing away, so the only thing pointing at him is the scheme.
-    let start = Vec3::new(10.0, 0.9, 10.0);
-    place(&mut app, shooter, start, 0.0);
-    app.update();
-    let him = app.world().get::<GlobalTransform>(target).unwrap().translation();
-    let before = start.with_y(0.0).distance(him.with_y(0.0));
-
-    let (pos, _) = hold(&mut app, KeyCode::ArrowUp, 0.5);
-    let after = pos.with_y(0.0).distance(him.with_y(0.0));
-    assert!(before - after > 2.0, "closed in on him: {before} -> {after}");
+    let (pos, _) = hold(&mut app, KeyCode::ArrowUp, 0.6);
+    let cam = single::<MainCamera>(&mut app);
+    let looks = app.world().get::<GlobalTransform>(cam).unwrap().forward().with_y(0.0).normalize();
+    let moved = (pos - start).with_y(0.0);
+    assert!(moved.length() > 1.5, "Up walks: {pos}");
+    assert!(moved.normalize().dot(looks) < -0.9, "against his view: moved {moved}, he looks {looks}");
     let facing = app.world().get::<Transform>(shooter).unwrap().forward();
-    let to_him = (him - pos).with_y(0.0).normalize();
-    assert!(facing.dot(to_him) > 0.95, "and faces him: {facing} vs {to_him}");
-}
-
-#[test]
-fn snake_never_stops_unless_you_hold_down() {
-    use second_person::shooter::ControlScheme;
-    let mut app = app();
-    set_controls(&mut app, ControlScheme::Snake);
-    let shooter = single::<Shooter>(&mut app);
-    let start = Vec3::new(-15.0, 0.9, 15.0);
-    place(&mut app, shooter, start, 0.0);
-    app.update();
-    step(&mut app, 0.5);
-    let pos = app.world().get::<Transform>(shooter).unwrap().translation;
-    assert!(pos.z < start.z - 1.0, "walks on its own: {pos}");
-    let (held, _) = hold(&mut app, KeyCode::ArrowDown, 0.5);
-    assert!(held.distance(pos) < 0.6, "Down stands still: {pos} -> {held}");
-}
-
-#[test]
-fn on_ice_you_keep_sliding_after_you_let_go() {
-    use second_person::shooter::ControlScheme;
-    let mut app = app();
-    set_controls(&mut app, ControlScheme::Ice);
-    let shooter = single::<Shooter>(&mut app);
-    place(&mut app, shooter, Vec3::new(-15.0, 0.9, 15.0), 0.0);
-    app.update();
-    let (released, _) = hold(&mut app, KeyCode::ArrowUp, 0.8);
-    step(&mut app, 0.5);
-    let slid = app.world().get::<Transform>(shooter).unwrap().translation;
-    assert!(slid.distance(released) > 1.0, "still sliding: {released} -> {slid}");
+    assert!(facing.dot(moved.normalize()) > 0.95, "and faces the way it walks: {facing}");
 }
 
 /// Fire one shot at him from `from` while he faces `faces`; returns the damage it did.
@@ -1324,9 +1249,8 @@ fn shot_damage_from(app: &mut App, from: Vec3, faces: Vec3) -> f32 {
 }
 
 #[test]
-fn shots_he_never_sees_hit_harder_and_easy_controls_hit_softer() {
+fn shots_he_never_sees_hit_harder() {
     use second_person::combat::{BLIND_BONUS, SEEN_SPREAD, SHOT_DAMAGE};
-    use second_person::shooter::ControlScheme;
     // Inside his dodge-roll range, so a shot he sees still lands.
     let from = Vec3::new(0.0, 0.9, 4.0);
     // Face to face: he sees it coming.
@@ -1344,16 +1268,6 @@ fn shots_he_never_sees_hit_harder_and_easy_controls_hit_softer() {
     let blind = shot_damage_from(&mut a, from, Vec3::new(10.0, 0.9, 0.0));
     assert!(blind > SHOT_DAMAGE * BLIND_BONUS * 0.74, "a blind shot: {blind}");
 
-    // Magnetic walks you at him, so it pays in damage.
-    let mut a = app();
-    a.insert_resource(ControlScheme::Magnetic);
-    let target = single::<Target>(&mut a);
-    stage(&mut a, from, from);
-    step(&mut a, 0.3);
-    assert!(a.world().get::<Suspicion>(target).unwrap().sees_shooter);
-    let weak = shot_damage_from(&mut a, from, from);
-    let most = SHOT_DAMAGE * (1.0 + SEEN_SPREAD) * ControlScheme::Magnetic.damage_dealt();
-    assert!(weak > 0.0 && weak <= most + 0.01, "magnetic hits softer: {weak}");
 }
 
 #[test]

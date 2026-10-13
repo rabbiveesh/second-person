@@ -138,7 +138,7 @@ fn draw_hud(
     state: Res<State<GameState>>,
     mut mobile: ResMut<TargetMobile>,
     mut radar_mode: ResMut<RadarMode>,
-    mut controls: ResMut<ControlScheme>,
+    controls: Res<ControlScheme>,
     mut next: ResMut<NextState<GameState>>,
     touch: Res<TouchControls>,
     started: Res<Started>,
@@ -240,9 +240,6 @@ fn draw_hud(
                             mobile.0 = !mobile.0;
                         }
                     });
-                    if ui.button(format!("controls: {:?}", *controls)).clicked() {
-                        *controls = controls.next();
-                    }
                 }
             });
         });
@@ -289,8 +286,7 @@ fn draw_hud(
                 ui.add(
                     egui::Label::new(
                         egui::RichText::new(format!(
-                            "C controls: {:?}   {}   Space fire   W whistle   M target walks: {}   Tab radar: {:?}   L arena: {}   F1 inspector",
-                            *controls,
+                            "{}   Space fire   W whistle   M target walks: {}   Tab radar: {:?}   L arena: {}   F1 inspector",
                             shooter.as_ref().map_or(*controls, |s| s.2.scheme(*controls)).hint(),
                             if mobile.0 { "on" } else { "off" },
                             *radar_mode,

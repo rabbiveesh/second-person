@@ -115,19 +115,6 @@ fn load(mut commands: Commands, mut meshes: ResMut<Assets<Mesh>>, mut materials:
     });
 }
 
-/// The scheme a hit scrambles you into: the band's pick, unless that's what you already drive
-/// with, in which case the next nastier one.
-pub fn scramble_into(band_pick: ControlScheme, yours: ControlScheme) -> ControlScheme {
-    if band_pick != yours {
-        return band_pick;
-    }
-    match band_pick {
-        ControlScheme::Compass => ControlScheme::Eyes,
-        ControlScheme::Eyes => ControlScheme::Mirror,
-        _ => ControlScheme::Eyes,
-    }
-}
-
 /// Where to throw so a dart at `speed` meets you, leading your velocity by `lead` (0..1).
 pub fn aim(from: Vec3, at: Vec3, velocity: Vec3, speed: f32, lead: f32) -> Vec3 {
     let mut point = at;
@@ -224,7 +211,6 @@ fn fly(
     time: Res<Time>,
     tuning: Res<Tuning>,
     layout: Res<Layout>,
-    chosen: Res<ControlScheme>,
     mut darts: Query<(Entity, &mut Dart, &mut Transform), Without<Shooter>>,
     shooter: Single<(&Transform, &mut Scrambled, &Stunned), With<Shooter>>,
     mut hits: MessageWriter<ScrambledHit>,
@@ -251,7 +237,7 @@ fn fly(
             let Some(levers) = tuning.him().scramble else {
                 continue;
             };
-            let into = scramble_into(levers.into, *chosen);
+            let into = ControlScheme::Mirror;
             *scrambled = Scrambled { left: levers.secs, into };
             hits.write(ScrambledHit { at: you.translation, into, secs: levers.secs });
             continue;
@@ -268,14 +254,6 @@ fn fly(
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn never_scrambles_you_into_what_you_already_drive() {
-        assert_eq!(scramble_into(ControlScheme::Mirror, ControlScheme::Tank), ControlScheme::Mirror);
-        assert_eq!(scramble_into(ControlScheme::Mirror, ControlScheme::Mirror), ControlScheme::Eyes);
-        assert_eq!(scramble_into(ControlScheme::Compass, ControlScheme::Compass), ControlScheme::Eyes);
-        assert_eq!(scramble_into(ControlScheme::Eyes, ControlScheme::Eyes), ControlScheme::Mirror);
-    }
 
     #[test]
     fn leading_aims_where_you_will_be() {

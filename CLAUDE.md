@@ -101,12 +101,11 @@ Fyrox (small ecosystem), macroquad/three-d (too thin, would mean rolling our own
   `intro::fly_camera` adds the layer for the overhead shot and drops it `BODY_HIDE_DIST` before the swoop reaches his eyes.
 - `scramble.rs`: his scramble dart. While fighting and seeing you within `DART_RANGE` he winds up (`Charging`; violet
   glow on the HUD, a whine timed to the wind-up), then throws a slow dart (`Dart`, moved by hand with a swept test)
-  that sets the shooter's `Scrambled { left, into }`: you drive with `into` instead of your own `ControlScheme`. Cover
+  that sets the shooter's `Scrambled { left, into }`: you drive `Mirror` instead of `Tank` for a while. Cover
   stops it and a sidestep beats it. One of his moves at a time: never while you're grappled, staggered or scrambled,
   and no grapple while a dart flies. While you're scrambled he stays out peeking and, at the top bands, sweeps his gaze
-  so the view-relative schemes swim. Every knob is `difficulty::ScrambleLevers` (Gunfight band: unlock, wind-up, speed,
-  lead, duration, cooldown, which scheme); `scramble_into` never picks the scheme you already drive. `Armed(false)`
-  takes it away (A/B runs).
+  so Mirror swims. Every knob is `difficulty::ScrambleLevers` (Gunfight band: unlock, wind-up, speed, lead, duration,
+  cooldown). `Armed(false)` takes it away (A/B runs).
 - `examples/duel_sim.rs`: bot rounds on the real gameplay plugins, for balancing his moves. The bot writes the
   shooter's `ActionState` (like `touch`), knows where he is, walks the navmesh to a clear shot, aims with an error and
   fires; it reads the dart's wind-up and sidesteps after a reaction time, and when scrambled drives with the wrong
@@ -125,11 +124,9 @@ Fyrox (small ecosystem), macroquad/three-d (too thin, would mean rolling our own
   Walking into the world emits `Bump` and a `Stagger` knockback (can't walk, only turn); his laser staggers you too.
   `Sidestep`: a double-tap straight left/right on `Drive` (arrows, or a double flick of the stick, since both feed the same
   axis) hops 2.4m sideways with the facing restored to before the taps; the landing writes a `Footstep`. Stagger cuts it.
-- `shooter.rs` `ControlScheme` (spike; C cycles, touch has a button): `Tank` (above), and direct schemes that walk where
-  you point and swing you to face it, differing only in the frame Up/Right push along (`ControlScheme::basis`):
-  `Compass` (radar up), `Eyes` (his view, so his turning turns your controls), `Mirror` (`Eyes` turned round),
-  `Magnetic` (Up at him, Left/Right circle). Plus `Snake` (always walking) and `Ice` (`Eyes` with momentum).
-  The direct schemes read the touch stick in analog (`touch::analog`); only `Tank` and `Snake` snap to 8 ways and hop.
+- `shooter.rs` `ControlScheme`: you always drive `Tank` (above). `Mirror` exists only for the scramble dart: you walk where
+  you point and swing to face it, along his view turned round (`ControlScheme::basis`), so Up comes back at him and his
+  turning turns your controls. Mirror reads the touch stick in analog (`touch::analog`); Tank snaps to 8 ways and hops.
 - `touch.rs`: phone controls, spawned on the first touch. A floating `virtual_joystick` stick (left half,
   snapped to 8 arrow-key directions by `snap_8way`) and tap-right-to-fire write the shooter's `ActionState` in
   leafwing's `ManualControl` set. The HUD swaps the R/M/Tab hints for egui buttons once touch is on, plus a big
@@ -157,8 +154,6 @@ Fyrox (small ecosystem), macroquad/three-d (too thin, would mean rolling our own
   His hit points are a bar (`TARGET_MAX_HP` at band 5), not a count. Each hit is a `HitKind`: `Seen` does about a
   third (`SHOT_DAMAGE`), `Blind` (out of his view) and `Behind` hit harder, and every hit varies (`SEEN_SPREAD`,
   `BLIND_SPREAD`) so the bar never shows a fixed number of shots and the bands can move his HP unnoticed.
-  `ControlScheme::damage_dealt` trims the damage for the schemes that do more of the work for you, and
-  `Tuning::damage_dealt` scales that trim with the bands: next to nothing at band 1, double at band 10.
 - `layout.rs` (presentation): `ScreenLayout` (view, deck, radar rects) refit from the window every frame, so
   rotation and resizes just work. Landscape: full-window view, radar in the corner over it. Portrait (h ≥ 1.3w): a
   deck below the view holds the radar and whistle, and the left thumb drives from it. FOV is Hor+ with a floor:
