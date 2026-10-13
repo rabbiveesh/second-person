@@ -5,7 +5,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 WORKDIR /src
 COPY . .
-RUN cargo build --release --no-default-features --example net_spike \
+# Cache mounts live on Fly's builder, so a source change only recompiles our own crate.
+RUN --mount=type=cache,target=/usr/local/cargo/registry \
+    --mount=type=cache,target=/src/target \
+    cargo build --release --no-default-features --example net_spike \
     && cp target/release/examples/net_spike /net_spike
 
 FROM debian:bookworm-slim
