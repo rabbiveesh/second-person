@@ -106,14 +106,21 @@ pub enum HitKind {
 
 /// A shot he sees coming: about a third of his band-5 bar.
 pub const SHOT_DAMAGE: f32 = 34.0;
-pub const BLIND_BONUS: f32 = 1.6;
-pub const BEHIND_BONUS: f32 = 2.2;
+pub const BLIND_BONUS: f32 = 1.35;
+pub const BEHIND_BONUS: f32 = 1.6;
+/// A surprise hit (`Blind` or `Behind`) never takes more than this share of his full bar, so an
+/// ambush opens the fight rather than ending it: from band 2 up, the opener plus the best seen
+/// follow-up can't drop him (`SURPRISE_CAP * hp + SHOT_DAMAGE * (1 + SEEN_SPREAD) < hp`).
+pub const SURPRISE_CAP: f32 = 0.5;
+/// After a surprise hit he knows where it came from: for this long every hit counts as `Seen`,
+/// so the bonus is one per ambush, not one per bullet he hasn't turned round for yet.
+pub const BRACED_SECS: f32 = 3.0;
 /// A shot from further round than this off his facing counts as from behind.
 pub const BEHIND_ANGLE: f32 = 110.0_f32.to_radians();
 /// Each hit varies by up to this much either way, so the bar never shows a fixed number of
 /// shots (and his hit points can move with the bands without it being countable).
 pub const SEEN_SPREAD: f32 = 0.12;
-pub const BLIND_SPREAD: f32 = 0.25;
+pub const BLIND_SPREAD: f32 = 0.15;
 
 impl HitKind {
     /// `facing` is his (horizontal) facing, `to_shooter` from him to where the shot came from.
@@ -282,7 +289,9 @@ fn bullet_hits(
     mut impacts: MessageWriter<BulletImpact>,
     tuning: Res<Tuning>,
     scheme: Res<ControlScheme>,
+    time: Res<Time>,
 ) {
+    let now = time.elapsed_secs();
     let near_miss = NEAR_MISS_RANGE * tuning.him().hearing;
     let mut spent = Vec::new();
     for ev in collisions.read() {
@@ -301,8 +310,15 @@ fn bullet_hits(
         commands.entity(bullet_e).despawn();
 
         if let Ok((_, mut target, target_t, mut suspicion)) = targets.get_mut(other) {
-            let kind = HitKind::of(suspicion.sees_shooter, *target_t.forward(), bullet.origin - target_t.translation);
-            let damage = kind.damage(rand::rng().random_range(-1.0..1.0)) * tuning.damage_dealt(*scheme);
+            let kind = match HitKind::of(suspicion.sees_shooter, *target_t.forward(), bullet.origin - target_t.translation) {
+                _ if now < target.braced_until => HitKind::Seen,
+                kind => kind,
+            };
+            let mut damage = kind.damage(rand::rng().random_range(-1.0..1.0)) * tuning.damage_dealt(*scheme);
+            if kind != HitKind::Seen {
+                damage = damage.min(target.max_hp * SURPRISE_CAP);
+                target.braced_until = now + BRACED_SECS;
+            }
             target.hp = (target.hp - damage).max(0.0);
             suspicion.bump(0.6);
             suspicion.last_known = Some(bullet.origin);

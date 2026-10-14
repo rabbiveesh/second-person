@@ -52,6 +52,8 @@ pub struct Target {
     pub hp: f32,
     /// Hit points he started the round with (the Gunfight band sets it).
     pub max_hp: f32,
+    /// Until when (`Time::elapsed_secs`) he's braced after a surprise hit (`combat::BRACED_SECS`).
+    pub braced_until: f32,
 }
 
 /// Pitch node between the body (yaw) and the camera.
@@ -184,7 +186,7 @@ fn spawn_target(
     commands.spawn((
         Name::new("Target"),
         RoundEntity,
-        Target { hp: him.hp, max_hp: him.hp },
+        Target { hp: him.hp, max_hp: him.hp, braced_until: 0.0 },
         Suspicion::default(),
         RadarContact(Color::srgb(1.0, 0.2, 0.2)),
         LookGoal {

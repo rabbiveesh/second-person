@@ -143,6 +143,8 @@ Fyrox (small ecosystem), macroquad/three-d (too thin, would mean rolling our own
   His hit points are a bar (`TARGET_MAX_HP` at band 5), not a count. Each hit is a `HitKind`: `Seen` does about a
   third (`SHOT_DAMAGE`), `Blind` (out of his view) and `Behind` hit harder, and every hit varies (`SEEN_SPREAD`,
   `BLIND_SPREAD`) so the bar never shows a fixed number of shots and the bands can move his HP unnoticed.
+  A surprise hit (`Blind`/`Behind`) takes at most `SURPRISE_CAP` of his bar and leaves him braced for `BRACED_SECS`
+  (hits count as `Seen`), so an ambush opens the fight rather than ending it.
   `ControlScheme::damage_dealt` trims the damage for the schemes that do more of the work for you, and
   `Tuning::damage_dealt` scales that trim with the bands: next to nothing at band 1, double at band 10.
 - `layout.rs` (presentation): `ScreenLayout` (view, deck, radar rects) refit from the window every frame, so

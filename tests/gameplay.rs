@@ -1366,3 +1366,20 @@ fn hit_kinds_and_their_damage() {
     assert!(HitKind::Blind.damage(-1.0) > HitKind::Seen.damage(1.0));
     assert!((HitKind::Behind.damage(0.0) - SHOT_DAMAGE * BEHIND_BONUS).abs() < 1e-3);
 }
+
+#[test]
+fn an_ambush_opens_the_fight_but_never_ends_it() {
+    use second_person::combat::{SEEN_SPREAD, SHOT_DAMAGE, SURPRISE_CAP};
+    // In the back, then again before he can turn round: only the first one is a surprise.
+    let from = Vec3::new(0.0, 0.9, 4.0);
+    let away = Vec3::new(0.0, 0.9, -10.0);
+    let mut a = app();
+    let target = single::<Target>(&mut a);
+    let max_hp = a.world().get::<Target>(target).unwrap().max_hp;
+    let opener = shot_damage_from(&mut a, from, away);
+    assert!(opener > SHOT_DAMAGE * (1.0 + SEEN_SPREAD), "the opener hits hard: {opener}");
+    assert!(opener <= max_hp * SURPRISE_CAP + 0.01, "but takes at most the cap: {opener}");
+    let second = shot_damage_from(&mut a, from, away);
+    assert!(second <= SHOT_DAMAGE * (1.0 + SEEN_SPREAD) + 0.01, "he's braced for the next: {second}");
+    assert!(a.world().get::<Target>(target).unwrap().hp > 0.0, "and he's still up");
+}
