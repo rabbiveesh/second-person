@@ -1306,8 +1306,8 @@ fn his_scramble_dart_scrambles_a_shooter_who_stands_still() {
     let target = single::<Target>(&mut app);
     app.world_mut().get_mut::<Suspicion>(target).unwrap().bump(1.0);
     let mut scrambled_at = None;
-    let mut him_then: Option<(f32, Vec3)> = None;
-    let mut ran = 0.0f32;
+    let mut facing_before = Quat::IDENTITY;
+    let (mut spun, mut ducked) = (0.0f32, false);
     for i in 0..(30.0 / DT) as usize {
         app.world_mut().get_mut::<Shooter>(shooter).unwrap().hp = 1e6;
         app.update();
@@ -1337,22 +1337,20 @@ fn his_scramble_dart_scrambles_a_shooter_who_stands_still() {
                 s
             );
         }
-        let him = app.world().get::<Transform>(target).unwrap().translation;
+        let facing = app.world().get::<Rotation>(shooter).unwrap().0;
         if s.active() && scrambled_at.is_none() {
             scrambled_at = Some((i as f32 * DT, s));
-            him_then = Some((i as f32 * DT, him));
+            spun = facing.angle_between(facing_before);
+            ducked = app.world().get::<second_person::target::Duck>(target).is_some();
         }
-        if let Some((at, from)) = him_then
-            && i as f32 * DT - at < 1.5
-        {
-            ran = ran.max(from.xz().distance(him.xz()));
-        }
+        facing_before = facing;
     }
     assert!(counted::<DartThrown>(&app) >= 1, "he threw a dart");
     let (at, s) = scrambled_at.expect("and it scrambled you");
     assert_eq!(counted::<ScrambledHit>(&app) >= 1, true);
     assert!(matches!(s.into, ControlScheme::Eyes | ControlScheme::Mirror), "scrambled into {:?}", s.into);
-    assert!(ran > 2.0, "a landed dart sends him running for other cover: {ran}m");
+    assert!(spun > 1.5, "a landed dart spins you off your aim: {spun} rad");
+    assert!(ducked, "and he ducks out of your sights");
     assert!(at > 4.0, "never in the opening seconds: {at}");
     assert!(at < 30.0, "but soon after: {at}");
 }

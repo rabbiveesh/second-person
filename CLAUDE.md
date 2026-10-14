@@ -104,9 +104,10 @@ Fyrox (small ecosystem), macroquad/three-d (too thin, would mean rolling our own
   that sets the shooter's `Scrambled { left, into }`: you drive `Eyes` or `Mirror` (a coin toss; the HUD doesn't say which)
   instead of `Tank` for a while. Cover
   stops it and a sidestep beats it. One of his moves at a time: never while you're grappled, staggered or scrambled,
-  and no grapple while a dart flies. A landed dart sends him running for other cover (`Relocate`), so his view, which is
-  your frame, swings with every leg while you're off his screen; then he stays out peeking and, at the top bands, sweeps
-  his gaze so you swim. He never fires behind his back: every shot at you is one you can watch him take. At the top bands he holds a ready dart (`hold`) until your hop is spent, the dart homes (`homing`),
+  and no grapple while a dart flies. A landed dart spins you round (`SPIN_ON_HIT`), so you can't stand and shoot: aiming means moving, and moving
+  is what's scrambled. He ducks behind his cover (`target::Duck`) instead of turning his back on your gun, then stays out
+  peeking and, at the top bands, sweeps his gaze so you swim. He never fires behind his back: every shot at you is one
+  you can watch him take. At the top bands he holds a ready dart (`hold`) until your hop is spent, the dart homes (`homing`),
   and he may grapple you while you're scrambled (`combo`). He stays out peeking through a wind-up. Every knob is
   `difficulty::ScrambleLevers` (Gunfight band: unlock, wind-up, speed, lead, duration, cooldown, hold, homing, combo).
   `Armed(false)` takes it away (A/B runs).

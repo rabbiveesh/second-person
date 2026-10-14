@@ -147,6 +147,12 @@ struct Fighting {
     peeks_left: u32,
 }
 
+/// His dart just landed: duck behind his cover for this long before stepping out to punish
+/// the swim (`scramble::fly` inserts it), rather than standing in your sights.
+#[derive(Component, Reflect)]
+#[reflect(Component)]
+pub struct Duck(pub Timer);
+
 /// Leave this cover spot: the next cover plan avoids it.
 #[derive(Component)]
 pub struct Relocate(pub Vec2);
@@ -449,11 +455,12 @@ fn fight(
         Has<Grapple>,
         Has<Relocate>,
         Has<crate::scramble::Charging>,
+        Option<&mut Duck>,
     )>,
     you: Query<&Scrambled, With<Shooter>>,
     tuning: Res<Tuning>,
 ) -> TaskStatus {
-    let Ok((t, target, suspicion, plan, mut look, Some(mut fighting), moving, grappling, relocate, charging)) =
+    let Ok((t, target, suspicion, plan, mut look, Some(mut fighting), moving, grappling, relocate, charging, duck)) =
         q.get_mut(e)
     else {
         return RUNNING;
@@ -476,10 +483,19 @@ fn fight(
         look.point = p + Vec3::Y * EYE_OFFSET;
         look.turn_speed = 4.0;
     }
-    // You're scrambled: he presses it. A landed dart sends him running for new cover first
-    // (`scramble::fly`); from there he steps out to his peek spot and stays there shooting,
+    // A landed dart: he ducks behind his cover first, still watching you, so you never get a
+    // clean shot at a man walking off.
+    let ducking = duck.is_some_and(|mut d| !d.0.tick(time.delta()).is_finished());
+    if !ducking {
+        commands.entity(e).try_remove::<Duck>();
+    }
+    if ducking && fighting.peeking {
+        fighting.peeking = false;
+        commands.entity(e).try_remove::<MoveTo>();
+    }
+    // You're scrambled: he presses it. He steps out to his peek spot and stays there shooting,
     // sweeping his view (your controls) on purpose at the top bands.
-    let exploiting = you.single().is_ok_and(|s| s.active());
+    let exploiting = !ducking && you.single().is_ok_and(|s| s.active());
     if exploiting {
         if !fighting.peeking {
             fighting.peeking = true;
@@ -508,7 +524,7 @@ fn fight(
     }
     // Mid wind-up he stays out where he can see you, rather than ducking back with a dart in hand.
     let throwing = charging && fighting.peeking;
-    if !exploiting && !throwing && fighting.timer.tick(time.delta()).is_finished() {
+    if !exploiting && !throwing && !ducking && fighting.timer.tick(time.delta()).is_finished() {
         let mut rng = rand::rng();
         let peeking = !fighting.peeking;
         if !peeking {
