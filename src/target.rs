@@ -476,8 +476,9 @@ fn fight(
         look.point = p + Vec3::Y * EYE_OFFSET;
         look.turn_speed = 4.0;
     }
-    // You're scrambled: he presses it. He steps out to his peek spot and stays there shooting,
-    // and if your controls follow his view he sweeps it on purpose to throw you.
+    // You're scrambled: he presses it. A landed dart sends him running for new cover first
+    // (`scramble::fly`); from there he steps out to his peek spot and stays there shooting,
+    // sweeping his view (your controls) on purpose at the top bands.
     let exploiting = you.single().is_ok_and(|s| s.active());
     if exploiting {
         if !fighting.peeking {
@@ -486,7 +487,7 @@ fn fight(
             commands.entity(e).try_remove::<MoveTo>();
         }
         let spin = tuning.him().scramble.is_some_and(|l| l.spin);
-        let follows_view = you.single().is_ok_and(|s| s.into == ControlScheme::Mirror);
+        let follows_view = you.single().is_ok_and(|s| s.into != ControlScheme::Tank);
         if spin && follows_view {
             let eye = t.translation + Vec3::Y * EYE_OFFSET;
             let swing = SPIN_SWING * (time.elapsed_secs() * SPIN_RATE).sin();

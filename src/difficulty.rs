@@ -96,7 +96,7 @@ pub struct ScrambleLevers {
     pub speed: f32,
     /// Seconds you stay scrambled.
     pub secs: f32,
-    /// While you're on `Mirror` he sweeps his head on purpose: your controls are his view.
+    /// While you're scrambled he sweeps his head on purpose: your controls are his view.
     pub spin: bool,
     /// How much he leads your movement when he aims (0 = at you, 1 = where you'll be).
     pub lead: f32,

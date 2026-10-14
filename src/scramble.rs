@@ -15,7 +15,7 @@ use crate::{
     difficulty::Tuning,
     round::{GameState, RoundEntity},
     shooter::{ControlScheme, Scrambled, Shooter, Sidestep, Stagger, Stunned},
-    target::{Activity, MainCamera, Roll, Suspicion, Target},
+    target::{Activity, MainCamera, Relocate, Roll, Suspicion, Target},
 };
 
 /// He throws it from this far...
@@ -219,8 +219,9 @@ fn fly(
     time: Res<Time>,
     tuning: Res<Tuning>,
     layout: Res<Layout>,
-    mut darts: Query<(Entity, &mut Dart, &mut Transform), Without<Shooter>>,
+    mut darts: Query<(Entity, &mut Dart, &mut Transform), (Without<Shooter>, Without<Target>)>,
     shooter: Single<(&Transform, &mut Scrambled, &Stunned), With<Shooter>>,
+    him: Query<(Entity, &Transform), With<Target>>,
     mut hits: MessageWriter<ScrambledHit>,
     mut misses: MessageWriter<DartMissed>,
 ) {
@@ -256,8 +257,14 @@ fn fly(
             let Some(levers) = tuning.him().scramble else {
                 continue;
             };
-            let into = ControlScheme::Mirror;
+            // A coin toss, so you find out which by moving.
+            let into = if rand::random_bool(0.5) { ControlScheme::Eyes } else { ControlScheme::Mirror };
             *scrambled = Scrambled { left: levers.secs, into };
+            // Then he takes your frame away: he turns his back and runs for other cover, his view
+            // (your controls) swinging with every leg, before peeking out to punish the swim.
+            if let Ok((him, at)) = him.single() {
+                commands.entity(him).try_insert(Relocate(at.translation.xz()));
+            }
             hits.write(ScrambledHit { at: you.translation, into, secs: levers.secs });
             continue;
         }

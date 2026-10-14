@@ -6,7 +6,7 @@
 //!
 //! Time advances a fixed 1/60s per frame and every other frame is saved, so the clip plays at
 //! real speed at 30 fps however slowly the frames render. Each round runs to its end banner.
-//! With `--darts-only on`, rounds where he never throws the scramble dart are thrown away (and
+//! With `--darts-only on`, rounds where no scramble dart lands are thrown away (and
 //! up to `MAX_TRIES` rounds played), so `--rounds` counts kept rounds. Frames are numbered
 //! straight through the kept rounds.
 
@@ -110,10 +110,11 @@ fn record(world: &mut World) {
     }
     let next_round = rec.ended.is_some_and(|e| frame - e >= AFTER_END);
     if next_round {
-        let thrown = world.resource::<Bot>().darts.thrown;
+        let darts = world.resource::<Bot>().darts;
+        let (thrown, landed) = (darts.thrown, darts.tried_hit + darts.stood_hit);
         let mut rec = world.resource_mut::<Rec>();
         let (first, before) = rec.round_start;
-        if rec.darts_only && thrown == before {
+        if rec.darts_only && landed == before {
             // Nothing happened worth keeping: drop this round's frames and reuse their numbers.
             for n in first..rec.saved {
                 let _ = std::fs::remove_file(rec.dir.join(format!("frame-{n:05}.png")));
@@ -122,11 +123,11 @@ fn record(world: &mut World) {
         } else {
             rec.kept += 1;
         }
-        println!("round {}: {} darts, kept {}", rec.round + 1, thrown - before, rec.kept);
+        println!("round {}: {} landed ({thrown} thrown so far), kept {}", rec.round + 1, landed - before, rec.kept);
         rec.round += 1;
         rec.ended = None;
         rec.in_round = 0;
-        rec.round_start = (rec.saved, thrown);
+        rec.round_start = (rec.saved, landed);
         if rec.kept >= rec.rounds || (rec.darts_only && rec.round >= MAX_TRIES) {
             let darts = world.resource::<Bot>().darts;
             let landed = darts.tried_hit + darts.stood_hit;

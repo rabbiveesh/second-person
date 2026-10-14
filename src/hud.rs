@@ -196,7 +196,7 @@ fn draw_hud(
                     } else if scrambled.active() {
                         ui.colored_label(
                             SCRAMBLE_VIOLET,
-                            format!("YOU · SCRAMBLED: {:?} {:.1}s", scrambled.into, scrambled.left),
+                            format!("YOU · SCRAMBLED {:.1}s", scrambled.left),
                         );
                     } else {
                         ui.label("YOU (the shooter)");

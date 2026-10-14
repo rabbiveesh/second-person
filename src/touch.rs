@@ -112,10 +112,10 @@ fn touch_to_actions(
         return;
     };
     if let Some(stick) = sticks.iter().find(|s| s.pointer_state.is_some()) {
-        // Snapping only helps Tank; walking where you point (Mirror) wants the full circle.
+        // Snapping only helps Tank; walking where you point (scrambled) wants the full circle.
         let drive = match scrambled.scheme(*scheme) {
             ControlScheme::Tank => snap_8way(stick.delta),
-            ControlScheme::Mirror => analog(stick.delta),
+            ControlScheme::Eyes | ControlScheme::Mirror => analog(stick.delta),
         };
         actions.set_axis_pair(&ShooterAction::Drive, drive);
     }
