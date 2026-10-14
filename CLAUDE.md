@@ -144,8 +144,9 @@ Fyrox (small ecosystem), macroquad/three-d (too thin, would mean rolling our own
   third (`SHOT_DAMAGE`), `Blind` (out of his view) and `Behind` hit harder, and every hit varies (`SEEN_SPREAD`,
   `BLIND_SPREAD`) so the bar never shows a fixed number of shots and the bands can move his HP unnoticed.
   A surprise hit (`Blind`/`Behind`) leaves him braced for `BRACED_SECS` (hits count as `Seen`): one bonus per
-  surprise, not per bullet. Before he suspects anything it's an ambush: lethal in the back, `AMBUSH_BONUS` (uncapped,
+  surprise, not per bullet. Before he suspects anything it's an ambush: lethal in the back from within `EXECUTION_RANGE`, else `AMBUSH_BONUS` (uncapped,
   often most of his bar) from the side; once he's on to you it takes at most `SURPRISE_CAP` of his bar, so a mid-fight flank swings the fight.
+  A hit he survives always engages him, so he breaks for cover instead of walking over to look.
   `ControlScheme::damage_dealt` trims the damage for the schemes that do more of the work for you, and
   `Tuning::damage_dealt` scales that trim with the bands: next to nothing at band 1, double at band 10.
 - `layout.rs` (presentation): `ScreenLayout` (view, deck, radar rects) refit from the window every frame, so

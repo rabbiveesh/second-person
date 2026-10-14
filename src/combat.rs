@@ -114,9 +114,12 @@ pub const BEHIND_BONUS: f32 = 1.6;
 /// (`SURPRISE_CAP * hp + SHOT_DAMAGE * (1 + SEEN_SPREAD) < hp`).
 pub const SURPRISE_CAP: f32 = 0.5;
 /// A true ambush, a surprise hit before he suspects anything, is the hardest thing in the game
-/// to set up. In the back it's lethal; from the side it's paid on top of the surprise bonus,
-/// uncapped: often most of his bar.
+/// to set up. In the back from within `EXECUTION_RANGE` it's lethal; otherwise it's paid on top of
+/// the surprise bonus, uncapped: often most of his bar.
 pub const AMBUSH_BONUS: f32 = 1.35;
+/// How close you have to creep for an ambush in the back to kill outright. Further off, being
+/// behind him is easy, so it's only a big hit.
+pub const EXECUTION_RANGE: f32 = 12.0;
 /// After a surprise hit he knows where it came from: for this long every hit counts as `Seen`,
 /// so the bonus is one per ambush, not one per bullet he hasn't turned round for yet.
 pub const BRACED_SECS: f32 = 3.0;
@@ -322,15 +325,20 @@ fn bullet_hits(
             let mut damage = kind.damage(rand::rng().random_range(-1.0..1.0)) * tuning.damage_dealt(*scheme);
             if kind != HitKind::Seen {
                 let unaware = !suspicion.engaged && suspicion.level < WARNING_SUSPICION;
+                let close = target_t.translation.distance(bullet.origin) <= EXECUTION_RANGE;
                 damage = match (unaware, kind) {
-                    (true, HitKind::Behind) => target.hp,
+                    (true, HitKind::Behind) if close => target.hp,
                     (true, _) => damage * AMBUSH_BONUS,
                     (false, _) => damage.min(target.max_hp * SURPRISE_CAP),
                 };
                 target.braced_until = now + BRACED_SECS;
             }
             target.hp = (target.hp - damage).max(0.0);
-            suspicion.bump(0.6);
+            // Getting shot is the one thing he never has to think about: he's in the fight, and
+            // runs for cover instead of wandering over to look while you keep firing.
+            if target.hp > 0.0 {
+                suspicion.bump(1.0);
+            }
             suspicion.last_known = Some(bullet.origin);
             commands.entity(other).insert(Alert::new(bullet.origin, 3.0));
             let dir = (target_t.translation - bullet.origin).normalize_or_zero();

@@ -140,17 +140,17 @@ fn firing_spawns_a_bullet_and_a_gunshot() {
 #[test]
 fn shooting_the_target_hurts_and_alerts_him() {
     let mut app = app();
-    // Shooter right behind him: point blank, and out of his view.
-    stage(&mut app, Vec3::new(0.0, 0.9, 6.0), Vec3::new(0.0, 0.9, -10.0));
+    // Shooter side on, close and out of his view.
+    stage(&mut app, Vec3::new(0.0, 0.9, 6.0), Vec3::new(10.0, 0.9, 0.0));
     press(&mut app, KeyCode::Space);
     step(&mut app, 0.5);
 
     assert_eq!(counted::<TargetHit>(&app), 1);
     let target = single::<Target>(&mut app);
-    // From behind, so it lands in the back: well over a seen shot's third of his bar.
+    // An ambush: well over a seen shot's third of his bar, and he's in the fight at once.
     let hp = app.world().get::<Target>(target).unwrap().hp;
-    assert!(hp < TARGET_MAX_HP - 50.0, "a shot in the back hits hard: {hp}");
-    assert!(app.world().get::<Suspicion>(target).unwrap().level > 0.5);
+    assert!(hp > 0.0 && hp < TARGET_MAX_HP - 50.0, "an ambush hits hard: {hp}");
+    assert!(app.world().get::<Suspicion>(target).unwrap().engaged, "being shot engages him");
 }
 
 /// The eyes' local offset angle from rest (the AI only turns the body and head).
@@ -162,7 +162,7 @@ fn flinch_angle(app: &mut App) -> f32 {
 #[test]
 fn getting_shot_jolts_his_view_then_it_settles() {
     let mut app = app();
-    stage(&mut app, Vec3::new(0.0, 0.9, 6.0), Vec3::new(0.0, 0.9, -10.0));
+    stage(&mut app, Vec3::new(0.0, 0.9, 6.0), Vec3::new(10.0, 0.9, 0.0));
     press(&mut app, KeyCode::Space);
     let mut peak: f32 = 0.0;
     for _ in 0..30 {
@@ -1373,6 +1373,15 @@ fn an_ambush_in_the_back_is_lethal() {
     let target = single::<Target>(&mut a);
     shot_damage_from(&mut a, Vec3::new(0.0, 0.9, 4.0), Vec3::new(0.0, 0.9, -10.0));
     assert_eq!(a.world().get::<Target>(target).unwrap().hp, 0.0, "one shot before he suspects a thing");
+}
+
+#[test]
+fn from_far_off_a_shot_in_the_back_is_only_a_big_hit() {
+    let mut a = app();
+    let target = single::<Target>(&mut a);
+    let hit = shot_damage_from(&mut a, Vec3::new(0.0, 0.9, 14.0), Vec3::new(0.0, 0.9, -10.0));
+    let t = a.world().get::<Target>(target).unwrap();
+    assert!(hit > 0.0 && t.hp > 0.0, "beyond execution range: {hit}");
 }
 
 #[test]
