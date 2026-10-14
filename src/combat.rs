@@ -90,6 +90,8 @@ pub struct TargetHit {
     pub dir: Vec3,
     pub damage: f32,
     pub kind: HitKind,
+    /// An ambush in the back from up close: lethal (see `EXECUTION_RANGE`).
+    pub execution: bool,
 }
 
 /// Whether he saw the shot coming. Shots from outside his view hit harder: you're most
@@ -323,11 +325,13 @@ fn bullet_hits(
                 kind => kind,
             };
             let mut damage = kind.damage(rand::rng().random_range(-1.0..1.0)) * tuning.damage_dealt(*scheme);
+            let mut execution = false;
             if kind != HitKind::Seen {
                 let unaware = !suspicion.engaged && suspicion.level < WARNING_SUSPICION;
                 let close = target_t.translation.distance(bullet.origin) <= EXECUTION_RANGE;
+                execution = unaware && close && kind == HitKind::Behind;
                 damage = match (unaware, kind) {
-                    (true, HitKind::Behind) if close => target.hp,
+                    _ if execution => target.hp,
                     (true, _) => damage * AMBUSH_BONUS,
                     (false, _) => damage.min(target.max_hp * SURPRISE_CAP),
                 };
@@ -342,7 +346,7 @@ fn bullet_hits(
             suspicion.last_known = Some(bullet.origin);
             commands.entity(other).insert(Alert::new(bullet.origin, 3.0));
             let dir = (target_t.translation - bullet.origin).normalize_or_zero();
-            hits.write(TargetHit { at: target_t.translation, dir, damage, kind });
+            hits.write(TargetHit { at: target_t.translation, dir, damage, kind, execution });
         } else {
             impacts.write(BulletImpact { at: bullet_t.translation });
             // Near miss: he hears the impact and looks toward where it came from.
