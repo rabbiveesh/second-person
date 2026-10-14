@@ -1368,16 +1368,24 @@ fn hit_kinds_and_their_damage() {
 }
 
 #[test]
-fn an_ambush_pays_big_but_only_once() {
-    use second_person::combat::{AMBUSH_BONUS, BEHIND_BONUS, BLIND_SPREAD, SEEN_SPREAD, SHOT_DAMAGE};
-    // In the back before he suspects a thing, then again before he can turn round.
-    let from = Vec3::new(0.0, 0.9, 4.0);
-    let away = Vec3::new(0.0, 0.9, -10.0);
+fn an_ambush_in_the_back_is_lethal() {
     let mut a = app();
-    let opener = shot_damage_from(&mut a, from, away);
-    let least = SHOT_DAMAGE * BEHIND_BONUS * (1.0 - BLIND_SPREAD) * AMBUSH_BONUS;
-    assert!(opener >= least - 0.01, "an ambush hits hardest: {opener}");
-    let second = shot_damage_from(&mut a, from, away);
+    let target = single::<Target>(&mut a);
+    shot_damage_from(&mut a, Vec3::new(0.0, 0.9, 4.0), Vec3::new(0.0, 0.9, -10.0));
+    assert_eq!(a.world().get::<Target>(target).unwrap().hp, 0.0, "one shot before he suspects a thing");
+}
+
+#[test]
+fn a_side_on_ambush_pays_big_but_only_once() {
+    use second_person::combat::{AMBUSH_BONUS, BLIND_BONUS, BLIND_SPREAD, SEEN_SPREAD, SHOT_DAMAGE};
+    // Side on before he suspects a thing, then again before he can turn round.
+    let from = Vec3::new(0.0, 0.9, 4.0);
+    let side = Vec3::new(10.0, 0.9, 0.0);
+    let mut a = app();
+    let opener = shot_damage_from(&mut a, from, side);
+    let least = SHOT_DAMAGE * BLIND_BONUS * (1.0 - BLIND_SPREAD) * AMBUSH_BONUS;
+    assert!(opener >= least - 0.01, "an ambush hits hard: {opener}");
+    let second = shot_damage_from(&mut a, from, side);
     assert!(second <= SHOT_DAMAGE * (1.0 + SEEN_SPREAD) + 0.01, "he's braced for the next: {second}");
 }
 
