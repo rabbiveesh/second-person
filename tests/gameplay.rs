@@ -644,11 +644,31 @@ fn he_dodge_rolls_your_first_shot_but_not_the_second() {
     let cam = single::<MainCamera>(&mut app);
     let up = app.world().get::<Transform>(cam).unwrap().rotation * Vec3::Y;
     assert!(up.y < -0.5, "view didn't tumble: up is {up}");
+    // And he's tucked low: a shot at chest height goes over him, one at the floor doesn't.
+    let him = app.world().get::<Transform>(target).unwrap().translation;
+    let ray_hits = |app: &mut App, y: f32| {
+        let from = Vec3::new(him.x, y, shooter_pos.z);
+        app.world_mut()
+            .run_system_once(move |q: SpatialQuery| {
+                q.cast_ray(from, Dir3::Z, 30.0, true, &SpatialQueryFilter::from_mask(second_person::Layer::Target)).is_some()
+            })
+            .unwrap()
+    };
+    assert!(!ray_hits(&mut app, 1.05), "a chest-high shot hits him mid-roll");
+    assert!(ray_hits(&mut app, 0.4), "nothing low to hit mid-roll");
     step(&mut app, ROLL_SECS / 2.0);
     let landed = app.world().get::<Transform>(target).unwrap().translation;
     assert!((landed.x - start.x).abs() > 1.5, "didn't dive sideways: {start} -> {landed}");
     step(&mut app, 0.3);
     assert_eq!(counted::<TargetHit>(&app), 0, "the dodged shot hit");
+
+    // Back on his feet, chest-high again.
+    let him = app.world().get::<Transform>(target).unwrap().translation;
+    let from = Vec3::new(him.x, 1.05, shooter_pos.z);
+    let standing = app.world_mut().run_system_once(move |q: SpatialQuery| {
+        q.cast_ray(from, Dir3::Z, 30.0, true, &SpatialQueryFilter::from_mask(second_person::Layer::Target)).is_some()
+    });
+    assert!(standing.unwrap(), "still tucked after the roll");
 
     // Still on cooldown: the follow-up isn't dodged.
     press(&mut app, KeyCode::Space);

@@ -89,7 +89,8 @@ Fyrox (small ecosystem), macroquad/three-d (too thin, would mean rolling our own
   Investigating a noise he can't see (cover in the way) makes him walk toward it until he can.
   Dodge roll (`combat::dodge`, `Roll`): when he sees you fire straight at him from beyond `ROLL_MIN_RANGE`, he dives
   `ROLL_DISTANCE` across the line of fire (never into cover), then `ROLL_COOLDOWN` before the next, so a second shot
-  lands. No return fire mid-roll. `juice` plays it as a shoulder roll: the view turns into the dive, somersaults forward a full turn while dropping `ROLL_DIP`, then squares back up.
+  lands. No return fire mid-roll. Mid-roll his hitbox is a ball on the floor (`target::Tucked`, `ROLL_TUCK`), so a
+  chest-high shot goes over him, and the magnet never bends a shot into him while he rolls. `juice` plays it as a shoulder roll: the view turns into the dive, somersaults forward a full turn while dropping `ROLL_DIP`, then squares back up.
   `Suspicion.last_known` is where he last saw or heard you (no omniscience).
   Tasks only set intent (`LookGoal`, `MoveTo`, `Activity`). Systems `perceive` → `gaze` → `walk`
   do the work. Use the shared `ARRIVE` constant for every arrival check, because mismatched thresholds deadlock tasks. Lower branches **fail** when a higher-priority condition appears (that's preemption).

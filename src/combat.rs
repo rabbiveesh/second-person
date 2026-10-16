@@ -214,7 +214,7 @@ fn fire(
     assets: Res<Assets3d>,
     mut cooldown: Local<Option<Timer>>,
     shooter: Single<(&ActionState<ShooterAction>, &Transform, &Stunned), With<Shooter>>,
-    target: Single<(Entity, &Transform, &mut Suspicion), With<Target>>,
+    target: Single<(Entity, &Transform, &mut Suspicion, Has<Roll>), With<Target>>,
     layout: Res<arena::Layout>,
     tuning: Res<Tuning>,
     mut gunshots: MessageWriter<Gunshot>,
@@ -233,8 +233,13 @@ fn fire(
     cooldown.reset();
 
     let muzzle = t.translation + t.rotation * Vec3::new(0.3, 0.15, -0.9);
-    let (target_e, target_t, mut suspicion) = target.into_inner();
-    let forward = magnetised(&layout, &tuning.help(), muzzle, *t.forward(), target_t.translation);
+    let (target_e, target_t, mut suspicion, rolling) = target.into_inner();
+    // The magnet never bends a shot into a man mid-dodge: that's his move beating your aim.
+    let forward = if rolling {
+        *t.forward()
+    } else {
+        magnetised(&layout, &tuning.help(), muzzle, *t.forward(), target_t.translation)
+    };
     commands.spawn((
         Name::new("Bullet"),
         RoundEntity,

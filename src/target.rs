@@ -203,7 +203,7 @@ fn spawn_target(
             turn_speed: 1.0,
         },
         RigidBody::Kinematic,
-        Collider::capsule(0.4, 1.0),
+        standing_collider(),
         CollisionLayers::new(Layer::Target, [Layer::World, Layer::Shooter, Layer::Bullet]),
         Transform::from_xyz(0.0, BODY_CENTER, 0.0),
         Visibility::default(),
@@ -805,14 +805,42 @@ pub struct Roll {
 }
 
 pub const ROLL_SECS: f32 = 0.7;
+/// The part of a roll (by phase, 0..1) where he's tucked into a ball on the floor: a shot at
+/// standing height goes over him. Matches the dip `juice` gives his view.
+const ROLL_TUCK: std::ops::Range<f32> = 0.12..0.88;
+/// The tucked ball's radius; it sits on the floor.
+const TUCK_RADIUS: f32 = 0.45;
+
+fn standing_collider() -> Collider {
+    Collider::capsule(0.4, 1.0)
+}
+
+fn tucked_collider() -> Collider {
+    Collider::compound(vec![(Vec3::Y * (TUCK_RADIUS - BODY_CENTER), Quat::IDENTITY, Collider::sphere(TUCK_RADIUS))])
+}
+
+/// On while his hitbox is the tucked ball (see `ROLL_TUCK`).
+#[derive(Component)]
+pub struct Tucked;
 
 fn roll(
     mut commands: Commands,
     time: Res<Time>,
-    mut q: Query<(Entity, &mut Roll, &mut LinearVelocity, Option<&MoveTo>)>,
+    mut q: Query<(Entity, &mut Roll, &mut LinearVelocity, Option<&MoveTo>, Has<Tucked>)>,
+    untuck: Query<Entity, (With<Tucked>, Without<Roll>)>,
 ) {
-    for (e, mut roll, mut v, moving) in &mut q {
+    // A roll cut short (or one that just ended) still stands him back up.
+    for e in &untuck {
+        commands.entity(e).remove::<Tucked>().insert(standing_collider());
+    }
+    for (e, mut roll, mut v, moving, tucked) in &mut q {
         roll.t += time.delta_secs();
+        let tuck = ROLL_TUCK.contains(&(roll.t / ROLL_SECS));
+        if tuck && !tucked {
+            commands.entity(e).insert((Tucked, tucked_collider()));
+        } else if !tuck && tucked {
+            commands.entity(e).remove::<Tucked>().insert(standing_collider());
+        }
         if roll.t >= ROLL_SECS {
             v.0 = Vec3::ZERO;
             commands.entity(e).remove::<Roll>();
