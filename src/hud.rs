@@ -29,6 +29,8 @@ struct Flashes {
     ghost: f32,
     ghost_hold: f32,
     ended: f32,
+    /// Whether the last hit on him was an execution, for the end banner.
+    executed: bool,
     /// End-of-round headline, picked when the round ends.
     banner: &'static str,
 }
@@ -60,6 +62,17 @@ const WIN_BANNERS: &[&str] = &[
     "You have slain the target.",
     "And stay down.",
     "YEEEEEEHAWWW!",
+];
+
+/// Killed him with one shot in the back before he knew you were there. Beats flawless.
+const EXECUTION_BANNERS: &[&str] = &[
+    "EXECUTED",
+    "He never saw it coming.",
+    "Nothing personal.",
+    "Requiescat in pace.",
+    "One shot. One kill.",
+    "Silent but deadly.",
+    "Didn't even turn around.",
 ];
 
 /// Won without taking a scratch.
@@ -97,27 +110,30 @@ fn track_flashes(
     target: Option<Single<&Target>>,
 ) {
     let decay = time.delta_secs() * 2.5;
+    flashes.hit = (flashes.hit - decay).max(0.0);
+    // Before the banner: the killing hit can arrive on the frame the round ends.
+    if let Some(h) = hit.read().last() {
+        flashes.hit = if h.kind == HitKind::Seen { 0.7 } else { 1.0 };
+        flashes.hit_kind = Some(h.kind);
+        flashes.executed = h.execution;
+        flashes.ghost_hold = 0.45;
+    }
     if flashes.ended == 0.0 && *state.get() != GameState::Playing {
         let flawless = shooter.is_some_and(|s| s.hp >= SHOOTER_MAX_HP);
         flashes.banner = match state.get() {
+            GameState::Won if flashes.executed => EXECUTION_BANNERS.choose(&mut rand::rng()).unwrap(),
             GameState::Won if flawless => FLAWLESS_BANNER,
             GameState::Won => WIN_BANNERS.choose(&mut rand::rng()).unwrap(),
             _ => DEATH_BANNERS.choose(&mut rand::rng()).unwrap(),
         };
     }
     flashes.hurt = (flashes.hurt - decay).max(0.0);
-    flashes.hit = (flashes.hit - decay).max(0.0);
     flashes.ended = match state.get() {
         GameState::Playing => 0.0,
         _ => flashes.ended + time.delta_secs(),
     };
     if hurt.read().count() > 0 {
         flashes.hurt = 0.6;
-    }
-    if let Some(h) = hit.read().last() {
-        flashes.hit = if h.kind == HitKind::Seen { 0.7 } else { 1.0 };
-        flashes.hit_kind = Some(h.kind);
-        flashes.ghost_hold = 0.45;
     }
     let now = target.map_or(1.0, |t| t.hp / t.max_hp.max(1.0));
     flashes.ghost_hold -= time.delta_secs();

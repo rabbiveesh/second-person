@@ -90,6 +90,8 @@ pub struct TargetHit {
     pub dir: Vec3,
     pub damage: f32,
     pub kind: HitKind,
+    /// An ambush in the back from up close: lethal (see `EXECUTION_RANGE`).
+    pub execution: bool,
 }
 
 /// Whether he saw the shot coming. Shots from outside his view hit harder: you're most
@@ -106,14 +108,29 @@ pub enum HitKind {
 
 /// A shot he sees coming: about a third of his band-5 bar.
 pub const SHOT_DAMAGE: f32 = 34.0;
-pub const BLIND_BONUS: f32 = 1.6;
-pub const BEHIND_BONUS: f32 = 2.2;
+pub const BLIND_BONUS: f32 = 1.35;
+pub const BEHIND_BONUS: f32 = 1.6;
+/// Once he's on to you (suspicious enough to warn, or engaged), a surprise hit (`Blind` or
+/// `Behind`) never takes more than this share of his full bar, so flanking him mid-fight swings
+/// it rather than ending it: from band 2 up, that hit plus the best seen follow-up can't drop him
+/// (`SURPRISE_CAP * hp + SHOT_DAMAGE * (1 + SEEN_SPREAD) < hp`).
+pub const SURPRISE_CAP: f32 = 0.5;
+/// A true ambush, a surprise hit before he suspects anything, is the hardest thing in the game
+/// to set up. In the back from within `EXECUTION_RANGE` it's lethal; otherwise it's paid on top of
+/// the surprise bonus, uncapped: often most of his bar.
+pub const AMBUSH_BONUS: f32 = 1.35;
+/// How close you have to creep for an ambush in the back to kill outright. Further off, being
+/// behind him is easy, so it's only a big hit.
+pub const EXECUTION_RANGE: f32 = 12.0;
+/// After a surprise hit he knows where it came from: for this long every hit counts as `Seen`,
+/// so the bonus is one per ambush, not one per bullet he hasn't turned round for yet.
+pub const BRACED_SECS: f32 = 3.0;
 /// A shot from further round than this off his facing counts as from behind.
 pub const BEHIND_ANGLE: f32 = 110.0_f32.to_radians();
 /// Each hit varies by up to this much either way, so the bar never shows a fixed number of
 /// shots (and his hit points can move with the bands without it being countable).
 pub const SEEN_SPREAD: f32 = 0.12;
-pub const BLIND_SPREAD: f32 = 0.25;
+pub const BLIND_SPREAD: f32 = 0.15;
 
 impl HitKind {
     /// `facing` is his (horizontal) facing, `to_shooter` from him to where the shot came from.
@@ -282,7 +299,9 @@ fn bullet_hits(
     mut impacts: MessageWriter<BulletImpact>,
     tuning: Res<Tuning>,
     scheme: Res<ControlScheme>,
+    time: Res<Time>,
 ) {
+    let now = time.elapsed_secs();
     let near_miss = NEAR_MISS_RANGE * tuning.him().hearing;
     let mut spent = Vec::new();
     for ev in collisions.read() {
@@ -301,14 +320,33 @@ fn bullet_hits(
         commands.entity(bullet_e).despawn();
 
         if let Ok((_, mut target, target_t, mut suspicion)) = targets.get_mut(other) {
-            let kind = HitKind::of(suspicion.sees_shooter, *target_t.forward(), bullet.origin - target_t.translation);
-            let damage = kind.damage(rand::rng().random_range(-1.0..1.0)) * tuning.damage_dealt(*scheme);
+            let kind = match HitKind::of(suspicion.sees_shooter, *target_t.forward(), bullet.origin - target_t.translation) {
+                _ if now < target.braced_until => HitKind::Seen,
+                kind => kind,
+            };
+            let mut damage = kind.damage(rand::rng().random_range(-1.0..1.0)) * tuning.damage_dealt(*scheme);
+            let mut execution = false;
+            if kind != HitKind::Seen {
+                let unaware = !suspicion.engaged && suspicion.level < WARNING_SUSPICION;
+                let close = target_t.translation.distance(bullet.origin) <= EXECUTION_RANGE;
+                execution = unaware && close && kind == HitKind::Behind;
+                damage = match (unaware, kind) {
+                    _ if execution => target.hp,
+                    (true, _) => damage * AMBUSH_BONUS,
+                    (false, _) => damage.min(target.max_hp * SURPRISE_CAP),
+                };
+                target.braced_until = now + BRACED_SECS;
+            }
             target.hp = (target.hp - damage).max(0.0);
-            suspicion.bump(0.6);
+            // Getting shot is the one thing he never has to think about: he's in the fight, and
+            // runs for cover instead of wandering over to look while you keep firing.
+            if target.hp > 0.0 {
+                suspicion.bump(1.0);
+            }
             suspicion.last_known = Some(bullet.origin);
             commands.entity(other).insert(Alert::new(bullet.origin, 3.0));
             let dir = (target_t.translation - bullet.origin).normalize_or_zero();
-            hits.write(TargetHit { at: target_t.translation, dir, damage, kind });
+            hits.write(TargetHit { at: target_t.translation, dir, damage, kind, execution });
         } else {
             impacts.write(BulletImpact { at: bullet_t.translation });
             // Near miss: he hears the impact and looks toward where it came from.
