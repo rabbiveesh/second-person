@@ -16,8 +16,9 @@ use bevy_firework::{
 
 use crate::{
     combat::{BulletImpact, Grapple, GrappleFired, Gunshot, ShooterHit, TargetHit, WarningShot},
+    difficulty::Tuning,
     scramble::{Dart, DartMissed, ScrambledHit},
-    shooter::Shooter,
+    shooter::{ControlScheme, Scrambled, Shooter},
     target::MainCamera,
     round::RoundEntity,
 };
@@ -38,7 +39,7 @@ struct Tracer {
 
 pub fn plugin(app: &mut App) {
     app.add_plugins(ParticleSystemPlugin::default())
-        .add_systems(Update, (muzzle_flash, impact_sparks, target_hit, return_fire, thin, expire, draw_tracers, spawn_hook, fly_hook, dart_glow, dart_lands));
+        .add_systems(Update, (muzzle_flash, impact_sparks, target_hit, return_fire, thin, expire, draw_tracers, spawn_hook, fly_hook, dart_glow, dart_lands, mirror_arrow));
 }
 
 fn muzzle_flash(mut commands: Commands, mut shots: MessageReader<Gunshot>) {
@@ -418,4 +419,86 @@ fn burst(
         .observe(|finished: On<ParticleSpawnerFinished>, mut commands: Commands| {
             commands.entity(finished.event_target()).despawn();
         });
+}
+
+/// The violet arrow on the floor at your feet while you're scrambled: where Up walks you right now.
+/// It turns as he turns his head, which teaches Mirror without a word. An assist: it fades out
+/// with the dial (`AssistLevers::mirror_arrow`).
+#[derive(Component)]
+struct MirrorArrow;
+
+/// How far ahead of your feet the arrow starts, and how long it is.
+const ARROW_FROM: f32 = 0.5;
+const ARROW_LEN: f32 = 1.8;
+
+#[allow(clippy::too_many_arguments)]
+fn mirror_arrow(
+    mut commands: Commands,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut materials: ResMut<Assets<StandardMaterial>>,
+    tuning: Res<Tuning>,
+    eyes: Query<&GlobalTransform, With<MainCamera>>,
+    shooter: Query<(Entity, &Transform, &Scrambled), With<Shooter>>,
+    mut arrow: Query<(&ChildOf, &mut Transform, &mut Visibility, &MeshMaterial3d<StandardMaterial>), (With<MirrorArrow>, Without<Shooter>)>,
+) {
+    let Ok((you, at, scrambled)) = shooter.single() else {
+        return;
+    };
+    let Some((up, _)) = ControlScheme::Mirror.basis(eyes.single().ok()) else {
+        return;
+    };
+    let strength = tuning.help().mirror_arrow;
+    // One arrow per shooter (the shooter respawns each round, and takes it along).
+    let Some((parent, mut t, mut visible, material)) = arrow.iter_mut().find(|a| a.0.parent() == you) else {
+        // A chevron head on a short shaft, tip at +Y, in the XY plane.
+        let (w, head) = (0.5, ARROW_LEN * 0.45);
+        let tip = ARROW_LEN * 0.5;
+        let neck = tip - head;
+        let shape = Mesh::new(
+            bevy::mesh::PrimitiveTopology::TriangleList,
+            bevy::asset::RenderAssetUsages::default(),
+        )
+        .with_inserted_attribute(
+            Mesh::ATTRIBUTE_POSITION,
+            vec![
+                [0.0, tip, 0.0], [-w, neck, 0.0], [w, neck, 0.0],
+                [-w * 0.35, neck, 0.0], [w * 0.35, neck, 0.0], [w * 0.35, -tip, 0.0], [-w * 0.35, -tip, 0.0],
+            ],
+        )
+        .with_inserted_attribute(Mesh::ATTRIBUTE_NORMAL, vec![[0.0, 0.0, 1.0]; 7])
+        .with_inserted_indices(bevy::mesh::Indices::U16(vec![0, 1, 2, 3, 5, 4, 3, 6, 5]));
+        commands.entity(you).with_child((
+            Name::new("Mirror arrow"),
+            MirrorArrow,
+            NotShadowCaster,
+            Mesh3d(meshes.add(shape)),
+            MeshMaterial3d(materials.add(StandardMaterial {
+                base_color: Color::NONE,
+                unlit: true,
+                alpha_mode: AlphaMode::Blend,
+                double_sided: true,
+                cull_mode: None,
+                ..default()
+            })),
+            Transform::default(),
+            Visibility::Hidden,
+        ));
+        return;
+    };
+    debug_assert_eq!(parent.parent(), you);
+    let on = scrambled.active() && strength > 0.01;
+    *visible = if on { Visibility::Inherited } else { Visibility::Hidden };
+    if !on {
+        return;
+    }
+    // Flat on the floor, pointing along `up` (the triangle's tip is its +Y), in the shooter's frame.
+    let world = Quat::from_rotation_arc(Vec3::NEG_Z, up.normalize_or(Vec3::NEG_Z)) * Quat::from_rotation_x(-std::f32::consts::FRAC_PI_2);
+    let centre = up * (ARROW_FROM + ARROW_LEN * 0.5) + Vec3::Y * (0.03 - at.translation.y);
+    t.rotation = at.rotation.inverse() * world;
+    t.translation = at.rotation.inverse() * centre;
+    if let Some(mut m) = materials.get_mut(&material.0) {
+        // A slow breath so it reads as a hint, not part of the floor.
+        let pulse = 0.75 + 0.25 * (scrambled.left * 5.0).sin();
+        m.base_color = Color::srgba(0.55, 0.12, 1.0, 0.95 * strength * pulse);
+    }
 }

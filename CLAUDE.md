@@ -28,7 +28,7 @@ controlling the **shooter** hunting him. A corner radar shows the whole arena.
    - `scripts/brp brp_extras/send_keys '{"keys":["Space"],"duration_ms":60}'`
    - `scripts/brp brp_extras/screenshot '{"path":"<scratchpad>/shot.png"}'`
    - `scripts/shots <out dir> 1280x720 390x844:touch 844x390:touch` screenshots the staged juice moments
-     (`examples/juice_shots`) at any sizes (logical px; `:touch` = touch UI, fires by tapping). Check mobile with it.
+     (`examples/juice_shots`, including the scrambled arrow) at any sizes (logical px; `:touch` = touch UI, fires by tapping). Check mobile with it.
    Gameplay components derive `Reflect` + `#[reflect(Component)]` (auto-registered) so they're queryable.
    `.mcp.json` also registers `bevy_brp_mcp` for MCP-native access.
 4. Music: `cargo run --bin editor` (feature `editor`, in `dev`) edits and plays `music/*.score` live. Screenshots
@@ -107,7 +107,8 @@ Fyrox (small ecosystem), macroquad/three-d (too thin, would mean rolling our own
   and no grapple while a dart flies. While you're scrambled he knows his view is your
   controls and presses: he leaves cover and circles you at range (`CIRCLE_*` in `target.rs`), gaze locked on you and
   shooting, so the way Up points keeps turning and lining up a shot means moving; at the top bands he sweeps his gaze
-  too. When it wears off he relocates to fresh cover. He never fires behind his back: every shot at you is one
+  too. When it wears off he relocates to fresh cover. A violet arrow on the floor at your feet (`fx::mirror_arrow`) shows
+  where Up walks you right now and turns with his view; it's an assist that fades with the dial (`mirror_arrow`). He never fires behind his back: every shot at you is one
   you can watch him take. At the top bands he holds a ready dart (`hold`) until your hop is spent, the dart homes (`homing`),
   and he may grapple you while you're scrambled (`combo`). He stays out peeking through a wind-up. Every knob is
   `difficulty::ScrambleLevers` (Gunfight band: unlock, wind-up, speed, lead, duration, cooldown, hold, homing, combo).

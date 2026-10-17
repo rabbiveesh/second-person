@@ -172,6 +172,9 @@ pub struct AssistLevers {
     pub reveal_facing: bool,
     /// Extra seconds of scramble-dart wind-up, on top of his band's.
     pub scramble_windup: f32,
+    /// How strongly the violet arrow at your feet shows where Up walks you while you're
+    /// scrambled (0 = not at all, 1 = bold). See `fx::mirror_arrow`.
+    pub mirror_arrow: f32,
 }
 
 /// Below this dial the `Auto` radar stops sweeping: a player good enough to fade the help out
@@ -194,6 +197,8 @@ impl AssistLevers {
             // Like the sonar: a player good enough to play the bare map finds his facing for themselves.
             reveal_facing: a >= SONAR_FROM,
             scramble_windup: 0.6 * a,
+            // Bold from 0.6 up, fading out as the dial drops to where the sonar stops too.
+            mirror_arrow: ((a - SONAR_FROM) / (0.6 - SONAR_FROM)).clamp(0.0, 1.0),
         }
     }
 }
@@ -370,6 +375,15 @@ pub fn debug_text(world: &World) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_mirror_arrow_fades_with_the_dial() {
+        assert_eq!(AssistLevers::from_dial(1.0).mirror_arrow, 1.0);
+        assert_eq!(AssistLevers::from_dial(0.6).mirror_arrow, 1.0);
+        let mid = AssistLevers::from_dial(BASELINE_ASSISTS).mirror_arrow;
+        assert!(mid > 0.5 && mid < 1.0, "{mid}");
+        assert_eq!(AssistLevers::from_dial(SONAR_FROM).mirror_arrow, 0.0);
+    }
 
     #[test]
     fn base_band_and_baseline_dial_are_the_hand_tuned_game() {
