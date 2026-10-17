@@ -102,12 +102,12 @@ Fyrox (small ecosystem), macroquad/three-d (too thin, would mean rolling our own
   `intro::fly_camera` adds the layer for the overhead shot and drops it `BODY_HIDE_DIST` before the swoop reaches his eyes.
 - `scramble.rs`: his scramble dart. While fighting and seeing you within `DART_RANGE` he winds up (`Charging`; violet
   glow on the HUD, a whine timed to the wind-up), then throws a slow dart (`Dart`, moved by hand with a swept test)
-  that sets the shooter's `Scrambled { left, into }`: you drive `Eyes` or `Mirror` (a coin toss; the HUD doesn't say which)
-  instead of `Tank` for a while. Cover
+  that sets the shooter's `Scrambled { left, into }`: you drive `Mirror` instead of `Tank` for a while. Cover
   stops it and a sidestep beats it. One of his moves at a time: never while you're grappled, staggered or scrambled,
-  and no grapple while a dart flies. A landed dart spins you round (`SPIN_ON_HIT`), so you can't stand and shoot: aiming means moving, and moving
-  is what's scrambled. He ducks behind his cover (`target::Duck`) instead of turning his back on your gun, then stays out
-  peeking and, at the top bands, sweeps his gaze so you swim. He never fires behind his back: every shot at you is one
+  and no grapple while a dart flies. While you're scrambled he knows his view is your
+  controls and presses: he leaves cover and circles you at range (`CIRCLE_*` in `target.rs`), gaze locked on you and
+  shooting, so the way Up points keeps turning and lining up a shot means moving; at the top bands he sweeps his gaze
+  too. When it wears off he relocates to fresh cover. He never fires behind his back: every shot at you is one
   you can watch him take. At the top bands he holds a ready dart (`hold`) until your hop is spent, the dart homes (`homing`),
   and he may grapple you while you're scrambled (`combo`). He stays out peeking through a wind-up. Every knob is
   `difficulty::ScrambleLevers` (Gunfight band: unlock, wind-up, speed, lead, duration, cooldown, hold, homing, combo).
@@ -130,10 +130,9 @@ Fyrox (small ecosystem), macroquad/three-d (too thin, would mean rolling our own
   Walking into the world emits `Bump` and a `Stagger` knockback (can't walk, only turn); his laser staggers you too.
   `Sidestep`: a double-tap straight left/right on `Drive` (arrows, or a double flick of the stick, since both feed the same
   axis) hops 2.4m sideways with the facing restored to before the taps; the landing writes a `Footstep`. Stagger cuts it.
-- `shooter.rs` `ControlScheme`: you always drive `Tank` (above). `Eyes` and `Mirror` exist only for the scramble dart: you
-  walk where you point and swing to face it, along his view (`Eyes`: Up goes away from him) or his view turned round
-  (`Mirror`: Up comes back at him), so his turning turns your controls (`ControlScheme::basis`). Both read the touch
-  stick in analog (`touch::analog`); Tank snaps to 8 ways and hops.
+- `shooter.rs` `ControlScheme`: you always drive `Tank` (above). `Mirror` exists only for the scramble dart: you walk where
+  you point and swing to face it, along his view turned round (`ControlScheme::basis`), so Up comes back at him and his
+  turning turns your controls. Mirror reads the touch stick in analog (`touch::analog`); Tank snaps to 8 ways and hops.
 - `touch.rs`: phone controls, spawned on the first touch. A floating `virtual_joystick` stick (left half,
   snapped to 8 arrow-key directions by `snap_8way`) and tap-right-to-fire write the shooter's `ActionState` in
   leafwing's `ManualControl` set. The HUD swaps the R/M/Tab hints for egui buttons once touch is on, plus a big

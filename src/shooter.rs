@@ -23,30 +23,26 @@ const MOVE_SPEED: f32 = 5.0;
 const TURN_SPEED: f32 = 2.4;
 
 /// How the arrows (or the stick) map to movement. You always drive `Tank`; his scramble dart
-/// flips you into `Eyes` or `Mirror` (a coin toss, so you find out by moving) for a while.
+/// flips you into `Mirror` for a while.
 #[derive(Resource, Reflect, Default, Clone, Copy, PartialEq, Eq, Debug)]
 #[reflect(Resource)]
 pub enum ControlScheme {
     /// Up/down drive along your own facing, left/right turn.
     #[default]
     Tank,
-    /// Relative to what's on screen: up goes away from his eyes, right goes screen-right. When he
-    /// turns his head, your directions turn with it.
-    Eyes,
-    /// `Eyes` turned round, as if you were the one facing the camera: up
-    /// comes towards him, right is screen-left.
+    /// Relative to what's on screen, turned round, as if you were the one facing the camera: up
+    /// comes towards him, right is screen-left. When he turns his head, your directions turn with it.
     Mirror,
 }
 
 impl ControlScheme {
-    pub const ALL: [Self; 3] = [Self::Tank, Self::Eyes, Self::Mirror];
+    pub const ALL: [Self; 2] = [Self::Tank, Self::Mirror];
 
     /// The key hint for the arrows.
     pub fn hint(self) -> &'static str {
         match self {
             Self::Tank => "Up/Down move   Left/Right turn (double-tap: hop)",
-            // Same hint for both: which one you got is yours to find out.
-            Self::Eyes | Self::Mirror => "SCRAMBLED: the arrows walk you, but which way?",
+            Self::Mirror => "Arrows walk mirrored: Up comes at him",
         }
     }
 
@@ -55,16 +51,15 @@ impl ControlScheme {
         self == Self::Tank
     }
 
-    /// For `Eyes`/`Mirror`: the world directions (forward, right) that Up and Right push along,
+    /// For `Mirror`: the world directions (forward, right) that Up and Right push along,
     /// on the floor plane, from his view. `None` for `Tank`.
     pub fn basis(self, eyes: Option<&GlobalTransform>) -> Option<(Vec3, Vec3)> {
         match self {
             Self::Tank => None,
-            Self::Eyes | Self::Mirror => {
+            Self::Mirror => {
                 let f = eyes.and_then(|e| Dir3::new(e.forward().with_y(0.0)).ok()).map_or(Vec3::NEG_Z, |f| f.as_vec3());
                 // Screen-right is forward turned a quarter clockwise, seen from above; Mirror flips both.
-                let (f, r) = (f, Vec3::new(-f.z, 0.0, f.x));
-                Some(if self == Self::Mirror { (-f, -r) } else { (f, r) })
+                Some((-f, Vec3::new(f.z, 0.0, -f.x)))
             }
         }
     }

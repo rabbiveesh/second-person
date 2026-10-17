@@ -8,7 +8,6 @@
 
 use avian3d::prelude::*;
 use bevy::prelude::*;
-use rand::Rng;
 
 use crate::{
     arena::Layout,
@@ -16,7 +15,7 @@ use crate::{
     difficulty::Tuning,
     round::{GameState, RoundEntity},
     shooter::{ControlScheme, Scrambled, Shooter, Sidestep, Stagger, Stunned},
-    target::{Activity, Duck, MainCamera, Roll, Suspicion, Target},
+    target::{Activity, MainCamera, Roll, Suspicion, Target},
 };
 
 /// He throws it from this far...
@@ -29,10 +28,6 @@ const DART_HIT_RADIUS: f32 = 0.35 + 0.25;
 const DART_LAUNCH_AHEAD: f32 = 0.8;
 /// No dart for this long after a round starts, so the opening isn't decided by one.
 const FIRST_DART_AFTER: f32 = 4.0;
-/// How far a landed dart spins you round (radians, either way): far enough that he's off your sights.
-const SPIN_ON_HIT: std::ops::Range<f32> = 1.6..2.9;
-/// How long he ducks behind his cover after a dart lands, before stepping out to punish.
-const DUCK_SECS: f32 = 0.9;
 
 /// Winding up a dart, on the target: `left` seconds until it's ready, then up to `hold` more with it
 /// ready (still glowing) while he waits for you to waste your hop.
@@ -225,13 +220,12 @@ fn fly(
     tuning: Res<Tuning>,
     layout: Res<Layout>,
     mut darts: Query<(Entity, &mut Dart, &mut Transform), (Without<Shooter>, Without<Target>)>,
-    shooter: Single<(&Transform, &mut Rotation, &mut Scrambled, &Stunned), With<Shooter>>,
-    him: Query<Entity, With<Target>>,
+    shooter: Single<(&Transform, &mut Scrambled, &Stunned), With<Shooter>>,
     mut hits: MessageWriter<ScrambledHit>,
     mut misses: MessageWriter<DartMissed>,
 ) {
     let dt = time.delta_secs();
-    let (you, mut facing, mut scrambled, stunned) = shooter.into_inner();
+    let (you, mut scrambled, stunned) = shooter.into_inner();
     let homing = tuning.him().scramble.map_or(0.0, |l| l.homing);
     for (e, mut dart, mut t) in &mut darts {
         let from = t.translation;
@@ -262,18 +256,8 @@ fn fly(
             let Some(levers) = tuning.him().scramble else {
                 continue;
             };
-            // A coin toss, so you find out which by moving.
-            let mut rng = rand::rng();
-            let into = if rng.random_bool(0.5) { ControlScheme::Eyes } else { ControlScheme::Mirror };
+            let into = ControlScheme::Mirror;
             *scrambled = Scrambled { left: levers.secs, into };
-            // It spins you round, so you can't just stand and shoot: aiming means moving, and
-            // moving is what's scrambled.
-            let turn = rng.random_range(SPIN_ON_HIT) * if rng.random_bool(0.5) { 1.0 } else { -1.0 };
-            facing.0 = Quat::from_rotation_y(turn) * facing.0;
-            // And he ducks out of your sights before stepping back out to punish the swim.
-            if let Ok(him) = him.single() {
-                commands.entity(him).try_insert(Duck(Timer::from_seconds(DUCK_SECS, TimerMode::Once)));
-            }
             hits.write(ScrambledHit { at: you.translation, into, secs: levers.secs });
             continue;
         }

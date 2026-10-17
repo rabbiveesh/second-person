@@ -209,7 +209,6 @@ pub fn bot(
     let with_right = |f: Vec3| (f, Vec3::new(-f.z, 0.0, f.x));
     let basis = match scheme {
         ControlScheme::Tank => None,
-        ControlScheme::Eyes => Some(with_right(stale)),
         ControlScheme::Mirror => Some(with_right(-stale)),
     };
 
