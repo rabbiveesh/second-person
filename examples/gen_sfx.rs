@@ -106,8 +106,8 @@ impl Tract {
 ///
 /// The voice is additive: every harmonic of the pitch is a sine weighted by the vocal tract's
 /// response at its frequency (three resonant peaks, the formants), so gliding the formants
-/// between vowel targets says the word. Keyframes walk m → aa → ee ("my"), l → eh held long
-/// ("leeeh"), then the g closes it off with a silent stop and a short velar burst.
+/// between vowel targets says the word. Keyframes walk m → aa → ee ("my"), l → eh gliding into
+/// a long ay ("leigh"), then the g closes it off with a silent stop and a short velar burst.
 fn my_leg() -> Vec<f32> {
     // (time, tract): the formant targets are textbook adult values, raised a little for a yell.
     let keys: &[(f32, Tract)] = &[
@@ -120,9 +120,10 @@ fn my_leg() -> Vec<f32> {
         (0.43, Tract::new(360.0, 1050.0, 2700.0, 0.45, 520.0)), // l
         (0.48, Tract::new(360.0, 1050.0, 2700.0, 0.45, 560.0)),
         (0.56, Tract::new(620.0, 1850.0, 2650.0, 1.0, 640.0)), // eh, cracking up high
-        (0.95, Tract::new(640.0, 1800.0, 2650.0, 1.0, 700.0)),
-        (1.22, Tract::new(600.0, 1750.0, 2600.0, 0.9, 610.0)),
-        (1.30, Tract::new(300.0, 2050.0, 2250.0, 0.0, 520.0)), // g: velar pinch, then closure
+        (0.78, Tract::new(500.0, 2000.0, 2700.0, 1.0, 690.0)), // gliding into the ay of "leigh"
+        (1.08, Tract::new(380.0, 2250.0, 2850.0, 1.0, 680.0)),
+        (1.22, Tract::new(360.0, 2280.0, 2850.0, 0.9, 610.0)),
+        (1.30, Tract::new(300.0, 2200.0, 2450.0, 0.0, 520.0)), // g: velar pinch, then closure
     ];
     const BURST_AT: f32 = 1.36;
     const LEN: f32 = 1.5;
