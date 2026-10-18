@@ -25,6 +25,8 @@ serde = { version = "1.0.229", features = ["derive"] }
 toml = "1.1.8"
 # Sound output for the music editor.
 cpal = { version = "0.18", optional = true }
+# Online 1v1 duel: authoritative server, client prediction, lag compensation.
+lightyear = { version = "0.30.1", optional = true, features = ["client", "server", "netcode", "udp", "prediction", "interpolation", "replication", "leafwing", "avian3d"] }
 
 [features]
 default = ["dev"]
@@ -37,11 +39,18 @@ inspector = ["dep:bevy-inspector-egui"]
 brp = ["dep:bevy_brp_extras", "bevy/png"]
 # The music editor (`cargo run --bin editor`): native only, never in the game or the web build.
 editor = ["dep:cpal", "bevy/png"]
+# The online duel (`cargo run --bin duel --features duel`). Off by default while it's being built.
+duel = ["dep:lightyear", "bevy/serialize"]
 
 [[bin]]
 name = "editor"
 path = "src/bin/editor/main.rs"
 required-features = ["editor"]
+
+[[bin]]
+name = "duel"
+path = "src/bin/duel.rs"
+required-features = ["duel"]
 
 # Optimise deps even in dev; our own crate stays fast to compile.
 [profile.dev]

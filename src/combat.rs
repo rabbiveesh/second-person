@@ -598,7 +598,7 @@ fn return_fire(
         let from = eyes.translation() + eyes.down() * 0.3 + eyes.right() * 0.2;
         hits.write(ShooterHit { from, to: t.translation });
         let away = (t.translation - from).with_y(0.0).normalize_or_zero();
-        **stagger = Stagger::knock(away * RETURN_FIRE_KNOCKBACK);
+        **stagger = stagger.clone().knock(away * RETURN_FIRE_KNOCKBACK);
     }
 }
 
