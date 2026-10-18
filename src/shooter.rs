@@ -9,7 +9,8 @@ use rand::Rng;
 
 use crate::{
     Layer,
-    arena::Layout,
+    arena::{Hazard, Layout},
+    difficulty::Tuning,
     radar::{LiveBlip, RADAR_LAYER, RadarContact},
     round::{Attract, GameState, RoundEntity, SpawnRound},
     target::{MainCamera, Target},
@@ -148,6 +149,13 @@ pub struct Bump {
     pub at: Vec3,
 }
 
+/// You walked into a [`Hazard`]: it hurts, it throws you back harder, and you yell about it
+/// (loud enough for him to hear).
+#[derive(Message, Clone, Copy, Debug)]
+pub struct HazardHit {
+    pub at: Vec3,
+}
+
 /// You whistled: a loud, far-carrying sound so you can find yourself by ear. He can hear it too.
 #[derive(Message, Clone, Copy, Debug)]
 pub struct Whistle {
@@ -208,11 +216,14 @@ const STEP_INTERVAL: f32 = 0.42;
 const BUMP_REACH: f32 = 0.15;
 const KNOCKBACK_SPEED: f32 = 4.0;
 const STAGGER_SECS: f32 = 0.25;
+pub const HAZARD_DAMAGE: f32 = 12.0;
+const HAZARD_KNOCKBACK_SPEED: f32 = 8.0;
 
 pub fn plugin(app: &mut App) {
     app.add_plugins(InputManagerPlugin::<ShooterAction>::default())
         .add_message::<Footstep>()
         .add_message::<Bump>()
+        .add_message::<HazardHit>()
         .add_message::<Whistle>()
         .init_resource::<ControlScheme>()
         .register_type::<ControlScheme>()
@@ -432,13 +443,17 @@ fn face(rot: &mut Rotation, dir: Vec3, push: f32, dt: f32) {
     }
 }
 
-/// Walking into something solid: thud and get knocked back, so you notice you're stuck.
+/// Walking into something solid: thud and get knocked back, so you notice you're stuck. A
+/// [`Hazard`] also hurts, and throws you back harder.
 fn bump(
     spatial: SpatialQuery,
+    tuning: Res<Tuning>,
+    hazards: Query<(), With<Hazard>>,
     mut bumps: MessageWriter<Bump>,
-    mut q: Query<(&Transform, &mut LinearVelocity, &mut Stagger, &Stunned, &mut Sidestep), With<Shooter>>,
+    mut hazard_hits: MessageWriter<HazardHit>,
+    mut q: Query<(&mut Shooter, &Transform, &mut LinearVelocity, &mut Stagger, &Stunned, &mut Sidestep)>,
 ) {
-    for (t, mut vel, mut stagger, stunned, mut side) in &mut q {
+    for (mut shooter, t, mut vel, mut stagger, stunned, mut side) in &mut q {
         if stagger.left > 0.0 || stunned.left > 0.0 {
             continue;
         }
@@ -453,9 +468,16 @@ fn bump(
             continue;
         };
         let normal = Vec3::new(hit.normal.x, 0.0, hit.normal.z).normalize_or(-dir.as_vec3());
-        bumps.write(Bump { at: t.translation + dir * hit.distance });
+        let at = t.translation + dir * hit.distance;
+        bumps.write(Bump { at });
         side.left = 0.0;
-        *stagger = Stagger::knock(normal * KNOCKBACK_SPEED);
+        let mut knockback = KNOCKBACK_SPEED;
+        if hazards.contains(hit.entity) {
+            shooter.hp = (shooter.hp - HAZARD_DAMAGE * tuning.help().damage_taken).max(0.0);
+            hazard_hits.write(HazardHit { at });
+            knockback = HAZARD_KNOCKBACK_SPEED;
+        }
+        *stagger = Stagger::knock(normal * knockback);
         vel.0 = Vec3::new(stagger.push.x, vel.0.y, stagger.push.z);
     }
 }

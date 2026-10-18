@@ -3,6 +3,7 @@
 //!     cargo run --example gen_sfx
 //!
 //! Seeds are fixed so the output is reproducible; tweak a seed or parameter and rerun.
+//! Voice lines are recorded, not synthesised: they live in `assets/voice/` and pass through here.
 //! Every sound also gets a low-passed `<name>_muffled.wav` twin, which `audio.rs` crossfades
 //! in for sounds behind the listener or behind cover.
 
@@ -62,6 +63,7 @@ fn main() {
     }
     bufs.push(("bump".into(), bump()));
     bufs.push(("whistle".into(), whistle()));
+    bufs.push(("my_leg".into(), my_leg()));
 
     for (name, mut buf) in bufs {
         // Trim trailing silence and normalise.
@@ -76,6 +78,15 @@ fn main() {
 }
 
 pub const STEP_VARIANTS: usize = 3;
+
+/// "MY LEG!": a recorded take (`assets/voice/my_leg.wav`, mono 16-bit at `RATE`), run through
+/// the same trim, normalise and muffled twin as the synthesised sounds.
+fn my_leg() -> Vec<f32> {
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("assets/voice/my_leg.wav");
+    let mut r = hound::WavReader::open(&path).unwrap();
+    assert_eq!(r.spec().sample_rate, RATE, "{} must be {RATE} Hz", path.display());
+    r.samples::<i16>().map(|s| s.unwrap() as f32 / i16::MAX as f32).collect()
+}
 
 /// Every step is a heel thump (falling sine) plus a material layer:
 /// - grass: soft, dull swish; mostly thump.

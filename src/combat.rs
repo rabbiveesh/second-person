@@ -11,8 +11,8 @@ use crate::{
     difficulty::{AssistLevers, HisLevers, Tuning},
     round::{GameState, RoundEntity},
     nav::MoveTo,
-    shooter::{Bump, ControlScheme, Footstep, Whistle, Shooter, ShooterAction, Stagger, Stunned},
-    target::{Activity, Alert, MainCamera, ROLL_SECS, Relocate, Roll, Suspicion, Target},
+    shooter::{Bump, ControlScheme, Footstep, HazardHit, Whistle, Shooter, ShooterAction, Stagger, Stunned},
+    target::{Activity, Alert, MainCamera, ROLL_SECS, Relocate, Roll, Shove, Suspicion, Target},
 };
 
 const BULLET_SPEED: f32 = 45.0;
@@ -47,6 +47,9 @@ const BUMP_SUSPICION: f32 = 0.2;
 /// The whistle is your "where am I?" button, and the price is that he hears it from far off.
 const WHISTLE_HEARING_RANGE: f32 = 28.0;
 const WHISTLE_SUSPICION: f32 = 0.4;
+/// Yelling after walking into a hazard: louder than a whistle, and more alarming.
+const YELL_HEARING_RANGE: f32 = 32.0;
+const YELL_SUSPICION: f32 = 0.6;
 /// Suspicious but not yet engaged: he fires warning shots that land this far off where he
 /// thinks you are, every so often.
 const WARNING_SUSPICION: f32 = 0.35;
@@ -179,6 +182,11 @@ pub enum Grapple {
     Hammering { shots_left: u32, next: f32 },
 }
 
+/// How hard your hits knock him back (m/s at the start of a [`Shove`]); 0 turns it off.
+#[derive(Resource, Reflect, Default, Clone, Copy, Debug)]
+#[reflect(Resource)]
+pub struct TargetKnockback(pub f32);
+
 /// The target shot the shooter (hitscan from `from` to `to`).
 #[derive(Message, Clone, Copy, Debug)]
 pub struct ShooterHit {
@@ -198,6 +206,7 @@ pub fn plugin(app: &mut App) {
         .add_message::<BulletImpact>()
         .add_message::<TargetHit>()
         .add_message::<ShooterHit>()
+        .init_resource::<TargetKnockback>()
         .add_message::<WarningShot>()
         .add_message::<GrappleFired>()
         .add_systems(Startup, load_assets)
@@ -299,6 +308,7 @@ fn bullet_hits(
     mut impacts: MessageWriter<BulletImpact>,
     tuning: Res<Tuning>,
     scheme: Res<ControlScheme>,
+    knockback: Res<TargetKnockback>,
     time: Res<Time>,
 ) {
     let now = time.elapsed_secs();
@@ -346,6 +356,9 @@ fn bullet_hits(
             suspicion.last_known = Some(bullet.origin);
             commands.entity(other).insert(Alert::new(bullet.origin, 3.0));
             let dir = (target_t.translation - bullet.origin).normalize_or_zero();
+            if knockback.0 > 0.0 && target.hp > 0.0 {
+                commands.entity(other).insert(Shove { velocity: dir.with_y(0.0).normalize_or_zero() * knockback.0, t: 0.0 });
+            }
             hits.write(TargetHit { at: target_t.translation, dir, damage, kind, execution });
         } else {
             impacts.write(BulletImpact { at: bullet_t.translation });
@@ -362,7 +375,7 @@ fn bullet_hits(
 }
 
 /// He hears your footsteps when you're close (farther on loud floors), walking into walls,
-/// and whistling (from far off).
+/// and whistling or yelling after a hazard (from far off).
 /// Each sound nudges suspicion and tells him where you are, so creeping up is a risk.
 fn hear_movement(
     mut commands: Commands,
@@ -370,6 +383,7 @@ fn hear_movement(
     mut steps: MessageReader<Footstep>,
     mut bumps: MessageReader<Bump>,
     mut whistles: MessageReader<Whistle>,
+    mut yells: MessageReader<HazardHit>,
     tuning: Res<Tuning>,
     target: Single<(Entity, &Transform, &mut Suspicion), With<Target>>,
 ) {
@@ -380,7 +394,8 @@ fn hear_movement(
         .read()
         .map(|s| (s.at, floors.at(s.at.xz()).hearing_range(), FOOTSTEP_SUSPICION))
         .chain(bumps.read().map(|b| (b.at, BUMP_HEARING_RANGE, BUMP_SUSPICION)))
-        .chain(whistles.read().map(|w| (w.at, WHISTLE_HEARING_RANGE, WHISTLE_SUSPICION)));
+        .chain(whistles.read().map(|w| (w.at, WHISTLE_HEARING_RANGE, WHISTLE_SUSPICION)))
+        .chain(yells.read().map(|y| (y.at, YELL_HEARING_RANGE, YELL_SUSPICION)));
     for (at, range, amount) in heard {
         let closeness = 1.0 - ear.distance(at) / (range * hearing);
         if closeness <= 0.0 {

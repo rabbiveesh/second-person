@@ -14,7 +14,7 @@ use second_person::{
     combat::{Bullet, Gunshot, ShooterHit, TargetHit},
     round::GameState,
     arena::{Floor, Floors},
-    shooter::{Bump, SHOOTER_MAX_HP, Shooter},
+    shooter::{Bump, HAZARD_DAMAGE, HazardHit, SHOOTER_MAX_HP, Shooter},
     target::{Activity, Alert, MainCamera, Suspicion, TARGET_MAX_HP, Target, VIEW_RANGE},
 };
 
@@ -52,6 +52,7 @@ fn app_cfg(arena: ArenaMode, extra: impl FnOnce(&mut App)) -> App {
     count::<TargetHit>(&mut app);
     count::<ShooterHit>(&mut app);
     count::<Bump>(&mut app);
+    count::<HazardHit>(&mut app);
     count::<second_person::combat::WarningShot>(&mut app);
     // `App::run` would call these; plugins like avian init resources in `finish`.
     app.finish();
@@ -673,6 +674,72 @@ fn walking_into_a_wall_thuds_and_knocks_you_back() {
     KeyCode::ArrowUp.release(app.world_mut());
     step(&mut app, 0.5);
     assert!(z(&app) < at_wall - 0.3, "not knocked back: {} vs {at_wall}", z(&app));
+}
+
+/// Walk up into the north wall of the classic arena; returns how far the bump threw you back.
+fn walk_into_north_wall(app: &mut App) -> f32 {
+    let shooter = single::<Shooter>(app);
+    let start = Vec3::new(20.0, 0.9, 25.0);
+    place(app, shooter, start, yaw_towards(start, start + Vec3::Z));
+    KeyCode::ArrowUp.press(app.world_mut());
+    let z = |app: &App| app.world().get::<Transform>(shooter).unwrap().translation.z;
+    for _ in 0..120 {
+        app.update();
+        if counted::<Bump>(app) > 0 {
+            break;
+        }
+    }
+    let at_wall = z(app);
+    KeyCode::ArrowUp.release(app.world_mut());
+    step(app, 0.5);
+    at_wall - z(app)
+}
+
+#[test]
+fn walking_into_a_hazard_hurts_and_throws_you_back_harder() {
+    let mut plain = app();
+    let plain_knock = walk_into_north_wall(&mut plain);
+    assert_eq!(counted::<HazardHit>(&plain), 0);
+    assert_eq!(plain.world_mut().query::<&Shooter>().single(plain.world()).unwrap().hp, SHOOTER_MAX_HP);
+
+    let mut app = app();
+    let walls: Vec<Entity> = app
+        .world_mut()
+        .query::<(Entity, &Name)>()
+        .iter(app.world())
+        .filter(|(_, n)| n.as_str() == "Wall")
+        .map(|(e, _)| e)
+        .collect();
+    for wall in walls {
+        app.world_mut().entity_mut(wall).insert(second_person::arena::Hazard);
+    }
+    let knock = walk_into_north_wall(&mut app);
+    assert_eq!(counted::<HazardHit>(&app), 1, "no hazard hit");
+    let hp = app.world_mut().query::<&Shooter>().single(app.world()).unwrap().hp;
+    assert_eq!(hp, SHOOTER_MAX_HP - HAZARD_DAMAGE);
+    assert!(knock > plain_knock + 0.3, "not thrown back harder: {knock} vs {plain_knock}");
+}
+
+#[test]
+fn he_hears_you_yell_from_far_off() {
+    let mut app = app();
+    stage(&mut app, Vec3::new(0.0, 0.9, 25.0), Vec3::new(0.0, 0.9, -10.0));
+    let target = single::<Target>(&mut app);
+    app.world_mut().write_message(HazardHit { at: Vec3::new(0.0, 0.9, 25.0) });
+    app.update();
+    let s = app.world().get::<Suspicion>(target).unwrap();
+    assert!(s.level > 0.0, "didn't hear it");
+    assert!(app.world().get::<Alert>(target).is_some());
+}
+
+#[test]
+fn generated_arenas_have_a_few_hazards() {
+    for seed in 0..300 {
+        let layout = Layout::random(seed);
+        let hazards = layout.blocks.iter().filter(|b| b.hazard).count();
+        assert_eq!(hazards, (layout.blocks.len() / 4).max(1), "{}", layout.name);
+    }
+    assert!(Layout::classic().blocks.iter().all(|b| !b.hazard), "the classic arena stays as it was");
 }
 
 #[test]

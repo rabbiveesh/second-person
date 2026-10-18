@@ -10,7 +10,7 @@ use crate::{
     layout::ScreenLayout,
     radar::{RadarCamera, RadarMode},
     round::{GameState, TargetMobile},
-    shooter::{ControlScheme, SHOOTER_MAX_HP, Shooter, Stunned},
+    shooter::{ControlScheme, HazardHit, SHOOTER_MAX_HP, Shooter, Stunned},
     start::Started,
     target::{Activity, Suspicion, Target},
     touch::{TouchControls, TouchWhistle, WHISTLE_SIZE},
@@ -21,6 +21,8 @@ use crate::{
 #[derive(Resource, Default)]
 struct Flashes {
     hurt: f32,
+    /// The "MY LEG!" caption after a hazard gets you, fading from 1.
+    yell: f32,
     hit: f32,
     /// The last hit on him, for the marker: a blind or in-the-back shot reads bigger.
     hit_kind: Option<HitKind>,
@@ -34,6 +36,9 @@ struct Flashes {
     /// End-of-round headline, picked when the round ends.
     banner: &'static str,
 }
+
+/// How long the "MY LEG!" caption stays up.
+const YELL_SECS: f32 = 1.4;
 
 /// Hold the end banner back so you can watch him (or yourself) go down.
 const BANNER_DELAY: f32 = 1.2;
@@ -105,6 +110,7 @@ fn track_flashes(
     state: Res<State<GameState>>,
     mut flashes: ResMut<Flashes>,
     mut hurt: MessageReader<ShooterHit>,
+    mut hazard_hits: MessageReader<HazardHit>,
     mut hit: MessageReader<TargetHit>,
     shooter: Option<Single<&Shooter>>,
     target: Option<Single<&Target>>,
@@ -134,6 +140,11 @@ fn track_flashes(
     };
     if hurt.read().count() > 0 {
         flashes.hurt = 0.6;
+    }
+    flashes.yell = (flashes.yell - time.delta_secs() / YELL_SECS).max(0.0);
+    if hazard_hits.read().count() > 0 {
+        flashes.hurt = 0.8;
+        flashes.yell = 1.0;
     }
     let now = target.map_or(1.0, |t| t.hp / t.max_hp.max(1.0));
     flashes.ghost_hold -= time.delta_secs();
@@ -346,6 +357,9 @@ fn draw_hud(
         painter.rect_filled(view, 0.0, egui::Color32::from_rgba_unmultiplied(255, 255, 255, (flashes.hit * 60.0) as u8));
         hit_marker(&painter, view.center(), flashes.hit, flashes.hit_kind);
     }
+    if flashes.yell > 0.0 {
+        yell_caption(&painter, view, flashes.yell);
+    }
     // His view reddens at the edges as he's wounded, pulsing on each hit.
     if let Some(target) = &target {
         let wounds = 1.0 - target.0.hp / target.0.max_hp.max(1.0);
@@ -391,6 +405,24 @@ fn draw_hud(
 }
 
 /// A dark card, so text reads over whatever the world behind it happens to look like.
+/// Comic-book "MY LEG!" over the top of the view: pops in big, shakes, then fades.
+fn yell_caption(painter: &egui::Painter, view: egui::Rect, left: f32) {
+    let age = 1.0 - left;
+    let pop = 1.0 + 0.6 * (1.0 - (age / 0.12).min(1.0)).powi(2);
+    let shake = (age * 90.0).sin() * 6.0 * left;
+    let alpha = (left * 3.0).min(1.0);
+    let size = view.width().min(view.height()) * 0.12 * pop;
+    let at = egui::pos2(view.center().x + shake, view.top() + view.height() * 0.28);
+    let font = egui::FontId::proportional(size);
+    let outline = egui::Color32::from_black_alpha((alpha * 230.0) as u8);
+    let r = size * 0.06;
+    for (dx, dy) in [(-r, 0.0), (r, 0.0), (0.0, -r), (0.0, r), (-r, -r), (r, r), (-r, r), (r, -r)] {
+        painter.text(at + egui::vec2(dx, dy), egui::Align2::CENTER_CENTER, "MY LEG!", font.clone(), outline);
+    }
+    let fill = egui::Color32::from_rgba_unmultiplied(255, 220, 40, (alpha * 255.0) as u8);
+    painter.text(at, egui::Align2::CENTER_CENTER, "MY LEG!", font, fill);
+}
+
 pub fn card() -> egui::Frame {
     egui::Frame::new()
         .fill(egui::Color32::from_black_alpha(205))

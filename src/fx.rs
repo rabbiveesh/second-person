@@ -16,7 +16,7 @@ use bevy_firework::{
 
 use crate::{
     combat::{BulletImpact, Grapple, GrappleFired, Gunshot, ShooterHit, TargetHit, WarningShot},
-    shooter::Shooter,
+    shooter::{HazardHit, Shooter},
     target::MainCamera,
     round::RoundEntity,
 };
@@ -37,7 +37,7 @@ struct Tracer {
 
 pub fn plugin(app: &mut App) {
     app.add_plugins(ParticleSystemPlugin::default())
-        .add_systems(Update, (muzzle_flash, impact_sparks, target_hit, return_fire, thin, expire, draw_tracers, spawn_hook, fly_hook));
+        .add_systems(Update, (muzzle_flash, impact_sparks, hazard_sparks, target_hit, return_fire, thin, expire, draw_tracers, spawn_hook, fly_hook));
 }
 
 fn muzzle_flash(mut commands: Commands, mut shots: MessageReader<Gunshot>) {
@@ -80,6 +80,22 @@ fn impact_sparks(mut commands: Commands, mut impacts: MessageReader<BulletImpact
             (2.0, 6.0),
             LinearRgba::rgb(6.0, 5.0, 3.0),
             0.35,
+        );
+    }
+}
+
+fn hazard_sparks(mut commands: Commands, mut hits: MessageReader<HazardHit>) {
+    for hit in hits.read() {
+        burst(
+            &mut commands,
+            "Hazard sparks",
+            hit.at + Vec3::Y * 0.6,
+            Vec3::Y,
+            1.8,
+            24,
+            (3.0, 8.0),
+            LinearRgba::rgb(10.0, 3.0, 0.4),
+            0.4,
         );
     }
 }

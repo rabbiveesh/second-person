@@ -8,8 +8,11 @@ use avian3d::prelude::*;
 use bevy::{
     asset::RenderAssetUsages,
     camera::visibility::RenderLayers,
+    image::{ImageAddressMode, ImageSampler, ImageSamplerDescriptor},
+    math::Affine2,
     mesh::{Indices, PrimitiveTopology},
     prelude::*,
+    render::render_resource::{Extent3d, TextureDimension, TextureFormat},
 };
 use rand::{Rng, SeedableRng, rngs::StdRng};
 
@@ -173,7 +176,18 @@ pub struct Block {
     pub half: Vec2,
     pub height: f32,
     pub kind: BlockKind,
+    /// Walking into it hurts (see [`Hazard`]).
+    pub hazard: bool,
 }
+
+/// On a block that hurts the shooter on contact. It wears warning stripes, so it reads as
+/// dangerous from his eyes and on the radar.
+#[derive(Component, Reflect, Default)]
+#[reflect(Component)]
+pub struct Hazard;
+
+/// About one generated block in this many is a hazard (at least one per arena).
+const HAZARD_ONE_IN: usize = 4;
 
 impl Block {
     /// How far the block extends from its centre along `dir` (a unit vector).
@@ -223,12 +237,14 @@ impl Layout {
             half: Vec2::splat(1.0),
             height: h * 2.0,
             kind: BlockKind::Crate,
+            hazard: false,
         });
         let pillars = PILLARS.iter().map(|&(x, z)| Block {
             center: Vec2::new(x, z),
             half: Vec2::splat(0.6),
             height: 5.0,
             kind: BlockKind::Pillar,
+            hazard: false,
         });
         let h = CLASSIC_HALF - WALL_THICKNESS / 2.0;
         Self {
@@ -253,7 +269,19 @@ impl Layout {
             blocks: vec![],
         };
         layout.scatter_cover(&mut rng);
+        // Hazards draw from their own stream, so they don't change any seed's geometry.
+        layout.pick_hazards(&mut StdRng::seed_from_u64(seed ^ 0x0BAD_1E65));
         layout
+    }
+
+    fn pick_hazards(&mut self, rng: &mut impl Rng) {
+        let n = self.blocks.len();
+        if n == 0 {
+            return;
+        }
+        for i in rand::seq::index::sample(rng, n, (n / HAZARD_ONE_IN).max(1)) {
+            self.blocks[i].hazard = true;
+        }
     }
 
     fn scatter_cover(&mut self, rng: &mut impl Rng) {
@@ -525,6 +553,7 @@ fn random_block(rng: &mut impl Rng, center: Vec2) -> Block {
             half: Vec2::splat(rng.random_range(0.8..1.5)),
             height: rng.random_range(2.0..3.0),
             kind: BlockKind::Crate,
+            hazard: false,
         }
     } else if roll < 0.7 {
         Block {
@@ -532,6 +561,7 @@ fn random_block(rng: &mut impl Rng, center: Vec2) -> Block {
             half: Vec2::splat(rng.random_range(0.5..0.8)),
             height: 5.0,
             kind: BlockKind::Pillar,
+            hazard: false,
         }
     } else {
         let (long, thin) = (rng.random_range(2.0..5.0), rng.random_range(0.35..0.6));
@@ -540,6 +570,7 @@ fn random_block(rng: &mut impl Rng, center: Vec2) -> Block {
             half: if rng.random() { Vec2::new(long, thin) } else { Vec2::new(thin, long) },
             height: rng.random_range(2.2..3.0),
             kind: BlockKind::Barrier,
+            hazard: false,
         }
     }
 }
@@ -627,6 +658,7 @@ pub(crate) fn spawn_arena(
     floors: Res<Floors>,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
+    images: Option<ResMut<Assets<Image>>>,
 ) {
     // Physics floor: a slab under the whole outline (nothing can get outside the walls).
     let bounds = layout.bounds();
@@ -688,13 +720,26 @@ pub(crate) fn spawn_arena(
     let crate_mat = materials.add(Color::srgb(0.6, 0.42, 0.25));
     let pillar_mat = materials.add(Color::srgb(0.7, 0.7, 0.72));
     let barrier_mat = materials.add(Color::srgb(0.45, 0.48, 0.55));
+    // Hazards wear yellow-and-black warning stripes (headless apps have no images: plain yellow).
+    let stripes = images.map(|mut images| images.add(hazard_stripes()));
     for block in &layout.blocks {
-        let (name, material) = match block.kind {
-            BlockKind::Crate => ("Crate", &crate_mat),
-            BlockKind::Pillar => ("Pillar", &pillar_mat),
-            BlockKind::Barrier => ("Barrier", &barrier_mat),
+        let hazard_mat = block.hazard.then(|| {
+            // Cuboid faces each span 0..1 in UV: repeat the stripes about once a metre.
+            let metres = block.half.max_element().max(block.height / 2.0) * 2.0;
+            materials.add(StandardMaterial {
+                base_color_texture: stripes.clone(),
+                emissive: LinearRgba::rgb(0.25, 0.18, 0.0),
+                uv_transform: Affine2::from_scale(Vec2::splat(metres / HAZARD_STRIPE_METRES)),
+                ..StandardMaterial::from(if stripes.is_some() { Color::WHITE } else { Color::srgb(0.95, 0.8, 0.1) })
+            })
+        });
+        let (name, material) = match (&hazard_mat, block.kind) {
+            (Some(hazard), _) => ("Hazard", hazard),
+            (_, BlockKind::Crate) => ("Crate", &crate_mat),
+            (_, BlockKind::Pillar) => ("Pillar", &pillar_mat),
+            (_, BlockKind::Barrier) => ("Barrier", &barrier_mat),
         };
-        spawn_block(
+        let e = spawn_block(
             &mut commands,
             &mut meshes,
             material.clone(),
@@ -702,7 +747,37 @@ pub(crate) fn spawn_arena(
             Transform::from_xyz(block.center.x, block.height / 2.0, block.center.y),
             Vec3::new(block.half.x, block.height / 2.0, block.half.y),
         );
+        if block.hazard {
+            commands.entity(e).insert(Hazard);
+        }
     }
+}
+
+/// One repeat of the hazard stripes, in metres.
+const HAZARD_STRIPE_METRES: f32 = 1.0;
+
+/// Diagonal yellow-and-black warning stripes, one band of each per tile, tiling seamlessly.
+fn hazard_stripes() -> Image {
+    const SIZE: u32 = 64;
+    let data = (0..SIZE * SIZE)
+        .flat_map(|i| {
+            let (x, y) = (i % SIZE, i / SIZE);
+            if (x + y) % SIZE < SIZE / 2 { [235, 190, 20, 255] } else { [25, 22, 20, 255] }
+        })
+        .collect();
+    let mut image = Image::new(
+        Extent3d { width: SIZE, height: SIZE, depth_or_array_layers: 1 },
+        TextureDimension::D2,
+        data,
+        TextureFormat::Rgba8UnormSrgb,
+        RenderAssetUsages::RENDER_WORLD,
+    );
+    image.sampler = ImageSampler::Descriptor(ImageSamplerDescriptor {
+        address_mode_u: ImageAddressMode::Repeat,
+        address_mode_v: ImageAddressMode::Repeat,
+        ..ImageSamplerDescriptor::linear()
+    });
+    image
 }
 
 /// The floor polygon, triangulated, facing up at y = 0.
@@ -732,7 +807,7 @@ fn spawn_block(
     name: &'static str,
     transform: Transform,
     half: Vec3,
-) {
+) -> Entity {
     let full = half * 2.0;
     commands.spawn((
         Name::new(name),
@@ -744,5 +819,6 @@ fn spawn_block(
         transform,
         RenderLayers::from_layers(WORLD_AND_RADAR),
         NavObstacle,
-    ));
+    ))
+    .id()
 }
