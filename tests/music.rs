@@ -214,3 +214,62 @@ fn transpose_moves_every_note() {
     let (_, rms) = run(&mut e, 2.0);
     assert!(rms > 0.01);
 }
+
+fn soundfont() -> std::sync::Arc<second_person::music::SoundFont> {
+    second_person::music::load_soundfont(format!("{}/{}", env!("CARGO_MANIFEST_DIR"), second_person::music::SOUNDFONT)).unwrap()
+}
+
+#[test]
+fn sampled_patches_play_from_the_soundfont() {
+    let mut e = Engine::new(track("mambo").compile().unwrap(), SR);
+    e.set_soundfont(Some(soundfont()));
+    e.play();
+    let (peak, rms) = run(&mut e, 4.0);
+    assert!(rms > 0.01, "the soundfont should be audible: rms {rms}");
+    assert!(peak <= 1.0);
+    let meter = |e: &Engine, name: &str| e.status().stems.iter().find(|s| s.name == name).unwrap().meter;
+    assert!(meter(&e, "Bass") > 0.001 || meter(&e, "Vibes") > 0.001, "sampled stems meter like any other");
+}
+
+#[test]
+fn without_a_soundfont_sampled_patches_use_their_synth() {
+    let mut e = Engine::new(track("mambo").compile().unwrap(), SR);
+    e.play();
+    let (_, rms) = run(&mut e, 4.0);
+    assert!(rms > 0.01, "the synth fallback should be audible: rms {rms}");
+    assert!(!e.has_soundfont());
+}
+
+#[test]
+fn drum_keys_follow_the_nearest_listed_note() {
+    let c = track("mambo").compile().unwrap();
+    let conga = c.stems.iter().find(|s| s.name == "Congas").unwrap().sample.clone().unwrap();
+    assert_eq!(conga.key(60), 63, "c4 is the open conga");
+    assert_eq!(conga.key(64), 62, "e4 is the slap");
+    assert_eq!(conga.key(55), 64, "g3 is the low conga");
+    assert_eq!(conga.key(48), 64, "anything lower is the nearest, the low conga");
+    let bad = track("mambo").to_text().replacen("sample = { gain = 2.0, program = 32 }", "sample = { gain = 2.0 }", 1);
+    assert!(Score::parse(&bad).unwrap_err().contains("give either a `program` or drum `keys`"));
+}
+
+#[test]
+fn a_sampled_round_never_clips() {
+    let mut e = Engine::new(track("mambo").compile().unwrap(), SR);
+    e.set_soundfont(Some(soundfont()));
+    e.play();
+    let mut t = 0.0f32;
+    let mut peak = 0.0f32;
+    let mut won = false;
+    while t < script::LENGTH {
+        let m = script::at(t);
+        e.suspicion = m.suspicion;
+        e.engaged = m.engaged;
+        if m.won && !won {
+            won = true;
+            e.end(true);
+        }
+        peak = peak.max(run(&mut e, 0.1).0);
+        t += 0.1;
+    }
+    assert!(peak <= 1.0, "clipped: {peak}");
+}

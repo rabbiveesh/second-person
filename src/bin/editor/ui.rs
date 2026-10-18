@@ -795,6 +795,13 @@ fn patches_view(ed: &mut Editor, ui: &mut egui::Ui) {
         }
         let Some(p) = ed.doc.patches.get_mut(&name) else { return };
         changed |= ui.add(egui::TextEdit::singleline(&mut p.about).desired_width(560.0).hint_text("what it should sound like")).lost_focus();
+        if let Some(s) = &p.sample {
+            let what = match s.program {
+                Some(n) => format!("GM program {n}"),
+                None => format!("drum keys {}", s.keys.iter().map(|(n, k)| format!("{n}→{k}")).collect::<Vec<_>>().join(", ")),
+            };
+            ui.label(RichText::new(format!("Plays from the soundfont ({what}); the synth below is its fallback. Edit `sample` in the Text view.")).size(11.0).color(MUTED));
+        }
         ui.add_space(6.0);
         changed |= patch_editor(ui, p);
     });

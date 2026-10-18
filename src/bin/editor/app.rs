@@ -82,6 +82,10 @@ impl Editor {
         let text = std::fs::read_to_string(track_path(&root, &name)).map_err(|e| format!("{name}: {e}"))?;
         let doc = Score::parse(&text).map_err(|e| format!("{name}.score: {e}"))?;
         let out = audio::start(doc.compile()?);
+        match music::load_soundfont(root.join(music::SOUNDFONT)) {
+            Ok(font) => out.engine.lock().unwrap().set_soundfont(Some(font)),
+            Err(e) => eprintln!("editor: no soundfont ({e}); sampled patches use their synth"),
+        }
         let status = out.engine.lock().unwrap().status();
         Ok(Editor {
             root,

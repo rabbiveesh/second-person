@@ -1,6 +1,5 @@
 title = "Mambo"
 layouts = ["yard"]
-gain = 0.7
 reverb = 0.28
 room = 2.0
 
@@ -15,7 +14,7 @@ fade = 0.7
 [[cue]]
 name = "fight"
 bpm = 112.0
-chords = "Ebmaj7 Ebmaj7 Bmaj7 Bmaj7"
+chords = "Ebm F#7b9 Bm D7b9 Gm Bb7b9 Ebm Bb7b9"
 fade = 0.05
 
 [[cue]]
@@ -51,11 +50,11 @@ patch = "vibes"
 part = "g5 . . bb5 . . d6 .*9 | c6 . . bb5 . . g5 _*9 | f#5 . . a#5 . . d#6 .*9 | c#6 . . a#5 . . f#5 _*9"
 
 [[stem]]
-name = "Montuno"
+name = "Piano"
 cue = "calm"
 patch = "piano"
 fader = { follow = "rise", from = 0.12, to = 0.4 }
-part = "2+12,4+12 . . . 1+12,3+12 . 2+12,4+12 . . . 1+12,3+12 . 2+12,4+12 . . ."
+part = "r,2,4 _*15"
 
 [[stem]]
 name = "Congas"
@@ -93,7 +92,7 @@ name = "Bass (fight)"
 cue = "fight"
 patch = "bass"
 level = 1.1
-part = ". . . . . . bb1 . . . . . eb2 . . . | . . . . . . bb1 . . . . . b1 . . . | . . . . . . f#2 . . . . . b1 . . . | . . . . . . f#2 . . . . . eb2 . . ."
+part = ". . . . . . bb1 . . . . . f#2 . . . | . . . . . . c#2 . . . . . b1 . . . | . . . . . . f#2 . . . . . d2 . . . | . . . . . . a1 . . . . . g2 . . . | . . . . . . d2 . . . . . bb1 . . . | . . . . . . f2 . . . . . eb2 . . . | . . . . . . bb1 . . . . . bb1 . . . | . . . . . . f2 . . . . . eb2 . . ."
 
 [[stem]]
 name = "Clave (fight)"
@@ -102,11 +101,11 @@ patch = "clave"
 part = ". . . . x . . . x . . . . . . . | x . . . . . x . . . . . x . . ."
 
 [[stem]]
-name = "Montuno (fight)"
+name = "Piano (fight)"
 cue = "fight"
 patch = "piano"
 level = 1.1
-part = "2+12,4+12! . 1+12,3+12 . 2+12,4+12 . 1+12,3+12! . . . 2+12,4+12 . 1+12,3+12! . 2+12,4+12 ."
+part = ". . . . . . r,2,4,r+12! _ . . . . r,2,4,r+12 _ _ ."
 
 [[stem]]
 name = "Congas (fight)"
@@ -130,13 +129,13 @@ part = ".*16 | .*16 | .*16 | . . . . . . . . a4? a4 e4? e4 a4 a4 e4! ."
 name = "Horns"
 cue = "fight"
 patch = "trumpets"
-part = "g4! . . bb4 . . d5! .*9 | c5 . . bb4 . . g4! _*5 .*4 | f#4! . . a#4 . . d#5! .*9 | c#5 . . a#4 . . f#4! _*5 .*4"
+part = "1+12! . . 2+12 . . 3+12! . . . 4+12 . 3+12 . 2+12 ."
 
 [[stem]]
 name = "Saxes"
 cue = "fight"
 patch = "saxes"
-part = "g3! . . bb3 . . d4! .*9 | c4 . . bb3 . . g3! _*5 .*4 | f#3! . . a#3 . . d#4! .*9 | c#4 . . a#3 . . f#3! _*5 .*4"
+part = "1! . . 2 . . 3! . . . 4 . 3 . 2 ."
 
 [[stem]]
 name = "Trombones"
@@ -156,7 +155,7 @@ part = "1 2 3 4 1+12 2+12 3+12 4+12 1+24 2+24 3+24 4+24 .*4 | .*16"
 name = "Win horns"
 cue = "win"
 patch = "trumpets"
-level = 1.2
+level = 0.7
 part = ".*16 | ch+12,r+24! _*11 .*4"
 
 [[stem]]
@@ -204,6 +203,7 @@ release = 0.1
 gain = 0.45
 filter = { kind = "lowpass", cutoff = 600.0, q = 0.8, env = 500.0, env_decay = 0.08 }
 send = 0.3
+sample = { gain = 2.0, program = 32 }
 
 [patch.clave]
 about = "Two hardwood sticks: a short, high knock."
@@ -216,6 +216,7 @@ gain = 0.22
 hit = "d#7"
 filter = { kind = "bandpass", cutoff = 2500.0, q = 1.5 }
 send = 0.7
+sample = { gain = 1.5, keys = { "d#7" = 75 } }
 
 [patch.conga]
 about = "Conga: a skin thump that drops onto its pitch; accent a high note for the slap."
@@ -229,6 +230,7 @@ hit = "c4"
 filter = { kind = "lowpass", cutoff = 1800.0, q = 0.7 }
 drop = 0.35
 send = 0.5
+sample = { gain = 1.5, keys = { c4 = 63, e4 = 62, g3 = 64 } }
 
 [patch.piano]
 about = "Montuno piano: bright attack, quick decay."
@@ -240,6 +242,7 @@ release = 0.1
 gain = 0.1
 filter = { kind = "lowpass", cutoff = 1800.0, q = 0.7, env = 2500.0, env_decay = 0.12 }
 send = 0.8
+sample = { gain = 1.6, program = 0 }
 
 [patch.saxes]
 about = "Baritone and tenor saxes: the riff under the trumpets."
@@ -251,6 +254,7 @@ release = 0.06
 gain = 0.08
 drive = 1.8
 filter = { kind = "lowpass", cutoff = 700.0, q = 1.4, env = 900.0, env_decay = 0.1 }
+sample = { gain = 2.0, program = 66 }
 
 [patch.shell]
 about = "Cascara: a stick on the timbale's shell."
@@ -263,6 +267,7 @@ gain = 0.2
 hit = "g6"
 filter = { kind = "bandpass", cutoff = 3000.0, q = 1.8 }
 send = 0.5
+sample = { gain = 0.8, keys = { g6 = 76 } }
 
 [patch.timbale]
 about = "Timbale: a tight metal-rimmed drum that rings."
@@ -276,6 +281,7 @@ hit = "a4"
 filter = { kind = "lowpass", cutoff = 3500.0, q = 0.9 }
 drop = 0.2
 send = 0.7
+sample = { keys = { a4 = 65, e4 = 66 } }
 
 [patch.trombone]
 about = "A trombone that sags as it holds: wah, wah, wah, waaah."
@@ -289,6 +295,7 @@ filter = { kind = "lowpass", cutoff = 500.0, q = 1.5, env = 900.0, env_attack = 
 tremolo_rate = 5.5
 tremolo_depth = 0.35
 glide = -0.7
+sample = { program = 57 }
 
 [patch.trombones]
 about = "Trombone section: warm and low, the filter pushes on each note."
@@ -299,6 +306,7 @@ sustain = 0.6
 release = 0.15
 gain = 0.05
 filter = { kind = "lowpass", cutoff = 450.0, q = 1.1, env = 1300.0, env_decay = 0.2 }
+sample = { gain = 0.8, program = 57 }
 
 [patch.trumpets]
 about = "A trumpet section: bright, stabbing, the filter snaps open."
@@ -309,6 +317,7 @@ sustain = 0.5
 release = 0.1
 gain = 0.06
 filter = { kind = "lowpass", cutoff = 900.0, q = 1.2, env = 3500.0, env_decay = 0.12 }
+sample = { gain = 1.4, program = 56 }
 
 [patch.vibes]
 about = "Vibraphone: soft bars with the motor's slow pulse."
@@ -321,3 +330,4 @@ gain = 0.14
 tremolo_rate = 5.0
 tremolo_depth = 0.35
 send = 1.2
+sample = { gain = 2.5, program = 11 }
