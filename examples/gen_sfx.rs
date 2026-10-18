@@ -62,6 +62,7 @@ fn main() {
     }
     bufs.push(("bump".into(), bump()));
     bufs.push(("whistle".into(), whistle()));
+    bufs.push(("my_leg".into(), my_leg()));
 
     for (name, mut buf) in bufs {
         // Trim trailing silence and normalise.
@@ -76,6 +77,115 @@ fn main() {
 }
 
 pub const STEP_VARIANTS: usize = 3;
+
+/// A vocal tract shape: three formants (Hz), how open the mouth is (0 = closed), and the
+/// voice's pitch (Hz).
+#[derive(Clone, Copy)]
+struct Tract {
+    f: [f32; 3],
+    open: f32,
+    pitch: f32,
+}
+
+impl Tract {
+    const fn new(f1: f32, f2: f32, f3: f32, open: f32, pitch: f32) -> Self {
+        Self { f: [f1, f2, f3], open, pitch }
+    }
+
+    fn lerp(self, other: Self, k: f32) -> Self {
+        let mix = |a: f32, b: f32| a + (b - a) * k;
+        Self {
+            f: [0, 1, 2].map(|i| mix(self.f[i], other.f[i])),
+            open: mix(self.open, other.open),
+            pitch: mix(self.pitch, other.pitch),
+        }
+    }
+}
+
+/// "MY LEG!": a strained, high, nasal yell, formant-synthesised from scratch.
+///
+/// The voice is additive: every harmonic of the pitch is a sine weighted by the vocal tract's
+/// response at its frequency (three resonant peaks, the formants), so gliding the formants
+/// between vowel targets says the word. Keyframes walk m → aa → ee ("my"), l → eh held long
+/// ("leeeh"), then the g closes it off with a silent stop and a short velar burst.
+fn my_leg() -> Vec<f32> {
+    // (time, tract): the formant targets are textbook adult values, raised a little for a yell.
+    let keys: &[(f32, Tract)] = &[
+        (0.00, Tract::new(280.0, 1100.0, 2500.0, 0.0, 330.0)),
+        (0.03, Tract::new(280.0, 1100.0, 2500.0, 0.35, 360.0)), // m: nasal murmur
+        (0.09, Tract::new(280.0, 1100.0, 2500.0, 0.35, 380.0)),
+        (0.15, Tract::new(850.0, 1250.0, 2650.0, 1.0, 430.0)), // aa
+        (0.27, Tract::new(850.0, 1300.0, 2650.0, 1.0, 470.0)),
+        (0.38, Tract::new(320.0, 2300.0, 3000.0, 0.8, 500.0)), // ee
+        (0.43, Tract::new(360.0, 1050.0, 2700.0, 0.45, 520.0)), // l
+        (0.48, Tract::new(360.0, 1050.0, 2700.0, 0.45, 560.0)),
+        (0.56, Tract::new(620.0, 1850.0, 2650.0, 1.0, 640.0)), // eh, cracking up high
+        (0.95, Tract::new(640.0, 1800.0, 2650.0, 1.0, 700.0)),
+        (1.22, Tract::new(600.0, 1750.0, 2600.0, 0.9, 610.0)),
+        (1.30, Tract::new(300.0, 2050.0, 2250.0, 0.0, 520.0)), // g: velar pinch, then closure
+    ];
+    const BURST_AT: f32 = 1.36;
+    const LEN: f32 = 1.5;
+
+    let mut rng = StdRng::seed_from_u64(1337);
+    let n = (RATE as f32 * LEN) as usize;
+    let dt = 1.0 / RATE as f32;
+    let at = |t: f32| -> Tract {
+        let i = keys.iter().rposition(|(kt, _)| *kt <= t).unwrap_or(0);
+        match keys.get(i + 1) {
+            Some(&(t1, next)) => keys[i].1.lerp(next, ((t - keys[i].0) / (t1 - keys[i].0)).clamp(0.0, 1.0)),
+            None => Tract { open: 0.0, ..keys[i].1 },
+        }
+    };
+    // Bandwidths widen with the formant, as in real voices; a yell's are a bit wider still.
+    let bandwidth = [110.0, 140.0, 200.0];
+    let gain = [1.0, 0.7, 0.35];
+    let response = |tract: &Tract, freq: f32| -> f32 {
+        (0..3)
+            .map(|i| {
+                let x = (freq - tract.f[i]) / (bandwidth[i] / 2.0);
+                gain[i] / (1.0 + x * x)
+            })
+            .sum()
+    };
+
+    let breath: Vec<f32> = lowpass(&highpass(&(0..n).map(|_| rng.random_range(-1.0..1.0)).collect::<Vec<f32>>(), 900.0), 6000.0);
+    let mut phase = 0.0f32;
+    let mut jitter = 0.0f32;
+    let mut out = vec![0.0f32; n];
+    for (k, v) in out.iter_mut().enumerate() {
+        let t = k as f32 * dt;
+        let tract = at(t);
+        // Vibrato that grows as the note is held, plus a little random wobble (strain).
+        jitter += (rng.random_range(-1.0..1.0) - jitter) * 0.002;
+        let vibrato = 1.0 + 0.035 * (t * 6.5 * std::f32::consts::TAU).sin() * (t / 0.8).min(1.0) + 0.02 * jitter;
+        let pitch = tract.pitch * vibrato;
+        phase = (phase + pitch * dt).fract();
+        let mut voice = 0.0;
+        let mut h = 1;
+        while (h as f32) * pitch < 7000.0 {
+            let freq = h as f32 * pitch;
+            // A bright, pressed source: harmonics fall off slower than a relaxed voice's.
+            voice += (std::f32::consts::TAU * phase * h as f32).sin() * response(&tract, freq) / (h as f32).powf(0.7);
+            h += 1;
+        }
+        // Breath rides on the second and third formants.
+        let air = breath[k] * 0.08 * (response(&tract, tract.f[1]) + response(&tract, tract.f[2]));
+        *v = (voice + air) * tract.open;
+    }
+    // Rasp: drive the voice into a soft clip, as a yell does to vocal folds.
+    let peak = out.iter().fold(0.0f32, |m, v| m.max(v.abs())).max(1e-6);
+    out.iter_mut().for_each(|v| *v = (2.2 * *v / peak).tanh());
+
+    // The g's release: a short burst of noise around the velar pinch.
+    let burst = lowpass(&highpass(&(0..n).map(|_| rng.random_range(-1.0..1.0)).collect::<Vec<f32>>(), 1500.0), 3500.0);
+    let start = (BURST_AT * RATE as f32) as usize;
+    for k in start..n {
+        let t = (k - start) as f32 * dt;
+        out[k] += burst[k] * 1.6 * (t / 0.002).min(1.0) * (-t / 0.018).exp();
+    }
+    out
+}
 
 /// Every step is a heel thump (falling sine) plus a material layer:
 /// - grass: soft, dull swish; mostly thump.

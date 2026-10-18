@@ -77,6 +77,8 @@ Fyrox (small ecosystem), macroquad/three-d (too thin, would mean rolling our own
   `Layout::random(seed)` each round: yard, hall, L, cross, octagon or notch, rotated, with scattered cover), or
   `Seed(n)`. L cycles Classic/Random and restarts. Generated cover keeps `COVER_GAP` from walls and other cover so the
   free space stays connected, and keeps the origin (the target's spawn) open. The floor mesh is triangulated with `earcut`.
+  About one generated block in four (at least one) is a `Hazard` (`Block::hazard`, picked from its own seeded stream so
+  geometry doesn't change), wearing yellow/black stripes. Classic has none.
 - `target.rs`: target entity → Head (pitch) → `MainCamera`. Behaviour tree:
   `Selector[engaged→(TakeCover, Fight), alerted→Investigate, mobile→Wander, Scan]`.
   Engaged means he runs to cover (`arena::find_cover`, no shooting while running), preferring cover he reaches by
@@ -109,6 +111,8 @@ Fyrox (small ecosystem), macroquad/three-d (too thin, would mean rolling our own
 - `shooter.rs`: dynamic capsule, rotation locked, tank controls relative to its own facing. One analog
   `ShooterAction::Drive` dual axis (x turn, y throttle); arrows bind to it as a virtual d-pad.
   Walking into the world emits `Bump` and a `Stagger` knockback (can't walk, only turn); his laser staggers you too.
+  Walking into a `Hazard` also costs `HAZARD_DAMAGE`, knocks you back harder and emits `HazardHit`: you yell "MY LEG!"
+  (`assets/sfx/my_leg.wav`, formant-synthesised in `gen_sfx`, plus a HUD caption), and he hears it from 32m.
   `Sidestep`: a double-tap straight left/right on `Drive` (arrows, or a double flick of the stick, since both feed the same
   axis) hops 2.4m sideways with the facing restored to before the taps; the landing writes a `Footstep`. Stagger cuts it.
 - `shooter.rs` `ControlScheme` (spike; C cycles, touch has a button): `Tank` (above), and direct schemes that walk where

@@ -17,7 +17,7 @@ use crate::{
     arena::{Floor, Floors, Layout},
     combat::{BulletImpact, GrappleFired, Gunshot, HitKind, ShooterHit, TargetHit, WarningShot},
     round::{GameState, RoundEntity},
-    shooter::{Bump, Footstep, Whistle},
+    shooter::{Bump, Footstep, HazardHit, Whistle},
     target::MainCamera,
 };
 
@@ -45,6 +45,10 @@ const STEP_VARIANTS: usize = 3;
 const BUMP_DB: f32 = -2.0;
 /// Your "where am I?" whistle: loud and bright (easy to place), carries like footsteps.
 const WHISTLE_DB: f32 = 0.0;
+/// Your yell when a hazard gets you: the loudest thing you do, and it carries.
+const YELL_DB: f32 = 3.0;
+const YELL_ROLLOFF: f32 = 0.35;
+const YELL_PITCH_JITTER: f64 = 0.05;
 
 /// A sound and its low-passed twin.
 struct Sound {
@@ -71,6 +75,7 @@ pub struct Sfx {
     bump: Sound,
     whistle: Sound,
     grapple: Sound,
+    yell: Sound,
 }
 
 /// A playing sound placed in the world. Its two instances are re-mixed every frame.
@@ -110,6 +115,7 @@ fn load(mut commands: Commands, assets: Res<AssetServer>) {
         bump: Sound::load(&assets, "bump"),
         whistle: Sound::load(&assets, "whistle"),
         grapple: Sound::load(&assets, "grapple"),
+        yell: Sound::load(&assets, "my_leg"),
     });
 }
 
@@ -176,6 +182,7 @@ fn play_events(
     mut steps: MessageReader<Footstep>,
     mut bumps: MessageReader<Bump>,
     mut whistles: MessageReader<Whistle>,
+    mut yells: MessageReader<HazardHit>,
 ) {
     let Ok(ear) = ear.single() else { return };
     let mut rng = rand::rng();
@@ -230,6 +237,10 @@ fn play_events(
     }
     for w in whistles.read() {
         play(&sfx.whistle, w.at, WHISTLE_DB, FOOTSTEP_RANGE, FOOTSTEP_ROLLOFF, 1.0);
+    }
+    for y in yells.read() {
+        let rate = 1.0 + rng.random_range(-YELL_PITCH_JITTER..YELL_PITCH_JITTER);
+        play(&sfx.yell, y.at, YELL_DB, FOOTSTEP_RANGE, YELL_ROLLOFF, rate);
     }
 }
 

@@ -11,7 +11,7 @@ use crate::{
     difficulty::{AssistLevers, HisLevers, Tuning},
     round::{GameState, RoundEntity},
     nav::MoveTo,
-    shooter::{Bump, ControlScheme, Footstep, Whistle, Shooter, ShooterAction, Stagger, Stunned},
+    shooter::{Bump, ControlScheme, Footstep, HazardHit, Whistle, Shooter, ShooterAction, Stagger, Stunned},
     target::{Activity, Alert, MainCamera, ROLL_SECS, Relocate, Roll, Suspicion, Target},
 };
 
@@ -47,6 +47,9 @@ const BUMP_SUSPICION: f32 = 0.2;
 /// The whistle is your "where am I?" button, and the price is that he hears it from far off.
 const WHISTLE_HEARING_RANGE: f32 = 28.0;
 const WHISTLE_SUSPICION: f32 = 0.4;
+/// Yelling after walking into a hazard: louder than a whistle, and more alarming.
+const YELL_HEARING_RANGE: f32 = 32.0;
+const YELL_SUSPICION: f32 = 0.6;
 /// Suspicious but not yet engaged: he fires warning shots that land this far off where he
 /// thinks you are, every so often.
 const WARNING_SUSPICION: f32 = 0.35;
@@ -362,7 +365,7 @@ fn bullet_hits(
 }
 
 /// He hears your footsteps when you're close (farther on loud floors), walking into walls,
-/// and whistling (from far off).
+/// and whistling or yelling after a hazard (from far off).
 /// Each sound nudges suspicion and tells him where you are, so creeping up is a risk.
 fn hear_movement(
     mut commands: Commands,
@@ -370,6 +373,7 @@ fn hear_movement(
     mut steps: MessageReader<Footstep>,
     mut bumps: MessageReader<Bump>,
     mut whistles: MessageReader<Whistle>,
+    mut yells: MessageReader<HazardHit>,
     tuning: Res<Tuning>,
     target: Single<(Entity, &Transform, &mut Suspicion), With<Target>>,
 ) {
@@ -380,7 +384,8 @@ fn hear_movement(
         .read()
         .map(|s| (s.at, floors.at(s.at.xz()).hearing_range(), FOOTSTEP_SUSPICION))
         .chain(bumps.read().map(|b| (b.at, BUMP_HEARING_RANGE, BUMP_SUSPICION)))
-        .chain(whistles.read().map(|w| (w.at, WHISTLE_HEARING_RANGE, WHISTLE_SUSPICION)));
+        .chain(whistles.read().map(|w| (w.at, WHISTLE_HEARING_RANGE, WHISTLE_SUSPICION)))
+        .chain(yells.read().map(|y| (y.at, YELL_HEARING_RANGE, YELL_SUSPICION)));
     for (at, range, amount) in heard {
         let closeness = 1.0 - ear.distance(at) / (range * hearing);
         if closeness <= 0.0 {

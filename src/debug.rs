@@ -14,13 +14,13 @@ use crate::{
     combat::{BulletImpact, GrappleFired, Gunshot, ShooterHit, TargetHit, WarningShot},
     radar::RadarMode,
     round::{GameState, TargetMobile},
-    shooter::{Bump, Shooter, Whistle},
+    shooter::{Bump, HazardHit, Shooter, Whistle},
     target::Target,
 };
 
 pub fn plugin(app: &mut App) {
     app.init_resource::<EventLog>()
-        .add_systems(Update, dump.run_if(f9_pressed.or(three_finger_tap)));
+        .add_systems(Update, dump.run_if(f9_pressed.or_else(three_finger_tap)));
     log_messages::<StateTransitionEvent<GameState>>(app);
     log_messages::<Gunshot>(app);
     log_messages::<BulletImpact>(app);
@@ -29,6 +29,7 @@ pub fn plugin(app: &mut App) {
     log_messages::<WarningShot>(app);
     log_messages::<GrappleFired>(app);
     log_messages::<Bump>(app);
+    log_messages::<HazardHit>(app);
     log_messages::<Whistle>(app);
 }
 
