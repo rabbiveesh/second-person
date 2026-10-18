@@ -55,6 +55,7 @@ controlling the **shooter** hunting him. A corner radar shows the whole arena.
 | earcut 0.4 | triangulates arena floor polygons (already in the tree via vleue_navigator) |
 | virtual_joystick 2.8 | on-screen touch stick (bevy_ui) |
 | vleue_navigator 0.16 (`avian3d`) | navmesh pathfinding (polyanya), built from avian colliders, WASM-safe |
+| lightyear 0.30 (`websocket`, `leafwing`, `avian3d`; `server` native only) | the online duel: authoritative server, own-body prediction + rollback, interpolation, lag compensation. WebSockets so the browser build can play |
 
 Dev builds: `dev` feature = `bevy/dynamic_linking` + `inspector`; mold via `.cargo/config.toml`; deps at opt-level 3.
 Machine-local cargo settings (e.g. `rustc-wrapper = "kache"`, a shared build cache across worktrees) go in the
@@ -177,7 +178,7 @@ Fyrox (small ecosystem), macroquad/three-d (too thin, would mean rolling our own
   grapple/roll, HP) and `AssistLevers` (from the dial: magnetism, sonar pace, damage taken). Band 5 and the baseline dial
   are exactly the hand-tuned constants, which stay in `target`/`combat`/`radar` (a test pins this). `AdaptiveDifficulty`
   is only inserted by `main.rs`, so headless tests and staged examples keep the fixed tuning. Never shown to the player.
-  The 1v1 duel will have no assists.
+  The duel keeps the baseline assists (magnetism included).
 - `debug.rs` (presentation): F9 or a three-finger tap writes a plain-text dump (web: downloads it): build info, the adaptive state and round
   history (`difficulty::debug_text`), every reflected `second_person::` resource, the target's and shooter's components,
   and the last 300 gameplay messages. New reflected resources show up for free; log a new message with `log_messages`.
@@ -206,6 +207,21 @@ Fyrox (small ecosystem), macroquad/three-d (too thin, would mean rolling our own
   `R` scripted round from `music::script`) and a mixer (meters, mute/solo). Views: Score (per-cue step grid,
   chord lane, stem fader rules), Patches (sliders, envelope plot, audition), Text (the file; saving from it keeps
   comments). Every edit that compiles goes straight into the playing engine.
+- `duel/` (hidden: nothing in the game points to it yet): the online 1v1. Each player is a `Shooter` and sees through
+  the other's eyes, so the client dresses the opponent as him (`Target`, `target::looks`, the `MainCamera`) and every
+  presentation plugin works unchanged. `duel::gameplay` is the game minus single player (`round::Online`, inserted
+  before the plugins, turns off his spawn, `take_bearings` and the local round keys; `ControlScheme::Tank` is pinned).
+  The server (`cargo run --bin duel -- server`, `DUEL_BIND`, `MATCH_*_S` liveness limits) owns bodies, bullets
+  (`magnetised` at the victim as the shooter saw them: `History` rewound by the client's interpolation delay) and hits,
+  and sends `NetEvent`s that clients turn into the game's own messages. Clients predict their body by re-running
+  `shooter::Movement`; `make_noise` (`shooter::Noise`) is skipped during rollback. Join with `--duel <host:port|ws(s)://url>`
+  natively or `?duel=` in the page URL; `cargo run --bin duel -- bot` adds a headless bot.
+  **The simulation contract** (`duel/mod.rs`): predicted state (`sim_component`, plus avian's via lightyear) is
+  advanced only in `SimSet` (FixedUpdate, re-run on rollback), which reads only predicted state, inputs and round
+  constants (`Layout`, `ControlScheme`, `Bearings`); `AuthoritySet` is server-only; round constants change only in
+  state transitions, `AuthoritySet` or `FollowServerSet`. `duel::arch` tests walk every system's access and fail on a
+  breach (blind spot: `Commands` and observers). lightyear syncs physics to transforms one way only, so
+  `place_by_transform` seeds a new body's `Position` from its `Transform`.
 - `hud.rs`: egui on a dedicated `Camera2d` overlay (`PrimaryEguiContext`; auto-context disabled
   because game cameras respawn each round). Bars, activity, flashes, hit marker,
   wound vignette, radar frame, end banner (held back `BANNER_DELAY` so the deaths play out).

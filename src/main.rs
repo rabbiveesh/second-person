@@ -30,11 +30,19 @@ fn main() {
                     ..default()
                 }),
             EguiPlugin::default(),
-            second_person::gameplay,
-            second_person::presentation,
-        ))
-        // Every round's difficulty adapts to the player (headless tests keep the fixed tuning).
-        .init_resource::<second_person::difficulty::AdaptiveDifficulty>();
+        ));
+
+    if let Some(url) = duel_server() {
+        use rand::Rng;
+        // Keep the connection ticking when the window isn't focused.
+        app.insert_resource(bevy::winit::WinitSettings::continuous());
+        let opts = second_person::duel::client::Options { id: rand::rng().random(), url, lag: 0, bot: false };
+        second_person::duel::join(&mut app, opts);
+    } else {
+        app.add_plugins((second_person::gameplay, second_person::presentation))
+            // Every round's difficulty adapts to the player (headless tests keep the fixed tuning).
+            .init_resource::<second_person::difficulty::AdaptiveDifficulty>();
+    }
 
     // F1 world inspector: opt-in via the `inspector` cargo feature (on in `dev`).
     #[cfg(feature = "inspector")]
@@ -47,4 +55,22 @@ fn main() {
     app.add_plugins(bevy_brp_extras::BrpExtrasPlugin);
 
     app.run();
+}
+
+/// The duel server to join, if asked: `--duel <host:port or URL>` natively, `?duel=` on the web.
+/// Nothing in the game points here yet.
+#[cfg(not(target_family = "wasm"))]
+fn duel_server() -> Option<String> {
+    let args: Vec<String> = std::env::args().collect();
+    let spec = args.iter().position(|a| a == "--duel").and_then(|i| args.get(i + 1))?;
+    Some(second_person::duel::server_url(spec, false))
+}
+
+#[cfg(target_family = "wasm")]
+fn duel_server() -> Option<String> {
+    let location = web_sys::window()?.location();
+    let query = location.search().ok()?;
+    let spec = query.trim_start_matches('?').split('&').find_map(|kv| kv.strip_prefix("duel="))?;
+    let secure = location.protocol().is_ok_and(|p| p == "https:");
+    Some(second_person::duel::server_url(spec, secure))
 }

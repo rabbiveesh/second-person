@@ -15,8 +15,8 @@ use crate::{
     target::{Activity, Alert, MainCamera, ROLL_SECS, Relocate, Roll, Suspicion, Target},
 };
 
-const BULLET_SPEED: f32 = 45.0;
-const FIRE_COOLDOWN: f32 = 0.3;
+pub const BULLET_SPEED: f32 = 45.0;
+pub const FIRE_COOLDOWN: f32 = 0.3;
 /// Bullet magnetism: a shot fired within this angle of him (and in range, with a clear line)
 /// is bent to his centre. No lock-on, nothing that leaks where he is when you're not on him.
 /// These, and the other `pub` knobs here, are the hand-tuned values at the baseline assist dial
@@ -97,6 +97,7 @@ pub struct TargetHit {
 /// Whether he saw the shot coming. Shots from outside his view hit harder: you're most
 /// dangerous when you can't see yourself either.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Reflect)]
+#[derive(serde::Serialize, serde::Deserialize)]
 pub enum HitKind {
     /// He had you in sight.
     Seen,
@@ -186,22 +187,29 @@ pub struct ShooterHit {
     pub to: Vec3,
 }
 
+/// A bullet's mesh and glow.
 #[derive(Resource)]
-struct Assets3d {
-    mesh: Handle<Mesh>,
-    material: Handle<StandardMaterial>,
+pub struct BulletLook {
+    pub mesh: Handle<Mesh>,
+    pub material: Handle<StandardMaterial>,
 }
 
 
-pub fn plugin(app: &mut App) {
+/// What combat shares with a duel: the messages it tells the rest of the game (fx, audio, HUD,
+/// radar), which a duel client gets from the server instead, and the bullet's look.
+pub fn common(app: &mut App) {
+    app.add_systems(Startup, load_assets);
     app.add_message::<Gunshot>()
         .add_message::<BulletImpact>()
         .add_message::<TargetHit>()
         .add_message::<ShooterHit>()
         .add_message::<WarningShot>()
-        .add_message::<GrappleFired>()
-        .add_systems(Startup, load_assets)
-        .add_systems(
+        .add_message::<GrappleFired>();
+}
+
+pub fn plugin(app: &mut App) {
+    common(app);
+    app.add_systems(
             Update,
             (fire, dodge, bullet_hits, hear_movement, warning_fire, grapple, return_fire, check_outcome)
                 .chain()
@@ -214,7 +222,7 @@ fn load_assets(
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
 ) {
-    commands.insert_resource(Assets3d {
+    commands.insert_resource(BulletLook {
         mesh: meshes.add(Sphere::new(0.12)),
         material: materials.add(StandardMaterial {
             base_color: Color::srgb(1.0, 0.9, 0.3),
@@ -228,7 +236,7 @@ fn load_assets(
 fn fire(
     mut commands: Commands,
     time: Res<Time>,
-    assets: Res<Assets3d>,
+    assets: Res<BulletLook>,
     mut cooldown: Local<Option<Timer>>,
     shooter: Single<(&ActionState<ShooterAction>, &Transform, &Stunned), With<Shooter>>,
     target: Single<(Entity, &Transform, &mut Suspicion), With<Target>>,

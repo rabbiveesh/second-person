@@ -121,7 +121,7 @@ const ICE_DRAG: f32 = 0.35;
 const ICE_MAX_SPEED: f32 = 7.5;
 
 #[derive(Actionlike, PartialEq, Eq, Clone, Copy, Hash, Debug, Reflect)]
-#[cfg_attr(feature = "duel", derive(serde::Serialize, serde::Deserialize))]
+#[derive(serde::Serialize, serde::Deserialize)]
 pub enum ShooterAction {
     /// x: turn (right positive), y: throttle (forward positive). Analog, so a touch stick or
     /// gamepad gives partial speed; arrow keys drive it as a d-pad.
@@ -162,7 +162,7 @@ const WHISTLE_COOLDOWN: f32 = 2.0;
 
 /// While > 0, the shooter is being knocked back by `push` and can't walk (only turn).
 #[derive(Component, Reflect, Default, Clone, PartialEq, Debug)]
-#[cfg_attr(feature = "duel", derive(serde::Serialize, serde::Deserialize))]
+#[derive(serde::Serialize, serde::Deserialize)]
 #[reflect(Component)]
 pub struct Stagger {
     pub left: f32,
@@ -175,7 +175,7 @@ pub struct Stagger {
 /// Caught by his grappling hook: no walking, turning or firing until `left` runs out. While
 /// `pull_to` is set you're being reeled toward that point.
 #[derive(Component, Reflect, Default, Clone, PartialEq, Debug)]
-#[cfg_attr(feature = "duel", derive(serde::Serialize, serde::Deserialize))]
+#[derive(serde::Serialize, serde::Deserialize)]
 #[reflect(Component)]
 pub struct Stunned {
     pub left: f32,
@@ -194,7 +194,7 @@ impl Stagger {
 /// Double-tap left or right (arrows, or a double flick of the touch stick) to hop sideways
 /// without turning.
 #[derive(Component, Reflect, Default, Clone, PartialEq, Debug)]
-#[cfg_attr(feature = "duel", derive(serde::Serialize, serde::Deserialize))]
+#[derive(serde::Serialize, serde::Deserialize)]
 #[reflect(Component)]
 pub struct Sidestep {
     /// The first tap of a possible double: its side (-1 left, +1 right), how long ago, and the
