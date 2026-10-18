@@ -217,7 +217,9 @@ pub fn plugin(app: &mut App) {
         .init_resource::<ControlScheme>()
         .register_type::<ControlScheme>()
         .add_systems(OnEnter(GameState::Playing), spawn_shooter.in_set(SpawnRound).run_if(|attract: Res<Attract>| !attract.0))
-        .add_systems(Update, ((drive, bump).chain(), whistle).run_if(in_state(GameState::Playing)));
+        // Movement runs on the fixed tick, so it's the same at any frame rate (and can be re-run).
+        .add_systems(FixedUpdate, (drive, bump).chain().run_if(in_state(GameState::Playing)))
+        .add_systems(Update, whistle.run_if(in_state(GameState::Playing)));
 }
 
 fn spawn_shooter(
