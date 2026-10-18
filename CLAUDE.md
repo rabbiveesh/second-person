@@ -113,6 +113,7 @@ Fyrox (small ecosystem), macroquad/three-d (too thin, would mean rolling our own
   Walking into the world emits `Bump` and a `Stagger` knockback (can't walk, only turn); his laser staggers you too.
   Walking into a `Hazard` also costs `HAZARD_DAMAGE`, knocks you back harder and emits `HazardHit`: you yell "MY LEG!"
   (`assets/sfx/my_leg.wav`, formant-synthesised in `gen_sfx`, plus a HUD caption), and he hears it from 32m.
+  `examples/hazard_clip.rs` records a hit from his eyes (and when the yell starts, for muxing the sound in).
   `Sidestep`: a double-tap straight left/right on `Drive` (arrows, or a double flick of the stick, since both feed the same
   axis) hops 2.4m sideways with the facing restored to before the taps; the landing writes a `Footstep`. Stagger cuts it.
 - `shooter.rs` `ControlScheme` (spike; C cycles, touch has a button): `Tank` (above), and direct schemes that walk where
@@ -151,6 +152,8 @@ Fyrox (small ecosystem), macroquad/three-d (too thin, would mean rolling our own
   surprise, not per bullet. Before he suspects anything it's an ambush: lethal in the back from within `EXECUTION_RANGE`, else `AMBUSH_BONUS` (uncapped,
   often most of his bar) from the side; once he's on to you it takes at most `SURPRISE_CAP` of his bar, so a mid-fight flank swings the fight.
   A hit he survives always engages him, so he breaks for cover instead of walking over to look.
+  `TargetKnockback` (off by default) makes your hits `Shove` him; `target::shove` stops him at the first thing in the
+  way and hurts him on a `Hazard` (`HisHazardHit`). `examples/knockback_sim.rs` plays bot rounds at several settings.
   An execution sets `TargetHit::execution`, and the HUD picks an execution banner over the flawless one.
   `ControlScheme::damage_dealt` trims the damage for the schemes that do more of the work for you, and
   `Tuning::damage_dealt` scales that trim with the bands: next to nothing at band 1, double at band 10.

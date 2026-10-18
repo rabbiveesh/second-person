@@ -23,7 +23,7 @@ use crate::{
     combat::Grapple,
     difficulty::Tuning,
     Layer,
-    arena::{Cover, Layout},
+    arena::{Cover, Hazard, Layout},
     nav::{Evade, MoveTo, Route},
     radar::{LiveBlip, RADAR_LAYER, RadarContact},
     round::{Attract, GameState, RoundEntity, SpawnRound, TargetMobile},
@@ -152,8 +152,61 @@ pub fn plugin(app: &mut App) {
     app.add_systems(OnEnter(GameState::Playing), spawn_target.in_set(SpawnRound))
         .add_systems(
             Update,
-            (perceive, gaze, walk, roll).chain().run_if(in_state(GameState::Playing)),
-        );
+            (perceive, gaze, walk, roll, shove).chain().run_if(in_state(GameState::Playing)),
+        )
+        .add_message::<HisHazardHit>();
+}
+
+/// Knocked back by a hit: `velocity` (m/s) bleeding off over [`SHOVE_SECS`]. He's kinematic, so
+/// physics won't stop him: [`shove`] does, at the first thing in the way.
+#[derive(Component, Reflect, Debug, Clone, Copy)]
+#[reflect(Component)]
+pub struct Shove {
+    pub velocity: Vec3,
+    pub t: f32,
+}
+
+pub const SHOVE_SECS: f32 = 0.18;
+const BODY_RADIUS: f32 = 0.4;
+
+/// A shove threw him into a hazard.
+#[derive(Message, Clone, Copy, Debug)]
+pub struct HisHazardHit {
+    pub at: Vec3,
+}
+
+fn shove(
+    mut commands: Commands,
+    time: Res<Time>,
+    spatial: SpatialQuery,
+    hazards: Query<(), With<Hazard>>,
+    mut hurt: MessageWriter<HisHazardHit>,
+    mut q: Query<(Entity, &Transform, &mut Shove, &mut LinearVelocity, &mut Target, Option<&MoveTo>)>,
+) {
+    let dt = time.delta_secs();
+    for (e, t, mut shove, mut v, mut target, moving) in &mut q {
+        shove.t += dt;
+        let speed = shove.velocity * 2.0 * (1.0 - shove.t / SHOVE_SECS).max(0.0);
+        let blocked = Dir3::new(speed).ok().and_then(|dir| {
+            spatial.cast_ray(t.translation, dir, BODY_RADIUS + speed.length() * dt + 0.05, true, &SpatialQueryFilter::from_mask(Layer::World))
+        });
+        if let Some(hit) = blocked
+            && hazards.contains(hit.entity)
+        {
+            target.hp = (target.hp - crate::shooter::HAZARD_DAMAGE).max(0.0);
+            hurt.write(HisHazardHit { at: t.translation + speed.normalize() * BODY_RADIUS });
+        }
+        if blocked.is_some() || shove.t >= SHOVE_SECS {
+            v.0 = Vec3::ZERO;
+            commands.entity(e).remove::<Shove>();
+            // Re-plan from where he ended up, as after a roll.
+            if let Some(&m) = moving {
+                commands.entity(e).insert(m);
+            }
+        } else {
+            v.0 = speed;
+        }
+    }
 }
 
 fn spawn_target(

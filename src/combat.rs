@@ -12,7 +12,7 @@ use crate::{
     round::{GameState, RoundEntity},
     nav::MoveTo,
     shooter::{Bump, ControlScheme, Footstep, HazardHit, Whistle, Shooter, ShooterAction, Stagger, Stunned},
-    target::{Activity, Alert, MainCamera, ROLL_SECS, Relocate, Roll, Suspicion, Target},
+    target::{Activity, Alert, MainCamera, ROLL_SECS, Relocate, Roll, Shove, Suspicion, Target},
 };
 
 const BULLET_SPEED: f32 = 45.0;
@@ -182,6 +182,11 @@ pub enum Grapple {
     Hammering { shots_left: u32, next: f32 },
 }
 
+/// How hard your hits knock him back (m/s at the start of a [`Shove`]); 0 turns it off.
+#[derive(Resource, Reflect, Default, Clone, Copy, Debug)]
+#[reflect(Resource)]
+pub struct TargetKnockback(pub f32);
+
 /// The target shot the shooter (hitscan from `from` to `to`).
 #[derive(Message, Clone, Copy, Debug)]
 pub struct ShooterHit {
@@ -201,6 +206,7 @@ pub fn plugin(app: &mut App) {
         .add_message::<BulletImpact>()
         .add_message::<TargetHit>()
         .add_message::<ShooterHit>()
+        .init_resource::<TargetKnockback>()
         .add_message::<WarningShot>()
         .add_message::<GrappleFired>()
         .add_systems(Startup, load_assets)
@@ -302,6 +308,7 @@ fn bullet_hits(
     mut impacts: MessageWriter<BulletImpact>,
     tuning: Res<Tuning>,
     scheme: Res<ControlScheme>,
+    knockback: Res<TargetKnockback>,
     time: Res<Time>,
 ) {
     let now = time.elapsed_secs();
@@ -349,6 +356,9 @@ fn bullet_hits(
             suspicion.last_known = Some(bullet.origin);
             commands.entity(other).insert(Alert::new(bullet.origin, 3.0));
             let dir = (target_t.translation - bullet.origin).normalize_or_zero();
+            if knockback.0 > 0.0 && target.hp > 0.0 {
+                commands.entity(other).insert(Shove { velocity: dir.with_y(0.0).normalize_or_zero() * knockback.0, t: 0.0 });
+            }
             hits.write(TargetHit { at: target_t.translation, dir, damage, kind, execution });
         } else {
             impacts.write(BulletImpact { at: bullet_t.translation });

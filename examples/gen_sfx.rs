@@ -102,7 +102,7 @@ impl Tract {
     }
 }
 
-/// "MY LEG!": a strained, high, nasal yell, formant-synthesised from scratch.
+/// "MY LEG!": a strained, nasal yell, formant-synthesised from scratch.
 ///
 /// The voice is additive: every harmonic of the pitch is a sine weighted by the vocal tract's
 /// response at its frequency (three resonant peaks, the formants), so gliding the formants
@@ -125,6 +125,10 @@ fn my_leg() -> Vec<f32> {
         (1.22, Tract::new(360.0, 2280.0, 2850.0, 0.9, 610.0)),
         (1.30, Tract::new(300.0, 2200.0, 2450.0, 0.0, 520.0)), // g: velar pinch, then closure
     ];
+    // A grown man's yell: the contour above is shaped high, then the whole voice is pitched
+    // down, and the tract lengthened a touch (formants lower) to match.
+    const PITCH: f32 = 0.58;
+    const TRACT: f32 = 0.92;
     const BURST_AT: f32 = 1.36;
     const LEN: f32 = 1.5;
 
@@ -157,6 +161,7 @@ fn my_leg() -> Vec<f32> {
     for (k, v) in out.iter_mut().enumerate() {
         let t = k as f32 * dt;
         let tract = at(t);
+        let tract = Tract { f: tract.f.map(|f| f * TRACT), pitch: tract.pitch * PITCH, ..tract };
         // Vibrato that grows as the note is held, plus a little random wobble (strain).
         jitter += (rng.random_range(-1.0..1.0) - jitter) * 0.002;
         let vibrato = 1.0 + 0.035 * (t * 6.5 * std::f32::consts::TAU).sin() * (t / 0.8).min(1.0) + 0.02 * jitter;
