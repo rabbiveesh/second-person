@@ -9,18 +9,18 @@ room = 2.0
 [[cue]]
 name = "calm"
 bpm = 92.0
-chords = "Ebmaj7 Ebmaj7 Bmaj7 Bmaj7 Gmaj7 Gmaj7 Bb7 Bb7"
+chords = "Ebmaj7 Ebmaj7 Bmaj7 Bmaj7"
 fade = 0.7
 
 [[cue]]
 name = "fight"
-bpm = 144.0
-chords = "Ebmaj7 F#7 Bmaj7 D7 Gmaj7 Bb7 Ebmaj7 Bb7"
+bpm = 112.0
+chords = "Ebmaj7 Ebmaj7 Bmaj7 Bmaj7"
 fade = 0.05
 
 [[cue]]
 name = "win"
-bpm = 144.0
+bpm = 112.0
 chords = "Bb7 Ebmaj7"
 fade = 0.3
 
@@ -36,7 +36,7 @@ fade = 0.3
 name = "Bass"
 cue = "calm"
 patch = "bass"
-part = ". . . . . . bb1 . . . . . eb2 . . . | . . . . . . bb1 . . . . . b1 . . . | . . . . . . f#2 . . . . . b1 . . . | . . . . . . f#2 . . . . . g2 . . . | . . . . . . d2 . . . . . g2 . . . | . . . . . . d2 . . . . . bb1 . . . | . . . . . . f2 . . . . . bb1 . . . | . . . . . . f2 . . . . . eb2 . . ."
+part = ". . . . . . bb1 . . . . . eb2 . . . | . . . . . . bb1 . . . . . b1 . . . | . . . . . . f#2 . . . . . b1 . . . | . . . . . . f#2 . . . . . eb2 . . ."
 
 [[stem]]
 name = "Clave"
@@ -48,8 +48,7 @@ part = ". . . . x . . . x . . . . . . . | x . . . . . x . . . . . x . . ."
 name = "Vibes"
 cue = "calm"
 patch = "vibes"
-fader = { follow = "fall", from = 0.2, to = 0.55 }
-part = "g5 . . bb5 . . d6 .*9 | c6 . . bb5 . . g5 _*9 | f#5 . . a#5 . . d#6 .*9 | c#6 . . a#5 . . f#5 _*9 | d5 . . f#5 . . b5 .*9 | a5 . . f#5 . . d5 _*9 | d5 . . f5 . . ab5 .*9 | c6 . . bb5 . . ab5 . f5 . d5 .*5"
+part = "g5 . . bb5 . . d6 .*9 | c6 . . bb5 . . g5 _*9 | f#5 . . a#5 . . d#6 .*9 | c#6 . . a#5 . . f#5 _*9"
 
 [[stem]]
 name = "Montuno"
@@ -66,42 +65,41 @@ fader = { follow = "rise", from = 0.3, to = 0.6 }
 part = "c4? . c4? . e4! . c4? . c4? . c4? . c4 . g3 ."
 
 [[stem]]
-name = "Ride"
+name = "Cascara"
 cue = "calm"
-patch = "ride"
-fader = { follow = "rise", from = 0.5, to = 0.8 }
-part = "x . . . x . x? . x . . . x . x? ."
+patch = "shell"
+fader = { follow = "rise", from = 0.55, to = 0.8 }
+part = "X . x . X x . x X . x X . x X ."
 
 [[stem]]
-name = "Low horns"
+name = "Timbales"
 cue = "calm"
-patch = "horn_pad"
-fader = { follow = "rise", from = 0.62, to = 0.92 }
-part = "r-12,2,4 _*31"
+patch = "timbale"
+fader = { follow = "rise", from = 0.7, to = 0.95 }
+part = ". . . . . . . . . . . . a4? a4 e4 . | .*16 | . . . . . . . . . . . . a4? a4 e4 e4! | .*16"
 
 # ── Stems: fight ────────────────────────────────────────────────────────────────
 
 [[stem]]
-name = "Hit"
+name = "Timbale roll"
 cue = "fight"
-patch = "trumpets"
+patch = "timbale"
 once = true
-level = 1.3
-part = "ch+12,r+24! _*7 .*8 | .*48"
-
-[[stem]]
-name = "Hit (low)"
-cue = "fight"
-patch = "trombones"
-once = true
-level = 1.3
-part = "r-12,r,4! _*7 .*8 | .*48"
+level = 1.2
+part = "a4? a4? a4 a4 e4 e4 a4! . .*8 | .*48"
 
 [[stem]]
 name = "Bass (fight)"
 cue = "fight"
 patch = "bass"
-part = ". . . . . . bb1 . . . . . f#2 . . . | . . . . . . c#2 . . . . . b1 . . . | . . . . . . f#2 . . . . . d2 . . . | . . . . . . a1 . . . . . g2 . . . | . . . . . . d2 . . . . . bb1 . . . | . . . . . . f2 . . . . . eb2 . . . | . . . . . . bb1 . . . . . bb1 . . . | . . . . . . f2 . . . . . eb2 . . ."
+level = 1.1
+part = ". . . . . . bb1 . . . . . eb2 . . . | . . . . . . bb1 . . . . . b1 . . . | . . . . . . f#2 . . . . . b1 . . . | . . . . . . f#2 . . . . . eb2 . . ."
+
+[[stem]]
+name = "Clave (fight)"
+cue = "fight"
+patch = "clave"
+part = ". . . . x . . . x . . . . . . . | x . . . . . x . . . . . x . . ."
 
 [[stem]]
 name = "Montuno (fight)"
@@ -111,40 +109,40 @@ level = 1.1
 part = "2+12,4+12! . 1+12,3+12 . 2+12,4+12 . 1+12,3+12! . . . 2+12,4+12 . 1+12,3+12! . 2+12,4+12 ."
 
 [[stem]]
-name = "Clave (fight)"
-cue = "fight"
-patch = "clave"
-part = ". . . . x . . . x . . . . . . . | x . . . . . x . . . . . x . . ."
-
-[[stem]]
-name = "Ride (fight)"
-cue = "fight"
-patch = "ride"
-part = "X . x . x . x x X . x . x . x x"
-
-[[stem]]
 name = "Congas (fight)"
 cue = "fight"
 patch = "conga"
 part = "c4? c4? e4! c4? c4? c4? c4 g3 c4? c4? e4! c4? c4 . c4 g3"
 
 [[stem]]
+name = "Cascara (fight)"
+cue = "fight"
+patch = "shell"
+part = "X . x . X x . x X . x X . x X ."
+
+[[stem]]
+name = "Timbale fill"
+cue = "fight"
+patch = "timbale"
+part = ".*16 | .*16 | .*16 | . . . . . . . . a4? a4 e4? e4 a4 a4 e4! ."
+
+[[stem]]
+name = "Horns"
+cue = "fight"
+patch = "trumpets"
+part = "g4! . . bb4 . . d5! .*9 | c5 . . bb4 . . g4! _*5 .*4 | f#4! . . a#4 . . d#5! .*9 | c#5 . . a#4 . . f#4! _*5 .*4"
+
+[[stem]]
 name = "Saxes"
 cue = "fight"
 patch = "saxes"
-part = "1+12 _ 2+12 _ 3+12 _ 4+12 _ 1+24 4+12 3+12 2+12 1+12 4 3 2"
+part = "g3! . . bb3 . . d4! .*9 | c4 . . bb3 . . g3! _*5 .*4 | f#3! . . a#3 . . d#4! .*9 | c#4 . . a#3 . . f#3! _*5 .*4"
 
 [[stem]]
 name = "Trombones"
 cue = "fight"
 patch = "trombones"
 part = ". . . . . . ch! _ . . . . ch _ _ ."
-
-[[stem]]
-name = "Shout"
-cue = "fight"
-patch = "trumpets"
-part = ".*16 | .*16 | .*16 | .*16 | .*16 | .*16 | .*16 | ch+12! _ _ . ch+12! _ _ . ch+12,r+24! _*7"
 
 # ── Stems: win ──────────────────────────────────────────────────────────────────
 
@@ -174,16 +172,10 @@ patch = "bass"
 part = ".*16 | r-12! .*15"
 
 [[stem]]
-name = "Win piano"
+name = "Win timbales"
 cue = "win"
-patch = "piano"
-part = ".*16 | ch,ch+12! .*15"
-
-[[stem]]
-name = "Win ride"
-cue = "win"
-patch = "ride"
-part = ".*16 | X .*15"
+patch = "timbale"
+part = ". . . . . . . . a4? a4 e4 e4 a4 a4 e4! . | X .*15"
 
 # ── Stems: lose ─────────────────────────────────────────────────────────────────
 
@@ -238,16 +230,6 @@ filter = { kind = "lowpass", cutoff = 1800.0, q = 0.7 }
 drop = 0.35
 send = 0.5
 
-[patch.horn_pad]
-about = "Trombones and baritone sax holding a low, dark chord."
-osc = [{ wave = "saw", cents = -7.0 }, { wave = "saw", cents = 7.0 }]
-attack = 1.2
-decay = 1.0
-sustain = 1.0
-release = 1.0
-gain = 0.06
-filter = { kind = "lowpass", cutoff = 450.0, q = 0.9 }
-
 [patch.piano]
 about = "Montuno piano: bright attack, quick decay."
 osc = [{ wave = "triangle" }, { wave = "sine", ratio = 2.0, level = 0.4 }, { wave = "saw", level = 0.2 }]
@@ -259,18 +241,6 @@ gain = 0.1
 filter = { kind = "lowpass", cutoff = 1800.0, q = 0.7, env = 2500.0, env_decay = 0.12 }
 send = 0.8
 
-[patch.ride]
-about = "Ride cymbal: a bright wash that keeps ringing under the next hit."
-osc = [{ wave = "noise" }, { wave = "square", ratio = 7.13, level = 0.15 }, { wave = "square", ratio = 9.71, level = 0.1 }]
-attack = 0.001
-decay = 0.45
-sustain = 0.0
-release = 0.1
-gain = 0.12
-hit = "d5"
-filter = { kind = "bandpass", cutoff = 7000.0, q = 0.8 }
-send = 0.6
-
 [patch.saxes]
 about = "Baritone and tenor saxes: the riff under the trumpets."
 osc = [{ wave = "saw", cents = -6.0 }, { wave = "square", cents = 6.0, level = 0.6 }]
@@ -281,6 +251,31 @@ release = 0.06
 gain = 0.08
 drive = 1.8
 filter = { kind = "lowpass", cutoff = 700.0, q = 1.4, env = 900.0, env_decay = 0.1 }
+
+[patch.shell]
+about = "Cascara: a stick on the timbale's shell."
+osc = [{ wave = "noise" }, { wave = "sine", level = 0.5 }]
+attack = 0.001
+decay = 0.03
+sustain = 0.0
+release = 0.02
+gain = 0.2
+hit = "g6"
+filter = { kind = "bandpass", cutoff = 3000.0, q = 1.8 }
+send = 0.5
+
+[patch.timbale]
+about = "Timbale: a tight metal-rimmed drum that rings."
+osc = [{ wave = "sine" }, { wave = "square", ratio = 1.51, level = 0.2 }, { wave = "noise", level = 0.25 }]
+attack = 0.001
+decay = 0.25
+sustain = 0.0
+release = 0.05
+gain = 0.35
+hit = "a4"
+filter = { kind = "lowpass", cutoff = 3500.0, q = 0.9 }
+drop = 0.2
+send = 0.7
 
 [patch.trombone]
 about = "A trombone that sags as it holds: wah, wah, wah, waaah."
