@@ -50,6 +50,7 @@ controlling the **shooter** hunting him. A corner radar shows the whole arena.
 | bevy_brp_extras 0.22 | BRP + screenshots/key input for agents (`brp` feature) |
 | rand 0.9 | randomness |
 | fundsp 0.23 (`std` only) | the adaptive score's synthesis: oscillators, filters, envelopes, reverb, limiter, and per-note `Sequencer`s |
+| rustysynth 1.3 | soundfont (SF2) instruments for the score; `assets/music/gm.sf2` is GeneralUser GS trimmed by `examples/trim_soundfont` |
 | serde + toml | `.score` track files |
 | cpal 0.18 (`editor` only) | the music editor's sound output (the game will host the engine in its own audio graph) |
 | earcut 0.4 | triangulates arena floor polygons (already in the tree via vleue_navigator) |
@@ -196,7 +197,9 @@ Fyrox (small ecosystem), macroquad/three-d (too thin, would mean rolling our own
   isn't engaged, `fight` while he is, `win`/`lose` are one-shot stingers), **stems** (layers of a cue; each a part of
   one token per 16th, read against the bar's chord: `r-12`, `3+12`, `ch`, `x`, `d4`, `_` hold, `.` rest, `tok*n`; see
   `pattern.rs`) and **patches** (small subtractive synths: oscillators, ADSR, filter + envelope, drive, tremolo,
-  glide, drum thump). `Engine` (`engine.rs`) renders it: each stem is a fundsp `Sequencer` bus with a fader; notes are
+  glide, drum thump). A patch with `sample = { program = n }` (or drum `keys = { c4 = 63 }`) plays from the soundfont
+  once `Engine::set_soundfont` has one (a `rustysynth` synthesizer per stem, so faders and meters still work); its synth
+  stays the fallback. `Engine` (`engine.rs`) renders it: each stem is a fundsp `Sequencer` bus with a fader; notes are
   scheduled sample-accurately just before their block. In `calm`, `Suspicion` rides each stem's `Fader` rule (vertical
   layering); `engaged` switches cue on the next bar line, from the top, at the new tempo (horizontal resequencing);
   `end(won)` plays the stinger from the next beat. `once` stems play only on a cue's first pass (entrance hits).

@@ -1,0 +1,333 @@
+title = "Mambo"
+layouts = ["yard"]
+reverb = 0.28
+room = 2.0
+
+# ── Cues ────────────────────────────────────────────────────────────────────────
+
+[[cue]]
+name = "calm"
+bpm = 92.0
+chords = "Ebmaj7 Ebmaj7 Bmaj7 Bmaj7"
+fade = 0.7
+
+[[cue]]
+name = "fight"
+bpm = 112.0
+chords = "Ebm F#7b9 Bm D7b9 Gm Bb7b9 Ebm Bb7b9"
+fade = 0.05
+
+[[cue]]
+name = "win"
+bpm = 112.0
+chords = "Bb7 Ebmaj7"
+fade = 0.3
+
+[[cue]]
+name = "lose"
+bpm = 92.0
+chords = "Ebm Ebm"
+fade = 0.3
+
+# ── Stems: calm ─────────────────────────────────────────────────────────────────
+
+[[stem]]
+name = "Bass"
+cue = "calm"
+patch = "bass"
+part = ". . . . . . bb1 . . . . . eb2 . . . | . . . . . . bb1 . . . . . b1 . . . | . . . . . . f#2 . . . . . b1 . . . | . . . . . . f#2 . . . . . eb2 . . ."
+
+[[stem]]
+name = "Clave"
+cue = "calm"
+patch = "clave"
+part = ". . . . x . . . x . . . . . . . | x . . . . . x . . . . . x . . ."
+
+[[stem]]
+name = "Vibes"
+cue = "calm"
+patch = "vibes"
+part = "g5 . . bb5 . . d6 .*9 | c6 . . bb5 . . g5 _*9 | f#5 . . a#5 . . d#6 .*9 | c#6 . . a#5 . . f#5 _*9"
+
+[[stem]]
+name = "Piano"
+cue = "calm"
+patch = "piano"
+fader = { follow = "rise", from = 0.12, to = 0.4 }
+part = "r,2,4 _*15"
+
+[[stem]]
+name = "Congas"
+cue = "calm"
+patch = "conga"
+fader = { follow = "rise", from = 0.3, to = 0.6 }
+part = "c4? . c4? . e4! . c4? . c4? . c4? . c4 . g3 ."
+
+[[stem]]
+name = "Cascara"
+cue = "calm"
+patch = "shell"
+fader = { follow = "rise", from = 0.55, to = 0.8 }
+part = "X . x . X x . x X . x X . x X ."
+
+[[stem]]
+name = "Timbales"
+cue = "calm"
+patch = "timbale"
+fader = { follow = "rise", from = 0.7, to = 0.95 }
+part = ". . . . . . . . . . . . a4? a4 e4 . | .*16 | . . . . . . . . . . . . a4? a4 e4 e4! | .*16"
+
+# ── Stems: fight ────────────────────────────────────────────────────────────────
+
+[[stem]]
+name = "Timbale roll"
+cue = "fight"
+patch = "timbale"
+once = true
+level = 1.2
+part = "a4? a4? a4 a4 e4 e4 a4! . .*8 | .*48"
+
+[[stem]]
+name = "Bass (fight)"
+cue = "fight"
+patch = "bass"
+level = 1.1
+part = ". . . . . . bb1 . . . . . f#2 . . . | . . . . . . c#2 . . . . . b1 . . . | . . . . . . f#2 . . . . . d2 . . . | . . . . . . a1 . . . . . g2 . . . | . . . . . . d2 . . . . . bb1 . . . | . . . . . . f2 . . . . . eb2 . . . | . . . . . . bb1 . . . . . bb1 . . . | . . . . . . f2 . . . . . eb2 . . ."
+
+[[stem]]
+name = "Clave (fight)"
+cue = "fight"
+patch = "clave"
+part = ". . . . x . . . x . . . . . . . | x . . . . . x . . . . . x . . ."
+
+[[stem]]
+name = "Piano (fight)"
+cue = "fight"
+patch = "piano"
+level = 1.1
+part = ". . . . . . r,2,4,r+12! _ . . . . r,2,4,r+12 _ _ ."
+
+[[stem]]
+name = "Congas (fight)"
+cue = "fight"
+patch = "conga"
+part = "c4? c4? e4! c4? c4? c4? c4 g3 c4? c4? e4! c4? c4 . c4 g3"
+
+[[stem]]
+name = "Cascara (fight)"
+cue = "fight"
+patch = "shell"
+part = "X . x . X x . x X . x X . x X ."
+
+[[stem]]
+name = "Timbale fill"
+cue = "fight"
+patch = "timbale"
+part = ".*16 | .*16 | .*16 | . . . . . . . . a4? a4 e4? e4 a4 a4 e4! ."
+
+[[stem]]
+name = "Horns"
+cue = "fight"
+patch = "trumpets"
+part = "1+12! . . 2+12 . . 3+12! . . . 4+12 . 3+12 . 2+12 ."
+
+[[stem]]
+name = "Saxes"
+cue = "fight"
+patch = "saxes"
+part = "1! . . 2 . . 3! . . . 4 . 3 . 2 ."
+
+[[stem]]
+name = "Trombones"
+cue = "fight"
+patch = "trombones"
+part = ". . . . . . ch! _ . . . . ch _ _ ."
+
+# ── Stems: win ──────────────────────────────────────────────────────────────────
+
+[[stem]]
+name = "Win saxes"
+cue = "win"
+patch = "saxes"
+part = "1 2 3 4 1+12 2+12 3+12 4+12 1+24 2+24 3+24 4+24 .*4 | .*16"
+
+[[stem]]
+name = "Win horns"
+cue = "win"
+patch = "trumpets"
+level = 0.7
+part = ".*16 | ch+12,r+24! _*11 .*4"
+
+[[stem]]
+name = "Win trombones"
+cue = "win"
+patch = "trombones"
+part = ".*16 | r-12,ch! _*11 .*4"
+
+[[stem]]
+name = "Win bass"
+cue = "win"
+patch = "bass"
+part = ".*16 | r-12! .*15"
+
+[[stem]]
+name = "Win timbales"
+cue = "win"
+patch = "timbale"
+part = ". . . . . . . . a4? a4 e4 e4 a4 a4 e4! . | X .*15"
+
+# ── Stems: lose ─────────────────────────────────────────────────────────────────
+
+[[stem]]
+name = "Sad trombone"
+cue = "lose"
+patch = "trombone"
+level = 1.2
+part = "bb2 _*3 a2 _*3 g#2 _*3 g2 _*15 .*4"
+
+[[stem]]
+name = "Lose clave"
+cue = "lose"
+patch = "clave"
+part = ".*28 x? . . ."
+
+# ── Patches ─────────────────────────────────────────────────────────────────────
+
+[patch.bass]
+about = "Baby bass: a round pluck that rings into the next chord (the tumbao anticipates it)."
+osc = [{ wave = "sine" }, { wave = "triangle", level = 0.5 }]
+attack = 0.006
+decay = 0.9
+sustain = 0.0
+release = 0.1
+gain = 0.45
+filter = { kind = "lowpass", cutoff = 600.0, q = 0.8, env = 500.0, env_decay = 0.08 }
+send = 0.3
+sample = { gain = 2.0, program = 32 }
+
+[patch.clave]
+about = "Two hardwood sticks: a short, high knock."
+osc = [{ wave = "sine" }, { wave = "sine", ratio = 1.58, level = 0.3 }]
+attack = 0.001
+decay = 0.05
+sustain = 0.0
+release = 0.02
+gain = 0.22
+hit = "d#7"
+filter = { kind = "bandpass", cutoff = 2500.0, q = 1.5 }
+send = 0.7
+sample = { gain = 1.5, keys = { "d#7" = 75 } }
+
+[patch.conga]
+about = "Conga: a skin thump that drops onto its pitch; accent a high note for the slap."
+osc = [{ wave = "sine" }, { wave = "noise", level = 0.15 }]
+attack = 0.002
+decay = 0.2
+sustain = 0.0
+release = 0.05
+gain = 0.3
+hit = "c4"
+filter = { kind = "lowpass", cutoff = 1800.0, q = 0.7 }
+drop = 0.35
+send = 0.5
+sample = { gain = 1.5, keys = { c4 = 63, e4 = 62, g3 = 64 } }
+
+[patch.piano]
+about = "Montuno piano: bright attack, quick decay."
+osc = [{ wave = "triangle" }, { wave = "sine", ratio = 2.0, level = 0.4 }, { wave = "saw", level = 0.2 }]
+attack = 0.002
+decay = 0.6
+sustain = 0.0
+release = 0.1
+gain = 0.1
+filter = { kind = "lowpass", cutoff = 1800.0, q = 0.7, env = 2500.0, env_decay = 0.12 }
+send = 0.8
+sample = { gain = 1.6, program = 0 }
+
+[patch.saxes]
+about = "Baritone and tenor saxes: the riff under the trumpets."
+osc = [{ wave = "saw", cents = -6.0 }, { wave = "square", cents = 6.0, level = 0.6 }]
+attack = 0.015
+decay = 0.12
+sustain = 0.6
+release = 0.06
+gain = 0.08
+drive = 1.8
+filter = { kind = "lowpass", cutoff = 700.0, q = 1.4, env = 900.0, env_decay = 0.1 }
+sample = { gain = 2.0, program = 66 }
+
+[patch.shell]
+about = "Cascara: a stick on the timbale's shell."
+osc = [{ wave = "noise" }, { wave = "sine", level = 0.5 }]
+attack = 0.001
+decay = 0.03
+sustain = 0.0
+release = 0.02
+gain = 0.2
+hit = "g6"
+filter = { kind = "bandpass", cutoff = 3000.0, q = 1.8 }
+send = 0.5
+sample = { gain = 0.8, keys = { g6 = 76 } }
+
+[patch.timbale]
+about = "Timbale: a tight metal-rimmed drum that rings."
+osc = [{ wave = "sine" }, { wave = "square", ratio = 1.51, level = 0.2 }, { wave = "noise", level = 0.25 }]
+attack = 0.001
+decay = 0.25
+sustain = 0.0
+release = 0.05
+gain = 0.35
+hit = "a4"
+filter = { kind = "lowpass", cutoff = 3500.0, q = 0.9 }
+drop = 0.2
+send = 0.7
+sample = { keys = { a4 = 65, e4 = 66 } }
+
+[patch.trombone]
+about = "A trombone that sags as it holds: wah, wah, wah, waaah."
+osc = [{ wave = "saw", cents = -5.0 }, { wave = "saw", cents = 5.0 }]
+attack = 0.05
+decay = 0.3
+sustain = 0.8
+release = 0.25
+gain = 0.16
+filter = { kind = "lowpass", cutoff = 500.0, q = 1.5, env = 900.0, env_attack = 0.1, env_decay = 0.4 }
+tremolo_rate = 5.5
+tremolo_depth = 0.35
+glide = -0.7
+sample = { program = 57 }
+
+[patch.trombones]
+about = "Trombone section: warm and low, the filter pushes on each note."
+osc = [{ wave = "saw", cents = -5.0 }, { wave = "saw", cents = 5.0 }]
+attack = 0.03
+decay = 0.25
+sustain = 0.6
+release = 0.15
+gain = 0.05
+filter = { kind = "lowpass", cutoff = 450.0, q = 1.1, env = 1300.0, env_decay = 0.2 }
+sample = { gain = 0.8, program = 57 }
+
+[patch.trumpets]
+about = "A trumpet section: bright, stabbing, the filter snaps open."
+osc = [{ wave = "saw", cents = -6.0 }, { wave = "saw", cents = 6.0 }, { wave = "square", semis = 12.0, level = 0.2 }]
+attack = 0.01
+decay = 0.2
+sustain = 0.5
+release = 0.1
+gain = 0.06
+filter = { kind = "lowpass", cutoff = 900.0, q = 1.2, env = 3500.0, env_decay = 0.12 }
+sample = { gain = 1.4, program = 56 }
+
+[patch.vibes]
+about = "Vibraphone: soft bars with the motor's slow pulse."
+osc = [{ wave = "sine" }, { wave = "sine", ratio = 3.98, level = 0.15 }]
+attack = 0.004
+decay = 1.4
+sustain = 0.0
+release = 0.3
+gain = 0.14
+tremolo_rate = 5.0
+tremolo_depth = 0.35
+send = 1.2
+sample = { gain = 2.5, program = 11 }

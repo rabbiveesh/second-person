@@ -2,7 +2,7 @@
 //! `cargo run --release --example render_score -- [track] [out.wav]`.
 
 use second_person::music::score::Score;
-use second_person::music::{Engine, script};
+use second_person::music::{self, Engine, script};
 
 fn main() {
     let mut args = std::env::args().skip(1);
@@ -13,6 +13,7 @@ fn main() {
     let score = Score::parse(&text).unwrap_or_else(|e| panic!("{path}: {e}"));
     const SR: u32 = 48000;
     let mut e = Engine::new(score.compile().unwrap(), SR as f64);
+    e.set_soundfont(Some(music::load_soundfont(format!("{}/{}", env!("CARGO_MANIFEST_DIR"), music::SOUNDFONT)).unwrap()));
     e.play();
     let spec = hound::WavSpec { channels: 2, sample_rate: SR, bits_per_sample: 16, sample_format: hound::SampleFormat::Int };
     let mut w = hound::WavWriter::create(&out, spec).unwrap();

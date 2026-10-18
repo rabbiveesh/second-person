@@ -228,6 +228,23 @@ pub struct Patch {
     /// Share sent to the reverb (0 = dry).
     #[serde(default = "one", skip_serializing_if = "is_one")]
     pub send: f32,
+    /// Play from the soundfont instead; the synth above stays the fallback when none is loaded.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sample: Option<Sample>,
+}
+
+/// A soundfont instrument: a General MIDI `program`, or a drum kit's `keys`.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Default)]
+#[serde(deny_unknown_fields)]
+pub struct Sample {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub program: Option<u8>,
+    /// Percussion: which GM drum key each note of the part plays (`c4 = 63`). A note that
+    /// isn't listed plays the nearest listed one's key, so a single entry covers every hit.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub keys: BTreeMap<String, u8>,
+    #[serde(default = "one", skip_serializing_if = "is_one")]
+    pub gain: f32,
 }
 
 impl Filter {
@@ -255,6 +272,7 @@ impl Default for Patch {
             drop: 0.0,
             pan: 0.0,
             send: 1.0,
+            sample: None,
         }
     }
 }
@@ -349,6 +367,23 @@ pub struct CompiledStem {
     pub fader: Fader,
     pub once: bool,
     pub steps: Vec<Step>,
+    pub sample: Option<CompiledSample>,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct CompiledSample {
+    /// The GM program, or `None` for the drum kit.
+    pub program: Option<u8>,
+    /// Drum keys by MIDI note, ascending.
+    pub keys: Vec<(i32, u8)>,
+    pub gain: f32,
+}
+
+impl CompiledSample {
+    /// The drum key a note plays: its own, else the nearest listed note's.
+    pub fn key(&self, note: i32) -> u8 {
+        self.keys.iter().min_by_key(|(n, _)| (n - note).abs()).map_or(0, |&(_, k)| k)
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -463,6 +498,24 @@ impl Score {
                 },
                 None => vec![pattern::Pitch::Root(0)],
             };
+            let sample = match &patch.sample {
+                None => None,
+                Some(x) => {
+                    let ctx = |e: String| ctx(format!("patch `{}` sample: {e}", s.patch));
+                    if x.program.is_some() == !x.keys.is_empty() {
+                        return Err(ctx("give either a `program` or drum `keys`".into()));
+                    }
+                    if x.program.is_some_and(|p| p > 127) || x.keys.values().any(|&k| k > 127) {
+                        return Err(ctx("programs and keys run 0..127".into()));
+                    }
+                    let mut keys = Vec::new();
+                    for (n, &k) in &x.keys {
+                        keys.push((theory::note(n).ok_or_else(|| ctx(format!("`{n}` isn't a note")))?, k));
+                    }
+                    keys.sort();
+                    Some(CompiledSample { program: x.program, keys, gain: x.gain })
+                }
+            };
             stems.push(CompiledStem {
                 name: s.name.clone(),
                 cue,
@@ -472,6 +525,7 @@ impl Score {
                 fader: s.fader,
                 once: s.once,
                 steps: tokens.iter().map(|t| pattern::step(t)).collect::<Result<_, _>>().map_err(ctx)?,
+                sample,
             });
         }
         Ok(Compiled { transpose: self.transpose, gain: self.gain, reverb: self.reverb, room: self.room, cues, stems })
@@ -479,11 +533,11 @@ impl Score {
 }
 
 /// Field order in the file (anything else follows, alphabetically).
-const ORDER: [&str; 43] = [
+const ORDER: [&str; 46] = [
     "name", "cue", "patch", "about", "follow", "wave", "kind", "bpm", "chords", "once", "fade", "from", "to",
     "semis", "cents", "ratio", "level", "osc", "cutoff", "q", "env", "env_attack", "env_decay", "attack", "decay", "sustain",
-    "release", "gain", "hit", "drive", "filter", "tremolo_rate", "tremolo_depth", "glide", "drop", "pan", "send",
-    "fader", "part", "title", "layouts", "transpose", "reverb",
+    "release", "gain", "hit", "drive", "filter", "tremolo_rate", "tremolo_depth", "glide", "drop", "pan", "send", "sample",
+    "program", "keys", "fader", "part", "title", "layouts", "transpose", "reverb",
 ];
 
 fn ordered(t: &toml::Table) -> Vec<(&String, &toml::Value)> {
