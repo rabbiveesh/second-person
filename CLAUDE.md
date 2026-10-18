@@ -112,7 +112,7 @@ Fyrox (small ecosystem), macroquad/three-d (too thin, would mean rolling our own
   `ShooterAction::Drive` dual axis (x turn, y throttle); arrows bind to it as a virtual d-pad.
   Walking into the world emits `Bump` and a `Stagger` knockback (can't walk, only turn); his laser staggers you too.
   Walking into a `Hazard` also costs `HAZARD_DAMAGE`, knocks you back harder and emits `HazardHit`: you yell "MY LEG!"
-  (`assets/sfx/my_leg.wav`, formant-synthesised in `gen_sfx`, plus a HUD caption), and he hears it from 32m.
+  (`assets/sfx/my_leg.wav`, a recorded take in `assets/voice/` that `gen_sfx` trims and muffles, plus a HUD caption), and he hears it from 32m.
   `examples/hazard_clip.rs` records a hit from his eyes (and when the yell starts, for muxing the sound in).
   `Sidestep`: a double-tap straight left/right on `Drive` (arrows, or a double flick of the stick, since both feed the same
   axis) hops 2.4m sideways with the facing restored to before the taps; the landing writes a `Footstep`. Stagger cuts it.
