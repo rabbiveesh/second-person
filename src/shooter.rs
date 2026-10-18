@@ -11,7 +11,7 @@ use crate::{
     Layer,
     arena::Layout,
     radar::{LiveBlip, RADAR_LAYER, RadarContact},
-    round::{Attract, GameState, RoundEntity, SpawnRound},
+    round::{Attract, GameState, Online, RoundEntity, SpawnRound},
     target::{MainCamera, Target},
 };
 
@@ -216,7 +216,7 @@ pub fn plugin(app: &mut App) {
         .add_message::<Whistle>()
         .init_resource::<ControlScheme>()
         .register_type::<ControlScheme>()
-        .add_systems(OnEnter(GameState::Playing), spawn_shooter.in_set(SpawnRound).run_if(|attract: Res<Attract>| !attract.0))
+        .add_systems(OnEnter(GameState::Playing), spawn_shooter.in_set(SpawnRound).run_if(|attract: Res<Attract>| !attract.0).run_if(not(resource_exists::<Online>)))
         // Movement runs on the fixed tick, so it's the same at any frame rate (and can be re-run).
         .add_systems(FixedUpdate, (drive, bump).chain().run_if(in_state(GameState::Playing)))
         .add_systems(Update, whistle.run_if(in_state(GameState::Playing)));
@@ -228,27 +228,47 @@ fn spawn_shooter(
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
 ) {
+    commands.spawn((
+        Name::new("Shooter"),
+        RoundEntity,
+        body(random_start(&mut rand::rng(), &layout)),
+        controls(),
+        looks(&mut meshes, &mut materials),
+    ));
+}
+
+/// What the simulation needs of a shooter: health, movement state and the physics body.
+/// A duel server spawns one per player.
+pub fn body(at: Transform) -> impl Bundle {
+    (
+        Shooter { hp: SHOOTER_MAX_HP },
+        (Stagger::default(), Stunned::default(), Sidestep::default()),
+        RigidBody::Dynamic,
+        Collider::capsule(RADIUS, 1.0),
+        LockedAxes::ROTATION_LOCKED,
+        Friction::ZERO.with_combine_rule(CoefficientCombine::Min),
+        CollisionLayers::new(Layer::Shooter, [Layer::World, Layer::Target]),
+        at,
+    )
+}
+
+/// The keyboard bindings (touch writes the same `ActionState`).
+pub fn controls() -> InputMap<ShooterAction> {
+    InputMap::default()
+        .with_dual_axis(ShooterAction::Drive, VirtualDPad::arrow_keys())
+        .with(ShooterAction::Fire, KeyCode::Space)
+        .with(ShooterAction::Whistle, KeyCode::KeyW)
+}
+
+/// How a shooter looks: orange capsule, visor, gun, and its radar marks.
+pub fn looks(meshes: &mut Assets<Mesh>, materials: &mut Assets<StandardMaterial>) -> impl Bundle {
     let blip = materials.add(StandardMaterial {
         base_color: Color::srgb(0.2, 1.0, 0.3),
         unlit: true,
         ..default()
     });
 
-    commands.spawn((
-        Name::new("Shooter"),
-        RoundEntity,
-        Shooter { hp: SHOOTER_MAX_HP },
-        (Stagger::default(), Stunned::default(), Sidestep::default()),
-        InputMap::default()
-            .with_dual_axis(ShooterAction::Drive, VirtualDPad::arrow_keys())
-            .with(ShooterAction::Fire, KeyCode::Space)
-            .with(ShooterAction::Whistle, KeyCode::KeyW),
-        RigidBody::Dynamic,
-        Collider::capsule(RADIUS, 1.0),
-        LockedAxes::ROTATION_LOCKED,
-        Friction::ZERO.with_combine_rule(CoefficientCombine::Min),
-        CollisionLayers::new(Layer::Shooter, [Layer::World, Layer::Target]),
-        random_start(&mut rand::rng(), &layout),
+    (
         Mesh3d(meshes.add(Capsule3d::new(0.35, 1.0))),
         MeshMaterial3d(materials.add(Color::srgb(0.95, 0.5, 0.1))),
         RadarContact(Color::srgb(0.2, 1.0, 0.3)),
@@ -286,7 +306,7 @@ fn spawn_shooter(
                 LiveBlip,
             ),
         ],
-    ));
+    )
 }
 
 /// A random start: clear of cover, away from the target, facing anywhere.

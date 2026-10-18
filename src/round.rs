@@ -38,6 +38,11 @@ pub struct TargetMobile(pub bool);
 #[derive(Resource, Default)]
 pub struct Attract(pub bool);
 
+/// A duel server runs the rounds: the local restart, arena and control keys are off, and nothing
+/// spawns the single-player cast (him, or a shooter you control locally).
+#[derive(Resource)]
+pub struct Online;
+
 /// Systems that spawn round entities run in this set on `OnEnter(Playing)`, after cleanup.
 #[derive(SystemSet, Clone, PartialEq, Eq, Hash, Debug)]
 pub struct SpawnRound;
@@ -89,7 +94,14 @@ fn meta_input(
     mut radar: ResMut<RadarMode>,
     mut arena: ResMut<ArenaMode>,
     mut controls: ResMut<ControlScheme>,
+    online: Option<Res<Online>>,
 ) {
+    if actions.just_pressed(&MetaAction::CycleRadar) {
+        *radar = radar.next();
+    }
+    if online.is_some() {
+        return;
+    }
     if actions.just_pressed(&MetaAction::CycleControls) {
         *controls = controls.next();
     }
@@ -97,9 +109,6 @@ fn meta_input(
         *arena = arena.next();
         // `set` re-enters Playing even mid-round, which rebuilds the arena.
         next.set(GameState::Playing);
-    }
-    if actions.just_pressed(&MetaAction::CycleRadar) {
-        *radar = radar.next();
     }
     if actions.just_pressed(&MetaAction::Restart) && *state.get() != GameState::Playing {
         next.set(GameState::Playing);
