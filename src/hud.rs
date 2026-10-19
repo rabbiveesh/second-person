@@ -9,7 +9,7 @@ use crate::{
     combat::{HitKind, ShooterHit, TargetHit},
     layout::ScreenLayout,
     radar::{RadarCamera, RadarMode},
-    round::{GameState, TargetMobile},
+    round::{GameState, Online, TargetMobile},
     shooter::{ControlScheme, SHOOTER_MAX_HP, Shooter, Stunned},
     start::Started,
     target::{Activity, Suspicion, Target},
@@ -34,6 +34,10 @@ struct Flashes {
     /// End-of-round headline, picked when the round ends.
     banner: &'static str,
 }
+
+/// Lines another mode adds under the bars (a duel says whose eyes are shut).
+#[derive(Resource, Default)]
+pub struct Notes(pub Vec<String>);
 
 /// Hold the end banner back so you can watch him (or yourself) go down.
 const BANNER_DELAY: f32 = 1.2;
@@ -80,6 +84,7 @@ const FLAWLESS_BANNER: &str = "FLAWLESS VICTORY";
 
 pub fn plugin(app: &mut App) {
     app.init_resource::<Flashes>()
+        .init_resource::<Notes>()
         .add_systems(Startup, spawn_hud_camera)
         .add_systems(Update, track_flashes)
         .add_systems(EguiPrimaryContextPass, draw_hud);
@@ -161,7 +166,9 @@ fn draw_hud(
     shooter: Option<Single<(&Shooter, &Stunned)>>,
     target: Option<Single<(&Target, &Suspicion, Option<&Activity>)>>,
     radar_camera: Option<Single<&Camera, With<RadarCamera>>>,
+    (online, notes): (Option<Res<Online>>, Res<Notes>),
 ) -> Result {
+    let online = online.is_some();
     let ctx = contexts.ctx_mut()?;
     let screen = ctx.content_rect();
     let view = rect(layout.view);
@@ -215,10 +222,16 @@ fn draw_hud(
                     );
                 }
                 if let Some(target) = &target {
-                    let (target, suspicion, activity) = **target;
+                    let (target, ..) = **target;
                     ui.add_space(6.0);
-                    ui.label("TARGET");
+                    ui.label(if online { "THEM" } else { "TARGET" });
                     health_bar(ui, target.hp / target.max_hp.max(1.0), flashes.ghost);
+                }
+                for note in &notes.0 {
+                    ui.colored_label(egui::Color32::from_rgb(255, 200, 80), note);
+                }
+                if let Some(target) = target.as_ref().filter(|_| !online) {
+                    let (_, suspicion, activity) = **target;
                     let colour = if suspicion.engaged {
                         egui::Color32::from_rgb(220, 50, 40)
                     } else {
@@ -250,11 +263,11 @@ fn draw_hud(
                         if ui.button(format!("radar: {:?}", *radar_mode)).clicked() {
                             *radar_mode = radar_mode.next();
                         }
-                        if ui.button(format!("he walks: {}", if mobile.0 { "on" } else { "off" })).clicked() {
+                        if !online && ui.button(format!("he walks: {}", if mobile.0 { "on" } else { "off" })).clicked() {
                             mobile.0 = !mobile.0;
                         }
                     });
-                    if ui.button(format!("controls: {:?}", *controls)).clicked() {
+                    if !online && ui.button(format!("controls: {:?}", *controls)).clicked() {
                         *controls = controls.next();
                     }
                 }
@@ -300,16 +313,26 @@ fn draw_hud(
         egui::Area::new("help".into())
             .anchor(egui::Align2::LEFT_BOTTOM, [16.0, -16.0])
             .show(ctx, |ui| {
+                let hints = if online {
+                    format!(
+                        "{}   Space fire   W whistle   Shift close your eyes   Tab radar: {:?}   arena: {}",
+                        controls.hint(),
+                        *radar_mode,
+                        arena.name,
+                    )
+                } else {
+                    format!(
+                        "C controls: {:?}   {}   Space fire   W whistle   M target walks: {}   Tab radar: {:?}   L arena: {}   F1 inspector",
+                        *controls,
+                        controls.hint(),
+                        if mobile.0 { "on" } else { "off" },
+                        *radar_mode,
+                        arena.name,
+                    )
+                };
                 ui.add(
                     egui::Label::new(
-                        egui::RichText::new(format!(
-                            "C controls: {:?}   {}   Space fire   W whistle   M target walks: {}   Tab radar: {:?}   L arena: {}   F1 inspector",
-                            *controls,
-                            controls.hint(),
-                            if mobile.0 { "on" } else { "off" },
-                            *radar_mode,
-                            arena.name,
-                        ))
+                        egui::RichText::new(hints)
                         .color(egui::Color32::WHITE)
                         .background_color(egui::Color32::from_black_alpha(140)),
                     )
@@ -376,7 +399,9 @@ fn draw_hud(
                 egui::Frame::popup(ui.style()).show(ui, |ui| {
                     ui.vertical_centered(|ui| {
                         ui.label(egui::RichText::new(text).size(size).color(colour).strong());
-                        if touch.0 {
+                        if online {
+                            ui.label(egui::RichText::new("next round coming up").size(18.0));
+                        } else if touch.0 {
                             if ui.button(egui::RichText::new("go again").size(22.0)).clicked() {
                                 next.set(GameState::Playing);
                             }

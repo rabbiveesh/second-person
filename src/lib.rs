@@ -10,6 +10,7 @@ pub mod audio;
 pub mod combat;
 pub mod debug;
 pub mod difficulty;
+pub mod duel;
 pub mod fx;
 pub mod hud;
 pub mod intro;

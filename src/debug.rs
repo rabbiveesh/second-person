@@ -20,7 +20,7 @@ use crate::{
 
 pub fn plugin(app: &mut App) {
     app.init_resource::<EventLog>()
-        .add_systems(Update, dump.run_if(f9_pressed.or(three_finger_tap)));
+        .add_systems(Update, dump.run_if(f9_pressed.or_else(three_finger_tap)));
     log_messages::<StateTransitionEvent<GameState>>(app);
     log_messages::<Gunshot>(app);
     log_messages::<BulletImpact>(app);

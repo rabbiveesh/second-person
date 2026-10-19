@@ -38,6 +38,12 @@ pub struct TargetMobile(pub bool);
 #[derive(Resource, Default)]
 pub struct Attract(pub bool);
 
+/// A duel server runs the rounds: the local restart, arena and control keys are off, and nothing
+/// spawns the single-player cast (him, or a shooter you control locally). Insert it before the
+/// game's plugins: they check for it as they're added.
+#[derive(Resource)]
+pub struct Online;
+
 /// Systems that spawn round entities run in this set on `OnEnter(Playing)`, after cleanup.
 #[derive(SystemSet, Clone, PartialEq, Eq, Hash, Debug)]
 pub struct SpawnRound;
@@ -63,8 +69,19 @@ pub fn plugin(app: &mut App) {
             ));
         })
         .add_systems(OnEnter(GameState::Playing), (cleanup_round, resume_physics).before(SpawnRound))
-        .add_systems(OnExit(GameState::Playing), pause_physics)
-        .add_systems(Update, meta_input);
+        .add_systems(OnExit(GameState::Playing), pause_physics);
+    // Online, the server runs the rounds, so only the radar key stays.
+    if app.world().contains_resource::<Online>() {
+        app.add_systems(Update, cycle_radar);
+    } else {
+        app.add_systems(Update, (cycle_radar, meta_input));
+    }
+}
+
+fn cycle_radar(actions: Single<&ActionState<MetaAction>>, mut radar: ResMut<RadarMode>) {
+    if actions.just_pressed(&MetaAction::CycleRadar) {
+        *radar = radar.next();
+    }
 }
 
 fn cleanup_round(mut commands: Commands, q: Query<Entity, With<RoundEntity>>) {
@@ -86,7 +103,6 @@ fn meta_input(
     state: Res<State<GameState>>,
     mut next: ResMut<NextState<GameState>>,
     mut mobile: ResMut<TargetMobile>,
-    mut radar: ResMut<RadarMode>,
     mut arena: ResMut<ArenaMode>,
     mut controls: ResMut<ControlScheme>,
 ) {
@@ -97,9 +113,6 @@ fn meta_input(
         *arena = arena.next();
         // `set` re-enters Playing even mid-round, which rebuilds the arena.
         next.set(GameState::Playing);
-    }
-    if actions.just_pressed(&MetaAction::CycleRadar) {
-        *radar = radar.next();
     }
     if actions.just_pressed(&MetaAction::Restart) && *state.get() != GameState::Playing {
         next.set(GameState::Playing);
