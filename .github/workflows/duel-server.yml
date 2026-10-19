@@ -37,6 +37,14 @@ jobs:
         run: flyctl deploy --local-only --ha=false
         env:
           FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+      # A deploy leaves a stopped Machine stopped (as it is after every match), so start it here.
+      - name: Start
+        working-directory: deploy/duel
+        run: |
+          id=$(flyctl machine list --json | jq -r '.[0] | select(.state != "started") | .id')
+          if [ -n "$id" ]; then flyctl machine start "$id"; fi
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
 
   start:
     if: inputs.action == 'start'
