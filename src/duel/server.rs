@@ -78,7 +78,7 @@ pub fn plugin(app: &mut App, lag: u64) {
                     NetcodeServer::new(lightyear::netcode::server_plugin::NetcodeConfig {
                         protocol_id: PROTOCOL_ID,
                         private_key: KEY,
-                        // Behind a UDP proxy (Fly) we bind a private address while clients' tokens
+                        // Behind a proxy (Fly) we bind a private address while clients' tokens
                         // name the public one, so the address check would turn everyone away.
                         server_addr_check: false,
                         ..default()

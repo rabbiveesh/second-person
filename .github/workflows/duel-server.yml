@@ -1,0 +1,51 @@
+# Deploy or start the duel's match server on Fly (deploy/duel/). Deploying also starts it.
+name: Duel server
+
+on:
+  workflow_dispatch:
+    inputs:
+      action:
+        description: deploy builds and ships the current code; start wakes the last deploy
+        type: choice
+        options: [deploy, start]
+        default: deploy
+
+concurrency:
+  group: duel-server
+
+jobs:
+  deploy:
+    if: inputs.action == 'deploy'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: System deps
+        run: sudo apt-get update && sudo apt-get install -y libudev-dev libasound2-dev libwayland-dev libxkbcommon-dev
+      # Installs exactly what rust-toolchain.toml pins (rustup no longer auto-installs).
+      - name: Install Rust
+        run: rustup toolchain install
+      # .cargo/config.toml links with clang + mold.
+      - uses: rui314/setup-mold@v1
+      - uses: Swatinem/rust-cache@v2
+      - name: Build the server
+        run: |
+          cargo build --release --no-default-features --bin duel
+          cp target/release/duel deploy/duel/
+      - uses: superfly/flyctl-actions/setup-flyctl@master
+      - name: Deploy
+        working-directory: deploy/duel
+        run: flyctl deploy --local-only --ha=false
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+
+  start:
+    if: inputs.action == 'start'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: superfly/flyctl-actions/setup-flyctl@master
+      - name: Start
+        working-directory: deploy/duel
+        run: flyctl machine start "$(flyctl machine list --json | jq -r '.[0].id')"
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
