@@ -5,9 +5,9 @@ on:
   workflow_dispatch:
     inputs:
       action:
-        description: deploy builds and ships the current code; start wakes the last deploy
+        description: deploy builds and ships the current code; start wakes the last deploy; bot joins it as a player
         type: choice
-        options: [deploy, start]
+        options: [deploy, start, bot]
         default: deploy
 
 concurrency:
@@ -27,6 +27,8 @@ jobs:
       # .cargo/config.toml links with clang + mold.
       - uses: rui314/setup-mold@v1
       - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: duel
       - name: Build the server
         run: |
           cargo build --release --no-default-features --bin duel
@@ -49,3 +51,23 @@ jobs:
         run: flyctl machine start "$(flyctl machine list --json | jq -r '.[0].id')"
         env:
           FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+
+  # A headless bot to play against, run here because it needs no Fly access. It plays until the server
+  # ends the match, or the timeout.
+  bot:
+    if: inputs.action == 'bot'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: System deps
+        run: sudo apt-get update && sudo apt-get install -y libudev-dev libasound2-dev libwayland-dev libxkbcommon-dev
+      - name: Install Rust
+        run: rustup toolchain install
+      - uses: rui314/setup-mold@v1
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: duel
+      - name: Build the bot
+        run: cargo build --release --no-default-features --bin duel
+      - name: Play
+        run: timeout 20m target/release/duel bot --server wss://him-duel-spike.fly.dev || true
