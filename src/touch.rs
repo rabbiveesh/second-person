@@ -20,7 +20,7 @@ use virtual_joystick::{
     create_joystick,
 };
 
-use crate::shooter::{ControlScheme, Shooter, ShooterAction};
+use crate::shooter::{ControlScheme, Scrambled, Shooter, ShooterAction};
 
 /// On while the last input was a touch (see `start::follow_last_input`): the stick is up and the
 /// HUD shows touch buttons instead of key hints.
@@ -103,19 +103,19 @@ fn touch_to_actions(
     mut whistle: ResMut<TouchWhistle>,
     scheme: Res<ControlScheme>,
     sticks: Query<&VirtualJoystickState>,
-    mut actions: Query<&mut ActionState<ShooterAction>, With<Shooter>>,
+    mut actions: Query<(&mut ActionState<ShooterAction>, &Scrambled), With<Shooter>>,
 ) {
     if !enabled.0 {
         return;
     }
-    let Ok(mut actions) = actions.single_mut() else {
+    let Ok((mut actions, scrambled)) = actions.single_mut() else {
         return;
     };
     if let Some(stick) = sticks.iter().find(|s| s.pointer_state.is_some()) {
-        // Snapping only helps the tank-style schemes; walking where you point wants the full circle.
-        let drive = match *scheme {
-            ControlScheme::Tank | ControlScheme::Snake => snap_8way(stick.delta),
-            _ => analog(stick.delta),
+        // Snapping only helps Tank; walking where you point (Mirror) wants the full circle.
+        let drive = match scrambled.scheme(*scheme) {
+            ControlScheme::Tank => snap_8way(stick.delta),
+            ControlScheme::Mirror => analog(stick.delta),
         };
         actions.set_axis_pair(&ShooterAction::Drive, drive);
     }

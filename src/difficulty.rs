@@ -21,7 +21,6 @@ use crate::{
     adapt::{self, AdaptEvent, BASE_BAND, Band, Cue, PlayerProfile, RoundResult, Skill, profile::BASELINE_ASSISTS},
     combat::{self, TargetHit},
     round::{GameState, SpawnRound},
-    shooter::ControlScheme,
     target::{self, Suspicion, Target},
 };
 
@@ -50,19 +49,7 @@ impl Tuning {
         AssistLevers::from_dial(self.assists)
     }
 
-    /// What your shots do with `scheme` this round. The easy schemes' penalty
-    /// (`ControlScheme::damage_dealt`, the band-5 amount) scales with how good you are: barely
-    /// there while you're struggling, much steeper once you're strong, so leaning on them stops
-    /// paying exactly when you no longer need them.
-    pub fn damage_dealt(&self, scheme: ControlScheme) -> f32 {
-        let bite = |b| by_band(b, 0.3, 1.0, 2.0);
-        let scale = (bite(self.stealth) + bite(self.gunfight)) / 2.0;
-        (1.0 - (1.0 - scheme.damage_dealt()) * scale).max(MIN_DAMAGE_DEALT)
-    }
 }
-
-/// However good you are, an easy scheme still does this much.
-pub const MIN_DAMAGE_DEALT: f32 = 0.35;
 
 /// Interpolate a knob over the bands: `lo` at band 1, `base` (today's value) at [`BASE_BAND`],
 /// `hi` at band 10, linear in between.
@@ -93,6 +80,51 @@ pub struct HisLevers {
     /// Dodge roll cooldown; `None` = he doesn't roll.
     pub roll_cooldown: Option<f32>,
     pub hp: f32,
+    /// His scramble dart; `None` = he doesn't have it.
+    pub scramble: Option<ScrambleLevers>,
+}
+
+/// The scramble dart (see `scramble`), from the Gunfight band. Every knob gets nastier as the
+/// band rises: how long you're scrambled, how quickly he winds up, how fast the
+/// dart flies and how well he leads you.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct ScrambleLevers {
+    pub cooldown: f32,
+    /// Seconds of telegraph (glow + whine) before the dart leaves his hand.
+    pub windup: f32,
+    /// Dart speed, m/s.
+    pub speed: f32,
+    /// Seconds you stay scrambled.
+    pub secs: f32,
+    /// While you're scrambled he sweeps his head on purpose: your controls are his view.
+    pub spin: bool,
+    /// How much he leads your movement when he aims (0 = at you, 1 = where you'll be).
+    pub lead: f32,
+    /// Seconds he'll hold a ready dart, waiting for you to spend your hop.
+    pub hold: f32,
+    /// How hard the dart homes on you in flight (rad/s it can turn).
+    pub homing: f32,
+    /// He follows a landed dart up with the grappling hook while you're still scrambled.
+    pub combo: bool,
+}
+
+/// Lowest Gunfight band at which he has the scramble dart.
+pub const SCRAMBLE_FROM_BAND: Band = 3;
+
+impl ScrambleLevers {
+    pub fn from_band(gunfight: Band) -> Option<Self> {
+        (gunfight >= SCRAMBLE_FROM_BAND).then(|| ScrambleLevers {
+            cooldown: by_band(gunfight, 22.0, 16.0, 5.0),
+            windup: by_band(gunfight, 1.2, 0.9, 0.45),
+            speed: by_band(gunfight, 9.0, 12.0, 22.0),
+            secs: by_band(gunfight, 2.5, 3.0, 7.0),
+            spin: gunfight >= 9,
+            lead: by_band(gunfight, 0.0, 0.0, 1.0),
+            hold: by_band(gunfight, 0.0, 0.0, 0.8),
+            homing: by_band(gunfight, 0.0, 0.0, 1.4),
+            combo: gunfight >= 8,
+        })
+    }
 }
 
 /// Lowest Gunfight band at which he uses the grappling hook...
@@ -113,6 +145,7 @@ impl HisLevers {
             roll_cooldown: (gunfight >= ROLL_FROM_BAND).then(|| by_band(gunfight, 4.0, combat::ROLL_COOLDOWN, 1.6)),
             // A bar, not a count, so the dial can move it by any amount without it showing.
             hp: by_band(gunfight, 70.0, target::TARGET_MAX_HP, 140.0),
+            scramble: ScrambleLevers::from_band(gunfight),
         }
     }
 }
@@ -137,6 +170,11 @@ pub struct AssistLevers {
     pub countdown: f32,
     /// Whether the overhead shot shows which way he's facing.
     pub reveal_facing: bool,
+    /// Extra seconds of scramble-dart wind-up, on top of his band's.
+    pub scramble_windup: f32,
+    /// How strongly the violet arrow at your feet shows where Up walks you while you're
+    /// scrambled (0 = not at all, 1 = bold). See `fx::mirror_arrow`.
+    pub mirror_arrow: f32,
 }
 
 /// Below this dial the `Auto` radar stops sweeping: a player good enough to fade the help out
@@ -158,6 +196,9 @@ impl AssistLevers {
             countdown: 2.0 + 2.0 * a,
             // Like the sonar: a player good enough to play the bare map finds his facing for themselves.
             reveal_facing: a >= SONAR_FROM,
+            scramble_windup: 0.6 * a,
+            // Bold from 0.6 up, fading out as the dial drops to where the sonar stops too.
+            mirror_arrow: ((a - SONAR_FROM) / (0.6 - SONAR_FROM)).clamp(0.0, 1.0),
         }
     }
 }
@@ -336,6 +377,15 @@ mod tests {
     use super::*;
 
     #[test]
+    fn the_mirror_arrow_fades_with_the_dial() {
+        assert_eq!(AssistLevers::from_dial(1.0).mirror_arrow, 1.0);
+        assert_eq!(AssistLevers::from_dial(0.6).mirror_arrow, 1.0);
+        let mid = AssistLevers::from_dial(BASELINE_ASSISTS).mirror_arrow;
+        assert!(mid > 0.5 && mid < 1.0, "{mid}");
+        assert_eq!(AssistLevers::from_dial(SONAR_FROM).mirror_arrow, 0.0);
+    }
+
+    #[test]
     fn base_band_and_baseline_dial_are_the_hand_tuned_game() {
         let him = HisLevers::default();
         assert_eq!(him.view_half_angle, target::VIEW_HALF_ANGLE);
@@ -353,21 +403,6 @@ mod tests {
         assert!((help.magnet_range - combat::MAGNET_RANGE).abs() < 1e-4);
         assert!((help.sonar_period.unwrap() - crate::radar::SONAR_PERIOD).abs() < 1e-4);
         assert_eq!(help.damage_taken, 1.0);
-    }
-
-    #[test]
-    fn easy_schemes_cost_more_as_you_get_better() {
-        let at = |b| Tuning { stealth: b, gunfight: b, ..Tuning::default() };
-        for s in ControlScheme::ALL {
-            assert!((at(BASE_BAND).damage_dealt(s) - s.damage_dealt()).abs() < 1e-6, "band 5 is the hand-tuned {s:?}");
-        }
-        assert_eq!(at(10).damage_dealt(ControlScheme::Tank), 1.0, "tank never pays");
-        for b in adapt::MIN_BAND..adapt::MAX_BAND {
-            let (lo, hi) = (at(b).damage_dealt(ControlScheme::Magnetic), at(b + 1).damage_dealt(ControlScheme::Magnetic));
-            assert!(hi < lo, "band {b}: {lo} -> {hi}");
-        }
-        assert!(at(1).damage_dealt(ControlScheme::Magnetic) > 0.9, "barely a cost while struggling");
-        assert!(at(10).damage_dealt(ControlScheme::Magnetic) >= MIN_DAMAGE_DEALT);
     }
 
     #[test]

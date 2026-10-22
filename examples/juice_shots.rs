@@ -28,7 +28,7 @@ use second_person::{
     intro::IntroEnabled,
     combat::{ShooterHit, TargetHit},
     round::GameState,
-    shooter::Shooter,
+    shooter::{ControlScheme, Scrambled, Shooter},
     start::Started,
     target::{MainCamera, Target},
     touch::TouchControls,
@@ -138,7 +138,12 @@ fn script(world: &mut World, mut frame: Local<u32>) {
             let from = eyes.translation() + eyes.down() * 0.3 + eyes.right() * 0.2;
             world.write_message(ShooterHit { from, to: SHOOTER_AT });
         }
-        700 => {
+        // Scene 4: scrambled, with the arrow showing where Up walks you. Then he looks a little
+        // aside and the arrow swings with his view.
+        610 => world.resource_mut::<NextState<GameState>>().set(GameState::Playing),
+        640..=669 => scrambled(world, SHOOTER_AT),
+        670..=699 => scrambled(world, SHOOTER_AT + Vec3::new(4.0, 0.0, 0.0)),
+        720 => {
             world.write_message(AppExit::Success);
         }
         _ => {}
@@ -164,6 +169,8 @@ fn script(world: &mut World, mut frame: Local<u32>) {
         (486, _) => shot("7-your-death"),
         (530, _) => shot("8-you-toppled"),
         (600, _) => shot("9-lost-banner"),
+        (669, _) => shot("10-mirror-arrow"),
+        (699, _) => shot("11-mirror-arrow-he-looks-aside"),
         _ => None,
     };
     if let Some(name) = name {
@@ -198,6 +205,15 @@ fn stage(world: &mut World) {
     let shooter = single::<Shooter>(world);
     place(world, target, TARGET_AT, SHOOTER_AT);
     place(world, shooter, SHOOTER_AT, TARGET_AT);
+}
+
+/// The staged scene with the shooter scrambled into Mirror and him looking at `looks_at`.
+fn scrambled(world: &mut World, looks_at: Vec3) {
+    let target = single::<Target>(world);
+    let shooter = single::<Shooter>(world);
+    place(world, target, TARGET_AT, looks_at);
+    place(world, shooter, SHOOTER_AT, TARGET_AT);
+    world.entity_mut(shooter).insert(Scrambled { left: 5.0, into: ControlScheme::Mirror });
 }
 
 fn place(world: &mut World, e: Entity, pos: Vec3, facing: Vec3) {

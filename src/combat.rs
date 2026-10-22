@@ -11,7 +11,7 @@ use crate::{
     difficulty::{AssistLevers, HisLevers, Tuning},
     round::{GameState, RoundEntity},
     nav::MoveTo,
-    shooter::{Bump, ControlScheme, Footstep, Whistle, Shooter, ShooterAction, Stagger, Stunned},
+    shooter::{Bump, Footstep, Whistle, Shooter, ShooterAction, Stagger, Stunned},
     target::{Activity, Alert, MainCamera, ROLL_SECS, Relocate, Roll, Suspicion, Target},
 };
 
@@ -239,7 +239,7 @@ fn fire(
     assets: Res<BulletLook>,
     mut cooldown: Local<Option<Timer>>,
     shooter: Single<(&ActionState<ShooterAction>, &Transform, &Stunned), With<Shooter>>,
-    target: Single<(Entity, &Transform, &mut Suspicion), With<Target>>,
+    target: Single<(Entity, &Transform, &mut Suspicion, Has<Roll>), With<Target>>,
     layout: Res<arena::Layout>,
     tuning: Res<Tuning>,
     mut gunshots: MessageWriter<Gunshot>,
@@ -258,8 +258,13 @@ fn fire(
     cooldown.reset();
 
     let muzzle = t.translation + t.rotation * Vec3::new(0.3, 0.15, -0.9);
-    let (target_e, target_t, mut suspicion) = target.into_inner();
-    let forward = magnetised(&layout, &tuning.help(), muzzle, *t.forward(), target_t.translation);
+    let (target_e, target_t, mut suspicion, rolling) = target.into_inner();
+    // The magnet never bends a shot into a man mid-dodge: that's his move beating your aim.
+    let forward = if rolling {
+        *t.forward()
+    } else {
+        magnetised(&layout, &tuning.help(), muzzle, *t.forward(), target_t.translation)
+    };
     commands.spawn((
         Name::new("Bullet"),
         RoundEntity,
@@ -306,7 +311,6 @@ fn bullet_hits(
     mut hits: MessageWriter<TargetHit>,
     mut impacts: MessageWriter<BulletImpact>,
     tuning: Res<Tuning>,
-    scheme: Res<ControlScheme>,
     time: Res<Time>,
 ) {
     let now = time.elapsed_secs();
@@ -332,7 +336,7 @@ fn bullet_hits(
                 _ if now < target.braced_until => HitKind::Seen,
                 kind => kind,
             };
-            let mut damage = kind.damage(rand::rng().random_range(-1.0..1.0)) * tuning.damage_dealt(*scheme);
+            let mut damage = kind.damage(rand::rng().random_range(-1.0..1.0));
             let mut execution = false;
             if kind != HitKind::Seen {
                 let unaware = !suspicion.engaged && suspicion.level < WARNING_SUSPICION;
@@ -413,7 +417,9 @@ fn warning_fire(
 ) {
     *cooldown -= time.delta_secs();
     let suspicion = *target;
-    let Some(guess) = suspicion.last_known else { return };
+    let Some(guess) = suspicion.last_known else {
+        return;
+    };
     if suspicion.engaged || suspicion.level < WARNING_SUSPICION || *cooldown > 0.0 {
         return;
     }
@@ -427,7 +433,9 @@ fn warning_fire(
     let side = to_guess.with_y(0.0).normalize_or_zero().cross(Vec3::Y);
     let sign = if rng.random_bool(0.5) { 1.0 } else { -1.0 };
     let aim = guess + side * sign * rng.random_range(WARNING_MISS) + Vec3::Y * rng.random_range(-0.6..0.4);
-    let Ok(dir) = Dir3::new(aim - from) else { return };
+    let Ok(dir) = Dir3::new(aim - from) else {
+        return;
+    };
     // Stops at whatever it hits first (cover, a wall), else flies on past.
     let to = match spatial.cast_ray(from, dir, 60.0, true, &SpatialQueryFilter::from_mask(Layer::World)) {
         Some(hit) => {
@@ -449,22 +457,32 @@ fn grapple(
     time: Res<Time>,
     mut cooldown: Local<f32>,
     eyes: Single<&GlobalTransform, With<MainCamera>>,
-    target: Single<(Entity, &Transform, &Suspicion, Option<&Activity>, Option<&mut Grapple>), With<Target>>,
-    shooter: Single<(&mut Shooter, &Transform, &mut Stunned)>,
+    target: Single<
+        (Entity, &Transform, &Suspicion, Option<&Activity>, Option<&mut Grapple>, Has<crate::scramble::Charging>),
+        With<Target>,
+    >,
+    shooter: Single<(&mut Shooter, &Transform, &mut Stunned, &crate::shooter::Scrambled)>,
     tuning: Res<Tuning>,
+    darts: Query<(), With<crate::scramble::Dart>>,
     mut fired: MessageWriter<GrappleFired>,
     mut hits: MessageWriter<ShooterHit>,
 ) {
     let dt = time.delta_secs();
     *cooldown -= dt;
-    let (target_e, target_t, suspicion, activity, grapple) = target.into_inner();
-    let (mut s, shooter_t, mut stunned) = shooter.into_inner();
+    let (target_e, target_t, suspicion, activity, grapple, charging) = target.into_inner();
+    let (mut s, shooter_t, mut stunned, scrambled) = shooter.into_inner();
     let hand = eyes.translation() + eyes.down() * 0.3 + eyes.right() * 0.2;
     let dist = target_t.translation.xz().distance(shooter_t.translation.xz());
 
     let Some(mut grapple) = grapple else {
-        let Some(grapple_cooldown) = tuning.him().grapple_cooldown else { return };
+        let Some(grapple_cooldown) = tuning.him().grapple_cooldown else {
+            return;
+        };
+        // Never on top of the scramble dart: one of his moves at a time.
         if *cooldown <= 0.0
+            && !charging
+            && darts.is_empty()
+            && (!scrambled.active() || tuning.him().scramble.is_some_and(|l| l.combo))
             && activity == Some(&Activity::Engaging)
             && suspicion.sees_shooter
             && GRAPPLE_RANGE.contains(&dist)
@@ -517,7 +535,9 @@ fn dodge(
 ) {
     *cooldown -= time.delta_secs();
     let (e, t, suspicion, grappling, rolling) = *target;
-    let Some(roll_cooldown) = tuning.him().roll_cooldown else { return };
+    let Some(roll_cooldown) = tuning.him().roll_cooldown else {
+        return;
+    };
     for shot in shots.read() {
         let to_him = t.translation - shot.muzzle;
         let aimed = shot.dir.angle_between(to_him) < 0.1;
@@ -534,7 +554,9 @@ fn dodge(
             let dest = here + across * sign * ROLL_DISTANCE;
             (layout.is_clear(dest, 0.5) && !layout.los_blocked(here, dest)).then_some(sign)
         };
-        let Some(sign) = clear(first).or_else(|| clear(-first)) else { continue };
+        let Some(sign) = clear(first).or_else(|| clear(-first)) else {
+            continue;
+        };
         *cooldown = roll_cooldown;
         let velocity = (across * sign * ROLL_DISTANCE / ROLL_SECS).extend(0.0).xzy();
         commands.entity(e).insert(Roll { t: 0.0, velocity });

@@ -341,7 +341,9 @@ fn peeks_see_the_threat_with_some_slack() {
                 continue;
             }
             for from in [Vec2::ZERO, Vec2::new(15.0, -15.0), Vec2::new(-15.0, 15.0)] {
-                let Some(cover) = layout.find_cover(from, threat) else { continue };
+                let Some(cover) = layout.find_cover(from, threat) else {
+                    continue;
+                };
                 for peek in [cover.peek, cover.alt_peek] {
                     assert!(peek.distance(threat) < VIEW_RANGE - 1.0, "{cover:?}: peek out of eyesight of {threat}");
                     for (&him, &you) in ring.iter().flat_map(|a| ring.iter().map(move |b| (a, b))) {
@@ -642,11 +644,31 @@ fn he_dodge_rolls_your_first_shot_but_not_the_second() {
     let cam = single::<MainCamera>(&mut app);
     let up = app.world().get::<Transform>(cam).unwrap().rotation * Vec3::Y;
     assert!(up.y < -0.5, "view didn't tumble: up is {up}");
+    // And he's tucked low: a shot at chest height goes over him, one at the floor doesn't.
+    let him = app.world().get::<Transform>(target).unwrap().translation;
+    let ray_hits = |app: &mut App, y: f32| {
+        let from = Vec3::new(him.x, y, shooter_pos.z);
+        app.world_mut()
+            .run_system_once(move |q: SpatialQuery| {
+                q.cast_ray(from, Dir3::Z, 30.0, true, &SpatialQueryFilter::from_mask(second_person::Layer::Target)).is_some()
+            })
+            .unwrap()
+    };
+    assert!(!ray_hits(&mut app, 1.05), "a chest-high shot hits him mid-roll");
+    assert!(ray_hits(&mut app, 0.4), "nothing low to hit mid-roll");
     step(&mut app, ROLL_SECS / 2.0);
     let landed = app.world().get::<Transform>(target).unwrap().translation;
     assert!((landed.x - start.x).abs() > 1.5, "didn't dive sideways: {start} -> {landed}");
     step(&mut app, 0.3);
     assert_eq!(counted::<TargetHit>(&app), 0, "the dodged shot hit");
+
+    // Back on his feet, chest-high again.
+    let him = app.world().get::<Transform>(target).unwrap().translation;
+    let from = Vec3::new(him.x, 1.05, shooter_pos.z);
+    let standing = app.world_mut().run_system_once(move |q: SpatialQuery| {
+        q.cast_ray(from, Dir3::Z, 30.0, true, &SpatialQueryFilter::from_mask(second_person::Layer::Target)).is_some()
+    });
+    assert!(standing.unwrap(), "still tucked after the roll");
 
     // Still on cooldown: the follow-up isn't dodged.
     press(&mut app, KeyCode::Space);
@@ -1206,109 +1228,38 @@ fn hold(app: &mut App, key: KeyCode, secs: f32) -> (Vec3, f32) {
 }
 
 #[test]
-fn c_cycles_the_control_schemes() {
+fn mirror_pushes_along_his_view_turned_round() {
     use second_person::shooter::ControlScheme;
-    let mut app = app();
-    assert_eq!(*app.world().resource::<ControlScheme>(), ControlScheme::Tank);
-    for want in &ControlScheme::ALL[1..] {
-        press(&mut app, KeyCode::KeyC);
-        assert_eq!(app.world().resource::<ControlScheme>(), want);
-    }
-    press(&mut app, KeyCode::KeyC);
-    assert_eq!(*app.world().resource::<ControlScheme>(), ControlScheme::Tank);
-}
-
-#[test]
-fn direct_schemes_push_along_their_own_frames() {
-    use second_person::shooter::ControlScheme;
-    let me = Vec3::new(4.0, 0.9, 10.0);
-    let him = Vec3::new(4.0, 0.9, 0.0);
     // His eyes look along +X.
     let eyes = GlobalTransform::from(Transform::from_xyz(0.0, 1.6, 0.0).looking_to(Vec3::X, Vec3::Y));
     let near = |a: Vec3, b: Vec3| a.distance(b) < 1e-4;
-    let basis = |s: ControlScheme| s.basis(me, Some(him), Some(&eyes)).unwrap();
-
-    let (f, r) = basis(ControlScheme::Compass);
-    assert!(near(f, Vec3::NEG_Z) && near(r, Vec3::X), "north is up the radar: {f} {r}");
-    let (f, r) = basis(ControlScheme::Eyes);
-    assert!(near(f, Vec3::X) && near(r, Vec3::Z), "up goes where he looks, right is his right: {f} {r}");
-    let (f, r) = basis(ControlScheme::Mirror);
-    assert!(near(f, Vec3::NEG_X) && near(r, Vec3::NEG_Z), "mirror turns it round: {f} {r}");
-    let (f, r) = basis(ControlScheme::Magnetic);
-    assert!(near(f, Vec3::NEG_Z) && near(r, Vec3::X), "up walks at him: {f} {r}");
-    assert!(ControlScheme::Tank.basis(me, Some(him), Some(&eyes)).is_none());
+    let (f, r) = ControlScheme::Mirror.basis(Some(&eyes)).unwrap();
+    assert!(near(f, Vec3::NEG_X) && near(r, Vec3::NEG_Z), "up comes back at him, right is screen-left: {f} {r}");
+    assert!(ControlScheme::Tank.basis(Some(&eyes)).is_none());
 }
 
 #[test]
-fn compass_walks_north_whichever_way_you_face_and_turns_you_to_it() {
+fn mirror_up_walks_back_towards_his_eyes_and_turns_you_to_it() {
     use second_person::shooter::ControlScheme;
     let mut app = app();
-    set_controls(&mut app, ControlScheme::Compass);
-    let shooter = single::<Shooter>(&mut app);
-    let start = Vec3::new(-15.0, 0.9, 15.0);
-    place(&mut app, shooter, start, std::f32::consts::FRAC_PI_2); // facing -X
-    app.update();
-
-    let (pos, yaw) = hold(&mut app, KeyCode::ArrowUp, 0.6);
-    assert!(pos.z < start.z - 1.5, "Up walks north (-Z): {pos}");
-    assert!((pos.x - start.x).abs() < 0.3, "and only north: {pos}");
-    assert!(yaw.abs() < 0.05, "turned to face north: yaw {yaw}");
-
-    let (pos2, yaw) = hold(&mut app, KeyCode::ArrowRight, 0.6);
-    assert!(pos2.x > pos.x + 1.5, "Right walks east (+X): {pos2}");
-    assert!((yaw + std::f32::consts::FRAC_PI_2).abs() < 0.05, "facing east: yaw {yaw}");
-}
-
-#[test]
-fn magnetic_up_walks_straight_at_him() {
-    use second_person::shooter::ControlScheme;
-    let mut app = app();
-    set_controls(&mut app, ControlScheme::Magnetic);
+    set_controls(&mut app, ControlScheme::Mirror);
     let shooter = single::<Shooter>(&mut app);
     let target = single::<Target>(&mut app);
-    // Off to one side and facing away, so the only thing pointing at him is the scheme.
-    let start = Vec3::new(10.0, 0.9, 10.0);
-    place(&mut app, shooter, start, 0.0);
-    app.update();
-    let him = app.world().get::<GlobalTransform>(target).unwrap().translation();
-    let before = start.with_y(0.0).distance(him.with_y(0.0));
-
-    let (pos, _) = hold(&mut app, KeyCode::ArrowUp, 0.5);
-    let after = pos.with_y(0.0).distance(him.with_y(0.0));
-    assert!(before - after > 2.0, "closed in on him: {before} -> {after}");
-    let facing = app.world().get::<Transform>(shooter).unwrap().forward();
-    let to_him = (him - pos).with_y(0.0).normalize();
-    assert!(facing.dot(to_him) > 0.95, "and faces him: {facing} vs {to_him}");
-}
-
-#[test]
-fn snake_never_stops_unless_you_hold_down() {
-    use second_person::shooter::ControlScheme;
-    let mut app = app();
-    set_controls(&mut app, ControlScheme::Snake);
-    let shooter = single::<Shooter>(&mut app);
+    // He looks west (-X), so Up should walk you east, along the open ground the compass test crossed.
+    place(&mut app, target, Vec3::new(0.0, 0.9, 0.0), std::f32::consts::FRAC_PI_2);
     let start = Vec3::new(-15.0, 0.9, 15.0);
     place(&mut app, shooter, start, 0.0);
     app.update();
-    step(&mut app, 0.5);
-    let pos = app.world().get::<Transform>(shooter).unwrap().translation;
-    assert!(pos.z < start.z - 1.0, "walks on its own: {pos}");
-    let (held, _) = hold(&mut app, KeyCode::ArrowDown, 0.5);
-    assert!(held.distance(pos) < 0.6, "Down stands still: {pos} -> {held}");
-}
 
-#[test]
-fn on_ice_you_keep_sliding_after_you_let_go() {
-    use second_person::shooter::ControlScheme;
-    let mut app = app();
-    set_controls(&mut app, ControlScheme::Ice);
-    let shooter = single::<Shooter>(&mut app);
-    place(&mut app, shooter, Vec3::new(-15.0, 0.9, 15.0), 0.0);
-    app.update();
-    let (released, _) = hold(&mut app, KeyCode::ArrowUp, 0.8);
-    step(&mut app, 0.5);
-    let slid = app.world().get::<Transform>(shooter).unwrap().translation;
-    assert!(slid.distance(released) > 1.0, "still sliding: {released} -> {slid}");
+    let (pos, _) = hold(&mut app, KeyCode::ArrowUp, 0.6);
+    let cam = single::<MainCamera>(&mut app);
+    let looks = app.world().get::<GlobalTransform>(cam).unwrap().forward().with_y(0.0).normalize();
+    let moved = (pos - start).with_y(0.0);
+    assert!(moved.length() > 1.5, "Up walks: {pos}");
+    assert!(moved.normalize().dot(looks) < -0.9, "against his view: moved {moved}, he looks {looks}");
+    let facing = app.world().get::<Transform>(shooter).unwrap().forward();
+    // He keeps scanning, so the way Up points keeps swinging; you should at least face east-ish.
+    assert!(facing.dot(Vec3::X) > 0.5, "and turned to face where it walks: {facing}");
 }
 
 /// Fire one shot at him from `from` while he faces `faces`; returns the damage it did.
@@ -1322,9 +1273,8 @@ fn shot_damage_from(app: &mut App, from: Vec3, faces: Vec3) -> f32 {
 }
 
 #[test]
-fn shots_he_never_sees_hit_harder_and_easy_controls_hit_softer() {
+fn shots_he_never_sees_hit_harder() {
     use second_person::combat::{BLIND_BONUS, SEEN_SPREAD, SHOT_DAMAGE};
-    use second_person::shooter::ControlScheme;
     // Inside his dodge-roll range, so a shot he sees still lands.
     let from = Vec3::new(0.0, 0.9, 4.0);
     // Face to face: he sees it coming.
@@ -1342,16 +1292,6 @@ fn shots_he_never_sees_hit_harder_and_easy_controls_hit_softer() {
     let blind = shot_damage_from(&mut a, from, Vec3::new(10.0, 0.9, 0.0));
     assert!(blind > SHOT_DAMAGE * BLIND_BONUS * 0.74, "a blind shot: {blind}");
 
-    // Magnetic walks you at him, so it pays in damage.
-    let mut a = app();
-    a.insert_resource(ControlScheme::Magnetic);
-    let target = single::<Target>(&mut a);
-    stage(&mut a, from, from);
-    step(&mut a, 0.3);
-    assert!(a.world().get::<Suspicion>(target).unwrap().sees_shooter);
-    let weak = shot_damage_from(&mut a, from, from);
-    let most = SHOT_DAMAGE * (1.0 + SEEN_SPREAD) * ControlScheme::Magnetic.damage_dealt();
-    assert!(weak > 0.0 && weak <= most + 0.01, "magnetic hits softer: {weak}");
 }
 
 #[test]
@@ -1365,6 +1305,74 @@ fn hit_kinds_and_their_damage() {
     assert!(HitKind::Seen.damage(-1.0) < HitKind::Seen.damage(1.0));
     assert!(HitKind::Blind.damage(-1.0) > HitKind::Seen.damage(1.0));
     assert!((HitKind::Behind.damage(0.0) - SHOT_DAMAGE * BEHIND_BONUS).abs() < 1e-3);
+}
+
+#[test]
+fn his_scramble_dart_scrambles_a_shooter_who_stands_still() {
+    use second_person::difficulty::Tuning;
+    use second_person::scramble::{DartThrown, ScrambledHit};
+    use second_person::shooter::{ControlScheme, Scrambled};
+    let mut app = app_with(|app| {
+        app.insert_resource(Tuning { stealth: 10, gunfight: 10, assists: 0.0 });
+        app.insert_resource(second_person::experiments::Experiments { scramble_dart: true });
+        count::<DartThrown>(app);
+        count::<ScrambledHit>(app);
+    });
+    let shooter = single::<Shooter>(&mut app);
+    // In the open, in front of him, close enough for the dart but not the roll.
+    stage(&mut app, Vec3::new(0.0, 0.9, 12.0), Vec3::new(0.0, 0.9, 12.0));
+    // Already onto you: skip the slow build-up of suspicion.
+    let target = single::<Target>(&mut app);
+    app.world_mut().get_mut::<Suspicion>(target).unwrap().bump(1.0);
+    let mut scrambled_at = None;
+    let (mut last, mut moved, mut counting) = (None::<Vec3>, 0.0f32, true);
+    for i in 0..(30.0 / DT) as usize {
+        app.world_mut().get_mut::<Shooter>(shooter).unwrap().hp = 1e6;
+        app.update();
+        let s = *app.world().get::<Scrambled>(shooter).unwrap();
+        if std::env::var("TRACE").is_ok() && i % 15 == 0 {
+            let w = app.world_mut();
+            let mut q = w.query_filtered::<(
+                &Transform,
+                &Suspicion,
+                Option<&Activity>,
+                Has<second_person::combat::Grapple>,
+                Has<second_person::scramble::Charging>,
+            ), With<Target>>();
+            let (t, su, act, g, c) = q.single(w).unwrap();
+            let (t, sees, eng, act) = (t.translation, su.sees_shooter, su.engaged, act.copied());
+            let you = w.get::<Transform>(shooter).unwrap().translation;
+            eprintln!(
+                "t={:.2} him={:.1?} you={:.1?} act={:?} sees={} eng={} grapple={} charging={} scr={:?}",
+                i as f32 * DT,
+                t.xz(),
+                you.xz(),
+                act,
+                sees,
+                eng,
+                g,
+                c,
+                s
+            );
+        }
+        let him = app.world().get::<Transform>(target).unwrap().translation;
+        if s.active() && scrambled_at.is_none() {
+            scrambled_at = Some((i as f32 * DT, s));
+        }
+        // How far he moves while the first scramble lasts: he doesn't stand still while he has you.
+        if scrambled_at.is_some() && counting {
+            counting = s.active();
+            moved += last.map_or(0.0, |l| l.distance(him));
+            last = Some(him);
+        }
+    }
+    assert!(counted::<DartThrown>(&app) >= 1, "he threw a dart");
+    let (at, s) = scrambled_at.expect("and it scrambled you");
+    assert_eq!(counted::<ScrambledHit>(&app) >= 1, true);
+    assert_eq!(s.into, ControlScheme::Mirror, "the dart scrambles you into Mirror");
+    assert!(moved > 8.0, "and he keeps moving while it lasts: {moved}m");
+    assert!(at > 4.0, "never in the opening seconds: {at}");
+    assert!(at < 30.0, "but soon after: {at}");
 }
 
 #[test]

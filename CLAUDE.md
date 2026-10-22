@@ -28,7 +28,7 @@ controlling the **shooter** hunting him. A corner radar shows the whole arena.
    - `scripts/brp brp_extras/send_keys '{"keys":["Space"],"duration_ms":60}'`
    - `scripts/brp brp_extras/screenshot '{"path":"<scratchpad>/shot.png"}'`
    - `scripts/shots <out dir> 1280x720 390x844:touch 844x390:touch` screenshots the staged juice moments
-     (`examples/juice_shots`) at any sizes (logical px; `:touch` = touch UI, fires by tapping). Check mobile with it.
+     (`examples/juice_shots`, including the scrambled arrow) at any sizes (logical px; `:touch` = touch UI, fires by tapping). Check mobile with it.
    Gameplay components derive `Reflect` + `#[reflect(Component)]` (auto-registered) so they're queryable.
    `.mcp.json` also registers `bevy_brp_mcp` for MCP-native access.
 4. Music: `cargo run --bin editor` (feature `editor`, in `dev`) edits and plays `music/*.score` live. Screenshots
@@ -90,7 +90,8 @@ Fyrox (small ecosystem), macroquad/three-d (too thin, would mean rolling our own
   Investigating a noise he can't see (cover in the way) makes him walk toward it until he can.
   Dodge roll (`combat::dodge`, `Roll`): when he sees you fire straight at him from beyond `ROLL_MIN_RANGE`, he dives
   `ROLL_DISTANCE` across the line of fire (never into cover), then `ROLL_COOLDOWN` before the next, so a second shot
-  lands. No return fire mid-roll. `juice` plays it as a shoulder roll: the view turns into the dive, somersaults forward a full turn while dropping `ROLL_DIP`, then squares back up.
+  lands. No return fire mid-roll. Mid-roll his hitbox is a ball on the floor (`target::Tucked`, `ROLL_TUCK`), so a
+  chest-high shot goes over him, and the magnet never bends a shot into him while he rolls. `juice` plays it as a shoulder roll: the view turns into the dive, somersaults forward a full turn while dropping `ROLL_DIP`, then squares back up.
   `Suspicion.last_known` is where he last saw or heard you (no omniscience).
   Tasks only set intent (`LookGoal`, `MoveTo`, `Activity`). Systems `perceive` → `gaze` → `walk`
   do the work. Use the shared `ARRIVE` constant for every arrival check, because mismatched thresholds deadlock tasks. Lower branches **fail** when a higher-priority condition appears (that's preemption).
@@ -100,6 +101,25 @@ Fyrox (small ecosystem), macroquad/three-d (too thin, would mean rolling our own
   The engine supports a moving target: the camera is parented to him, and walking is just velocity on a kinematic body.
   His body (torso, head, visor, gun) is on `target::BODY_LAYER`, which the `MainCamera` only renders from outside him:
   `intro::fly_camera` adds the layer for the overhead shot and drops it `BODY_HIDE_DIST` before the swoop reaches his eyes.
+- `scramble.rs`: his scramble dart. While fighting and seeing you within `DART_RANGE` he winds up (`Charging`; violet
+  glow on the HUD, a whine timed to the wind-up), then throws a slow dart (`Dart`, moved by hand with a swept test)
+  that sets the shooter's `Scrambled { left, into }`: you drive `Mirror` instead of `Tank` for a while. Cover
+  stops it and a sidestep beats it. One of his moves at a time: never while you're grappled, staggered or scrambled,
+  and no grapple while a dart flies. While you're scrambled he knows his view is your
+  controls and presses: he leaves cover and circles you at range (`CIRCLE_*` in `target.rs`), gaze locked on you and
+  shooting, so the way Up points keeps turning and lining up a shot means moving; at the top bands he sweeps his gaze
+  too. When it wears off he relocates to fresh cover. A violet arrow on the floor at your feet (`fx::mirror_arrow`) shows
+  where Up walks you right now and turns with his view; it's an assist that fades with the dial (`mirror_arrow`). He never fires behind his back: every shot at you is one
+  you can watch him take. At the top bands he holds a ready dart (`hold`) until your hop is spent, the dart homes (`homing`),
+  and he may grapple you while you're scrambled (`combo`). He stays out peeking through a wind-up. Every knob is
+  `difficulty::ScrambleLevers` (Gunfight band: unlock, wind-up, speed, lead, duration, cooldown, hold, homing, combo).
+  `Armed(false)` takes it away (A/B runs); it only runs with `Experiments::scramble_dart` on.
+- `examples/duel_sim.rs`: bot rounds on the real gameplay plugins, for balancing his moves. The bot writes the
+  shooter's `ActionState` (like `touch`), knows where he is, walks the navmesh to a clear shot, aims with an error and
+  fires; it reads the dart's wind-up and sidesteps after a reaction time, and when scrambled drives with the wrong
+  scheme for a while before adapting. `--player sharp|average|novice --scheme tank --gunfight 10 --dart on|off
+  --immortal on` (nobody dies, for the dart's own numbers). About 7x real time per core. The bot lives in
+  `examples/common/bot.rs`; `examples/duel_clip.rs` renders a bot match from his eyes to PNG frames (see its header).
 - `nav.rs`: vleue_navigator navmesh, built synchronously from `NavObstacle` colliders (the arena blocks) inside the
   layout's outline (`fit_navmesh` updates it each round).
   `MoveTo { dest, speed, strafe }` is planned into a `Route` and followed by `target::walk`. With `strafe` he moves
@@ -112,11 +132,9 @@ Fyrox (small ecosystem), macroquad/three-d (too thin, would mean rolling our own
   Walking into the world emits `Bump` and a `Stagger` knockback (can't walk, only turn); his laser staggers you too.
   `Sidestep`: a double-tap straight left/right on `Drive` (arrows, or a double flick of the stick, since both feed the same
   axis) hops 2.4m sideways with the facing restored to before the taps; the landing writes a `Footstep`. Stagger cuts it.
-- `shooter.rs` `ControlScheme` (spike; C cycles, touch has a button): `Tank` (above), and direct schemes that walk where
-  you point and swing you to face it, differing only in the frame Up/Right push along (`ControlScheme::basis`):
-  `Compass` (radar up), `Eyes` (his view, so his turning turns your controls), `Mirror` (`Eyes` turned round),
-  `Magnetic` (Up at him, Left/Right circle). Plus `Snake` (always walking) and `Ice` (`Eyes` with momentum).
-  The direct schemes read the touch stick in analog (`touch::analog`); only `Tank` and `Snake` snap to 8 ways and hop.
+- `shooter.rs` `ControlScheme`: you always drive `Tank` (above). `Mirror` exists only for the scramble dart: you walk where
+  you point and swing to face it, along his view turned round (`ControlScheme::basis`), so Up comes back at him and his
+  turning turns your controls. Mirror reads the touch stick in analog (`touch::analog`); Tank snaps to 8 ways and hops.
 - `touch.rs`: phone controls, spawned on the first touch. A floating `virtual_joystick` stick (left half,
   snapped to 8 arrow-key directions by `snap_8way`) and tap-right-to-fire write the shooter's `ActionState` in
   leafwing's `ManualControl` set. The HUD swaps the R/M/Tab hints for egui buttons once touch is on, plus a big
@@ -149,8 +167,6 @@ Fyrox (small ecosystem), macroquad/three-d (too thin, would mean rolling our own
   often most of his bar) from the side; once he's on to you it takes at most `SURPRISE_CAP` of his bar, so a mid-fight flank swings the fight.
   A hit he survives always engages him, so he breaks for cover instead of walking over to look.
   An execution sets `TargetHit::execution`, and the HUD picks an execution banner over the flawless one.
-  `ControlScheme::damage_dealt` trims the damage for the schemes that do more of the work for you, and
-  `Tuning::damage_dealt` scales that trim with the bands: next to nothing at band 1, double at band 10.
 - `layout.rs` (presentation): `ScreenLayout` (view, deck, radar rects) refit from the window every frame, so
   rotation and resizes just work. Landscape: full-window view, radar in the corner over it. Portrait (h ≥ 1.3w): a
   deck below the view holds the radar and whistle, and the left thumb drives from it. FOV is Hor+ with a floor:
@@ -179,6 +195,9 @@ Fyrox (small ecosystem), macroquad/three-d (too thin, would mean rolling our own
   are exactly the hand-tuned constants, which stay in `target`/`combat`/`radar` (a test pins this). `AdaptiveDifficulty`
   is only inserted by `main.rs`, so headless tests and staged examples keep the fixed tuning. Never shown to the player.
   The duel keeps the baseline assists (magnetism included).
+- `experiments.rs`: unfinished features ship dark behind `Experiments` (one `bool` per experiment, off by default). Tapping
+  the TARGET label 5 times quickly opens a hidden panel listing every field as a checkbox (reflected, so adding a field is
+  all it takes); web keeps the choice in localStorage. The scramble dart is the first. Tests and sims insert it on.
 - `debug.rs` (presentation): F9 or a three-finger tap writes a plain-text dump (web: downloads it): build info, the adaptive state and round
   history (`difficulty::debug_text`), every reflected `second_person::` resource, the target's and shooter's components,
   and the last 300 gameplay messages. New reflected resources show up for free; log a new message with `log_messages`.

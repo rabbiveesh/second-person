@@ -12,7 +12,7 @@ use crate::{
     arena::Layout,
     radar::{LiveBlip, RADAR_LAYER, RadarContact},
     round::{Attract, GameState, Online, RoundEntity, SpawnRound},
-    target::{MainCamera, Target},
+    target::MainCamera,
 };
 
 pub const SHOOTER_MAX_HP: f32 = 100.0;
@@ -22,103 +22,73 @@ const RADIUS: f32 = 0.35;
 const MOVE_SPEED: f32 = 5.0;
 const TURN_SPEED: f32 = 2.4;
 
-/// How the arrows (or the stick) map to movement. C cycles through them; it's a spike to feel
-/// out which ones are playable, so they're all in the build.
+/// How the arrows (or the stick) map to movement. You always drive `Tank`; his scramble dart
+/// flips you into `Mirror` for a while.
 #[derive(Resource, Reflect, Default, Clone, Copy, PartialEq, Eq, Debug)]
+#[derive(serde::Serialize, serde::Deserialize)]
 #[reflect(Resource)]
 pub enum ControlScheme {
     /// Up/down drive along your own facing, left/right turn.
     #[default]
     Tank,
-    /// Up is north (the top of the radar), whatever anyone is facing. You turn to face where you go.
-    Compass,
-    /// Relative to what's on screen: up goes away from his eyes, right goes screen-right. When he
-    /// turns his head, your directions turn with it.
-    Eyes,
-    /// `Eyes` turned round, as if you were the one facing the camera: up comes towards him, right is
-    /// screen-left.
+    /// Relative to what's on screen, turned round, as if you were the one facing the camera: up
+    /// comes towards him, right is screen-left. When he turns his head, your directions turn with it.
     Mirror,
-    /// Up walks straight at him, left/right circle him (wherever he is, seen or not).
-    Magnetic,
-    /// You never stop walking: left/right steer, up hurries, down stands still.
-    Snake,
-    /// `Eyes` on a frozen pond: the arrows push, and you slide.
-    Ice,
 }
 
 impl ControlScheme {
-    pub const ALL: [Self; 7] =
-        [Self::Tank, Self::Compass, Self::Eyes, Self::Mirror, Self::Magnetic, Self::Snake, Self::Ice];
-
-    pub fn next(self) -> Self {
-        let i = Self::ALL.iter().position(|s| *s == self).unwrap_or(0);
-        Self::ALL[(i + 1) % Self::ALL.len()]
-    }
+    pub const ALL: [Self; 2] = [Self::Tank, Self::Mirror];
 
     /// The key hint for the arrows.
     pub fn hint(self) -> &'static str {
         match self {
             Self::Tank => "Up/Down move   Left/Right turn (double-tap: hop)",
-            Self::Compass => "Arrows walk north/south/east/west (radar up is north)",
-            Self::Eyes => "Arrows walk as seen on screen",
             Self::Mirror => "Arrows walk mirrored: Up comes at him",
-            Self::Magnetic => "Up walks at him   Left/Right circle him",
-            Self::Snake => "Always walking   Left/Right steer   Up hurry   Down stop",
-            Self::Ice => "Arrows push (screen-relative) and you slide",
         }
     }
 
-    /// What your shots do relative to tank controls: the schemes that do more of the work for
-    /// you (walking you at him, or a frame that never moves) pay for it in damage.
-    pub fn damage_dealt(self) -> f32 {
-        match self {
-            Self::Tank | Self::Snake | Self::Mirror | Self::Ice => 1.0,
-            Self::Eyes => 0.9,
-            Self::Compass => 0.85,
-            Self::Magnetic => 0.7,
-        }
-    }
-
-    /// The tank-style schemes keep turning on left/right (and the double-tap hop).
+    /// Tank keeps turning on left/right (and the double-tap hop).
     fn turns(self) -> bool {
-        matches!(self, Self::Tank | Self::Snake)
+        self == Self::Tank
     }
 
-    /// For the direct schemes: the world directions (forward, right) that Up and Right push
-    /// along, on the floor plane. `None` for the tank-style ones.
-    pub fn basis(self, me: Vec3, him: Option<Vec3>, eyes: Option<&GlobalTransform>) -> Option<(Vec3, Vec3)> {
-        let compass = (Vec3::NEG_Z, Vec3::X);
-        // Right is forward turned a quarter clockwise, seen from above.
-        let with_right = |f: Vec3| (f, Vec3::new(-f.z, 0.0, f.x));
-        let screen = || {
-            eyes.and_then(|e| Dir3::new(e.forward().with_y(0.0)).ok())
-                .map_or(compass, |f| with_right(f.as_vec3()))
-        };
+    /// For `Mirror`: the world directions (forward, right) that Up and Right push along, on the
+    /// floor plane, from his view. `None` for `Tank`.
+    pub fn basis(self, eyes: Option<&GlobalTransform>) -> Option<(Vec3, Vec3)> {
         match self {
-            Self::Tank | Self::Snake => None,
-            Self::Compass => Some(compass),
-            Self::Eyes | Self::Ice => Some(screen()),
+            Self::Tank => None,
             Self::Mirror => {
-                let (f, r) = screen();
-                Some((-f, -r))
+                let f = eyes.and_then(|e| Dir3::new(e.forward().with_y(0.0)).ok()).map_or(Vec3::NEG_Z, |f| f.as_vec3());
+                // Screen-right is forward turned a quarter clockwise, seen from above; Mirror flips both.
+                Some((-f, Vec3::new(f.z, 0.0, -f.x)))
             }
-            Self::Magnetic => Some(
-                him.and_then(|h| Dir3::new((h - me).with_y(0.0)).ok())
-                    .map_or(compass, |f| with_right(f.as_vec3())),
-            ),
         }
+    }
+}
+
+/// His scramble dart hit you: until `left` runs out you drive with `into` instead of your own
+/// `ControlScheme` (see `scramble`).
+#[derive(Component, Reflect, Default, Clone, Copy, PartialEq, Debug)]
+#[derive(serde::Serialize, serde::Deserialize)]
+#[reflect(Component)]
+pub struct Scrambled {
+    pub left: f32,
+    pub into: ControlScheme,
+}
+
+impl Scrambled {
+    pub fn active(&self) -> bool {
+        self.left > 0.0
+    }
+
+    /// The scheme you're driving with right now.
+    pub fn scheme(&self, chosen: ControlScheme) -> ControlScheme {
+        if self.active() { self.into } else { chosen }
     }
 }
 
 /// How fast the direct schemes swing you round to face where you're walking (rad/s).
 const FACE_TURN_SPEED: f32 = 10.0;
-/// Snake: walking pace with nothing held, and how much Up adds.
-const SNAKE_SPEED: f32 = 3.2;
-const SNAKE_HURRY: f32 = 1.8;
-/// Ice: push (m/s²) and how much of your speed the ice takes per second.
-const ICE_PUSH: f32 = 7.0;
-const ICE_DRAG: f32 = 0.35;
-const ICE_MAX_SPEED: f32 = 7.5;
 
 #[derive(Actionlike, PartialEq, Eq, Clone, Copy, Hash, Debug, Reflect)]
 #[derive(serde::Serialize, serde::Deserialize)]
@@ -208,6 +178,13 @@ pub struct Sidestep {
     cooldown: f32,
 }
 
+impl Sidestep {
+    /// Mid-hop, or landed too recently to hop again.
+    pub fn spent(&self) -> bool {
+        self.left > 0.0 || self.cooldown > 0.0
+    }
+}
+
 /// Both taps have to land within this.
 const DOUBLE_TAP_WINDOW: f32 = 0.3;
 const HOP_SPEED: f32 = 12.0;
@@ -228,11 +205,10 @@ pub struct Movement;
 #[derive(SystemSet, Clone, PartialEq, Eq, Hash, Debug)]
 pub struct Noise;
 
-/// What the screen- and him-relative schemes steer by: where he is and his eyes. Taken before
-/// each tick's movement, so `drive` reads nothing but the shooter itself.
+/// What `Mirror` steers by: his eyes. Taken before each tick's movement, so `drive` reads
+/// nothing but the shooter itself.
 #[derive(Resource, Default, Clone, Copy)]
 pub struct Bearings {
-    pub him: Option<Vec3>,
     pub eyes: Option<GlobalTransform>,
 }
 
@@ -284,7 +260,7 @@ fn spawn_shooter(
 pub fn body(at: Transform) -> impl Bundle {
     (
         Shooter { hp: SHOOTER_MAX_HP },
-        (Stagger::default(), Stunned::default(), Sidestep::default()),
+        (Stagger::default(), Stunned::default(), Sidestep::default(), Scrambled::default()),
         physics(),
         at,
     )
@@ -370,15 +346,12 @@ pub fn random_start(rng: &mut impl Rng, layout: &Layout) -> Transform {
     Transform::from_xyz(p.x, 0.9, p.y).with_rotation(Quat::from_rotation_y(rng.random_range(0.0..TAU)))
 }
 
-fn take_bearings(
-    mut bearings: ResMut<Bearings>,
-    him: Query<&GlobalTransform, With<Target>>,
-    eyes: Query<&GlobalTransform, With<MainCamera>>,
-) {
-    *bearings = Bearings { him: him.single().ok().map(|t| t.translation()), eyes: eyes.single().ok().copied() };
+fn take_bearings(mut bearings: ResMut<Bearings>, eyes: Query<&GlobalTransform, With<MainCamera>>) {
+    *bearings = Bearings { eyes: eyes.single().ok().copied() };
 }
 
-/// Moves the shooter by the current `ControlScheme`. Stuns, hops and knock backs override it.
+/// Moves the shooter by the current `ControlScheme` (or the one a dart scrambled you into).
+/// Stuns, hops and knock backs override it.
 #[allow(clippy::type_complexity)]
 fn drive(
     time: Res<Time>,
@@ -393,13 +366,16 @@ fn drive(
             &mut Stagger,
             &mut Stunned,
             &mut Sidestep,
+            &mut Scrambled,
         ),
         With<Shooter>,
     >,
 ) {
     let dt = time.delta_secs();
-    let scheme = *scheme;
-    for (actions, at, mut rot, mut vel, mut stagger, mut stunned, mut side) in &mut q {
+    let chosen = *scheme;
+    for (actions, at, mut rot, mut vel, mut stagger, mut stunned, mut side, mut scrambled) in &mut q {
+        let scheme = scrambled.scheme(chosen);
+        scrambled.left = (scrambled.left - dt).max(0.0);
         let input = actions.clamped_axis_pair(&ShooterAction::Drive);
         side.cooldown -= dt;
         if let Some((_, age, _)) = &mut side.first {
@@ -452,24 +428,13 @@ fn drive(
             continue;
         }
 
-        let planar = match (scheme, scheme.basis(at.0, bearings.him, bearings.eyes.as_ref())) {
-            (ControlScheme::Ice, Some((f, r))) => {
-                let push = (f * input.y + r * input.x).clamp_length_max(1.0) * ICE_PUSH * dt;
-                let v = (vel.0.with_y(0.0) * (1.0 - ICE_DRAG * dt) + push).clamp_length_max(ICE_MAX_SPEED);
-                face(&mut rot, v, v.length() / ICE_MAX_SPEED, dt);
-                v
-            }
-            (_, Some((f, r))) => {
+        let planar = match scheme.basis(bearings.eyes.as_ref()) {
+            Some((f, r)) => {
                 let want = (f * input.y + r * input.x).clamp_length_max(1.0);
                 face(&mut rot, want, want.length(), dt);
                 want * MOVE_SPEED
             }
-            (ControlScheme::Snake, None) => {
-                rot.0 = Quat::from_rotation_y(-input.x * TURN_SPEED * dt) * rot.0;
-                let speed = if input.y < -0.5 { 0.0 } else { SNAKE_SPEED + SNAKE_HURRY * input.y.max(0.0) };
-                rot.0 * Vec3::NEG_Z * speed
-            }
-            _ => {
+            None => {
                 rot.0 = Quat::from_rotation_y(-input.x * TURN_SPEED * dt) * rot.0;
                 rot.0 * Vec3::NEG_Z * input.y * MOVE_SPEED
             }

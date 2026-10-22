@@ -16,7 +16,9 @@ use bevy_firework::{
 
 use crate::{
     combat::{BulletImpact, Grapple, GrappleFired, Gunshot, ShooterHit, TargetHit, WarningShot},
-    shooter::Shooter,
+    difficulty::Tuning,
+    scramble::{Dart, DartMissed, ScrambledHit},
+    shooter::{ControlScheme, Scrambled, Shooter},
     target::MainCamera,
     round::RoundEntity,
 };
@@ -37,7 +39,7 @@ struct Tracer {
 
 pub fn plugin(app: &mut App) {
     app.add_plugins(ParticleSystemPlugin::default())
-        .add_systems(Update, (muzzle_flash, impact_sparks, target_hit, return_fire, thin, expire, draw_tracers, spawn_hook, fly_hook));
+        .add_systems(Update, (muzzle_flash, impact_sparks, target_hit, return_fire, thin, expire, draw_tracers, spawn_hook, fly_hook, dart_glow, dart_lands, mirror_arrow));
 }
 
 fn muzzle_flash(mut commands: Commands, mut shots: MessageReader<Gunshot>) {
@@ -308,6 +310,61 @@ fn expire(mut commands: Commands, time: Res<Time>, mut q: Query<(Entity, &mut Tt
     }
 }
 
+/// The dart's violet. Matches the HUD's scramble glow.
+const DART_GLOW: LinearRgba = LinearRgba::rgb(6.0, 2.2, 12.0);
+
+/// The dart is small and flies away from his eyes, so it carries its own light (it lights the floor
+/// and cover it passes) and leaves a streak behind it, which reads even once the ball is a dot.
+fn dart_glow(mut commands: Commands, darts: Query<Entity, Added<Dart>>) {
+    for dart in &darts {
+        commands.entity(dart).with_children(|c| {
+            c.spawn((
+                Name::new("Dart light"),
+                PointLight {
+                    color: Color::srgb(0.75, 0.4, 1.0),
+                    intensity: 600_000.0,
+                    range: 9.0,
+                    ..default()
+                },
+            ));
+            c.spawn((
+                Name::new("Dart trail"),
+                NotShadowCaster,
+                ParticleSpawner {
+                    particle_settings: vec![ParticleSettings {
+                        lifetime: RandF32 { min: 0.25, max: 0.4 },
+                        initial_scale: RandF32 { min: 0.12, max: 0.2 },
+                        scale_curve: FireworkCurve::even_samples(vec![1.0, 0.0]),
+                        base_color: FireworkGradient::even_samples(vec![DART_GLOW, DART_GLOW.with_alpha(0.0)]),
+                        emissive_color: FireworkGradient::even_samples(vec![DART_GLOW, DART_GLOW.with_alpha(0.0)]),
+                        blend_mode: BlendMode::Add,
+                        pbr: false,
+                        acceleration: Vec3::ZERO,
+                        fade_scene: 0.0,
+                        ..default()
+                    }],
+                    emission_settings: vec![EmissionSettings {
+                        emission_pacing: EmissionPacing::rate(120.0),
+                        emission_shape: EmissionShape::Point,
+                        ..default()
+                    }],
+                    ..default()
+                },
+            ));
+        });
+    }
+}
+
+/// A violet splash where the dart lands on you, a smaller puff where it misses.
+fn dart_lands(mut commands: Commands, mut hits: MessageReader<ScrambledHit>, mut misses: MessageReader<DartMissed>) {
+    for hit in hits.read() {
+        burst(&mut commands, "Scramble splash", hit.at + Vec3::Y * 0.5, Vec3::Y, 1.2, 40, (3.0, 7.0), DART_GLOW, 0.5);
+    }
+    for miss in misses.read() {
+        burst(&mut commands, "Dart fizzle", miss.at, Vec3::Y, 1.0, 14, (1.5, 4.0), DART_GLOW, 0.3);
+    }
+}
+
 /// One-shot particle burst, cleaned up when the spawner finishes.
 #[allow(clippy::too_many_arguments)]
 fn burst(
@@ -362,4 +419,86 @@ fn burst(
         .observe(|finished: On<ParticleSpawnerFinished>, mut commands: Commands| {
             commands.entity(finished.event_target()).despawn();
         });
+}
+
+/// The violet arrow on the floor at your feet while you're scrambled: where Up walks you right now.
+/// It turns as he turns his head, which teaches Mirror without a word. An assist: it fades out
+/// with the dial (`AssistLevers::mirror_arrow`).
+#[derive(Component)]
+struct MirrorArrow;
+
+/// How far ahead of your feet the arrow starts, and how long it is.
+const ARROW_FROM: f32 = 0.5;
+const ARROW_LEN: f32 = 1.8;
+
+#[allow(clippy::too_many_arguments)]
+fn mirror_arrow(
+    mut commands: Commands,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut materials: ResMut<Assets<StandardMaterial>>,
+    tuning: Res<Tuning>,
+    eyes: Query<&GlobalTransform, With<MainCamera>>,
+    shooter: Query<(Entity, &Transform, &Scrambled), With<Shooter>>,
+    mut arrow: Query<(&ChildOf, &mut Transform, &mut Visibility, &MeshMaterial3d<StandardMaterial>), (With<MirrorArrow>, Without<Shooter>)>,
+) {
+    let Ok((you, at, scrambled)) = shooter.single() else {
+        return;
+    };
+    let Some((up, _)) = ControlScheme::Mirror.basis(eyes.single().ok()) else {
+        return;
+    };
+    let strength = tuning.help().mirror_arrow;
+    // One arrow per shooter (the shooter respawns each round, and takes it along).
+    let Some((parent, mut t, mut visible, material)) = arrow.iter_mut().find(|a| a.0.parent() == you) else {
+        // A chevron head on a short shaft, tip at +Y, in the XY plane.
+        let (w, head) = (0.5, ARROW_LEN * 0.45);
+        let tip = ARROW_LEN * 0.5;
+        let neck = tip - head;
+        let shape = Mesh::new(
+            bevy::mesh::PrimitiveTopology::TriangleList,
+            bevy::asset::RenderAssetUsages::default(),
+        )
+        .with_inserted_attribute(
+            Mesh::ATTRIBUTE_POSITION,
+            vec![
+                [0.0, tip, 0.0], [-w, neck, 0.0], [w, neck, 0.0],
+                [-w * 0.35, neck, 0.0], [w * 0.35, neck, 0.0], [w * 0.35, -tip, 0.0], [-w * 0.35, -tip, 0.0],
+            ],
+        )
+        .with_inserted_attribute(Mesh::ATTRIBUTE_NORMAL, vec![[0.0, 0.0, 1.0]; 7])
+        .with_inserted_indices(bevy::mesh::Indices::U16(vec![0, 1, 2, 3, 5, 4, 3, 6, 5]));
+        commands.entity(you).with_child((
+            Name::new("Mirror arrow"),
+            MirrorArrow,
+            NotShadowCaster,
+            Mesh3d(meshes.add(shape)),
+            MeshMaterial3d(materials.add(StandardMaterial {
+                base_color: Color::NONE,
+                unlit: true,
+                alpha_mode: AlphaMode::Blend,
+                double_sided: true,
+                cull_mode: None,
+                ..default()
+            })),
+            Transform::default(),
+            Visibility::Hidden,
+        ));
+        return;
+    };
+    debug_assert_eq!(parent.parent(), you);
+    let on = scrambled.active() && strength > 0.01;
+    *visible = if on { Visibility::Inherited } else { Visibility::Hidden };
+    if !on {
+        return;
+    }
+    // Flat on the floor, pointing along `up` (the triangle's tip is its +Y), in the shooter's frame.
+    let world = Quat::from_rotation_arc(Vec3::NEG_Z, up.normalize_or(Vec3::NEG_Z)) * Quat::from_rotation_x(-std::f32::consts::FRAC_PI_2);
+    let centre = up * (ARROW_FROM + ARROW_LEN * 0.5) + Vec3::Y * (0.03 - at.translation.y);
+    t.rotation = at.rotation.inverse() * world;
+    t.translation = at.rotation.inverse() * centre;
+    if let Some(mut m) = materials.get_mut(&material.0) {
+        // A slow breath so it reads as a hint, not part of the floor.
+        let pulse = 0.75 + 0.25 * (scrambled.left * 5.0).sin();
+        m.base_color = Color::srgba(0.55, 0.12, 1.0, 0.95 * strength * pulse);
+    }
 }

@@ -27,7 +27,7 @@ use crate::{
     nav::{Evade, MoveTo, Route},
     radar::{LiveBlip, RADAR_LAYER, RadarContact},
     round::{Attract, GameState, Online, RoundEntity, SpawnRound, TargetMobile},
-    shooter::Shooter,
+    shooter::{Scrambled, Shooter},
 };
 
 /// Body capsule center height; eyes sit `EYE_OFFSET` above it (~1.6m).
@@ -45,6 +45,17 @@ const WALK_SPEED: f32 = 2.2;
 const RUN_SPEED: f32 = 5.5;
 /// "Close enough" for every arrival check (walk itself homes in to 0.2m).
 const ARRIVE: f32 = 0.5;
+/// While you're scrambled he circles you at this range (m), in legs of this many radians and
+/// seconds, cutting back the other way this often.
+const CIRCLE_RANGE: std::ops::Range<f32> = 7.0..16.0;
+const CIRCLE_STEP: f32 = 0.7;
+const CIRCLE_LEG_SECS: std::ops::Range<f32> = 0.6..1.3;
+const CIRCLE_REVERSE: f64 = 0.3;
+/// While you're scrambled he sweeps his gaze this far either side of you (radians), this fast
+/// (rad/s of phase), turning this fast.
+const SPIN_SWING: f32 = 0.55;
+const SPIN_RATE: f32 = 2.2;
+const SPIN_TURN_SPEED: f32 = 7.0;
 
 #[derive(Component, Reflect)]
 #[reflect(Component)]
@@ -142,6 +153,8 @@ struct Fighting {
     peek: Vec2,
     /// Peeks left before he moves to a different cover.
     peeks_left: u32,
+    /// Out in the open circling you while you're scrambled; which way round (+1/-1).
+    circling: Option<f32>,
 }
 
 /// Leave this cover spot: the next cover plan avoids it.
@@ -174,7 +187,7 @@ fn spawn_target(
             turn_speed: 1.0,
         },
         RigidBody::Kinematic,
-        Collider::capsule(0.4, 1.0),
+        standing_collider(),
         CollisionLayers::new(Layer::Target, [Layer::World, Layer::Shooter, Layer::Bullet]),
         Transform::from_xyz(0.0, BODY_CENTER, 0.0),
         BehaviorTree::from_node(behaviour(), &mut trees),
@@ -387,7 +400,9 @@ fn plan_cover(
     layout: Res<Layout>,
     q: Query<(&Transform, &Suspicion, Option<&Relocate>)>,
 ) {
-    let Ok((t, s, relocate)) = q.get(e) else { return };
+    let Ok((t, s, relocate)) = q.get(e) else {
+        return;
+    };
     let here = t.translation.xz();
     let threat = s.last_known.map_or(here + t.forward().xz() * 10.0, |p| p.xz());
     let cover = layout
@@ -426,6 +441,7 @@ fn fight_listeners() -> Listeners {
                 hp_at_start: hp,
                 peek: Vec2::ZERO,
                 peeks_left: rng.random_range(1..=3),
+                circling: None,
             });
         }),
     ));
@@ -455,9 +471,13 @@ fn fight(
         Has<MoveTo>,
         Has<Grapple>,
         Has<Relocate>,
+        Has<crate::scramble::Charging>,
     )>,
+    you: Query<&Scrambled, With<Shooter>>,
+    tuning: Res<Tuning>,
+    layout: Res<Layout>,
 ) -> TaskStatus {
-    let Ok((t, target, suspicion, plan, mut look, Some(mut fighting), moving, grappling, relocate)) =
+    let Ok((t, target, suspicion, plan, mut look, Some(mut fighting), moving, grappling, relocate, charging)) =
         q.get_mut(e)
     else {
         return RUNNING;
@@ -480,6 +500,44 @@ fn fight(
         look.point = p + Vec3::Y * EYE_OFFSET;
         look.turn_speed = 4.0;
     }
+    // You're scrambled, and your controls are his view: he knows it and presses. He leaves cover
+    // and circles you at range, gaze locked on you and shooting, so the way Up points keeps
+    // turning and lining up a shot means moving. At the top bands he sweeps his gaze on top.
+    let scrambled = you.single().is_ok_and(|s| s.active());
+    if scrambled && let Some(you_at) = suspicion.last_known.map(|p| p.xz()) {
+        let sign = *fighting.circling.get_or_insert_with(|| if rand::random_bool(0.5) { 1.0 } else { -1.0 });
+        if !moving || fighting.timer.tick(time.delta()).is_finished() {
+            let mut rng = rand::rng();
+            // Mostly keep going round; sometimes cut back the other way.
+            let sign = if rng.random_bool(CIRCLE_REVERSE) { -sign } else { sign };
+            let from_you = t.translation.xz() - you_at;
+            let radius = from_you.length().clamp(CIRCLE_RANGE.start, CIRCLE_RANGE.end);
+            let leg = |turn: f32| you_at + Vec2::from_angle(turn).rotate(from_you.normalize_or(Vec2::X)) * radius;
+            let open = |p: Vec2| layout.is_clear(p, 0.6) && !layout.los_blocked(p, you_at);
+            let dest = [sign, -sign, 0.5 * sign, -0.5 * sign]
+                .into_iter()
+                .map(|k| (k, leg(k * CIRCLE_STEP)))
+                .find(|&(_, p)| open(p));
+            if let Some((k, dest)) = dest {
+                fighting.circling = Some(k.signum());
+                commands.entity(e).insert(MoveTo { dest: dest.extend(BODY_CENTER).xzy(), speed: RUN_SPEED, strafe: true });
+            }
+            fighting.timer = Timer::from_seconds(rng.random_range(CIRCLE_LEG_SECS), TimerMode::Once);
+        }
+        let spin = tuning.him().scramble.is_some_and(|l| l.spin);
+        if spin {
+            let eye = t.translation + Vec3::Y * EYE_OFFSET;
+            let swing = SPIN_SWING * (time.elapsed_secs() * SPIN_RATE).sin();
+            look.point = eye + Quat::from_rotation_y(swing) * (look.point - eye);
+            look.turn_speed = SPIN_TURN_SPEED;
+        }
+        return RUNNING;
+    }
+    // It's worn off: back to cover, a fresh one, before you can make him pay for standing out.
+    if fighting.circling.is_some() {
+        commands.entity(e).insert(Relocate(plan.0.spot));
+        return SUCCESS;
+    }
     let goal = if fighting.peeking { fighting.peek } else { plan.0.spot };
     if t.translation.xz().distance(goal) >= ARRIVE {
         if !moving {
@@ -491,7 +549,9 @@ fn fight(
         }
         return RUNNING;
     }
-    if fighting.timer.tick(time.delta()).is_finished() {
+    // Mid wind-up he stays out where he can see you, rather than ducking back with a dart in hand.
+    let throwing = charging && fighting.peeking;
+    if !throwing && fighting.timer.tick(time.delta()).is_finished() {
         let mut rng = rand::rng();
         let peeking = !fighting.peeking;
         if !peeking {
@@ -772,14 +832,42 @@ pub struct Roll {
 }
 
 pub const ROLL_SECS: f32 = 0.7;
+/// The part of a roll (by phase, 0..1) where he's tucked into a ball on the floor: a shot at
+/// standing height goes over him. Matches the dip `juice` gives his view.
+const ROLL_TUCK: std::ops::Range<f32> = 0.12..0.88;
+/// The tucked ball's radius; it sits on the floor.
+const TUCK_RADIUS: f32 = 0.45;
+
+fn standing_collider() -> Collider {
+    Collider::capsule(0.4, 1.0)
+}
+
+fn tucked_collider() -> Collider {
+    Collider::compound(vec![(Vec3::Y * (TUCK_RADIUS - BODY_CENTER), Quat::IDENTITY, Collider::sphere(TUCK_RADIUS))])
+}
+
+/// On while his hitbox is the tucked ball (see `ROLL_TUCK`).
+#[derive(Component)]
+pub struct Tucked;
 
 fn roll(
     mut commands: Commands,
     time: Res<Time>,
-    mut q: Query<(Entity, &mut Roll, &mut LinearVelocity, Option<&MoveTo>)>,
+    mut q: Query<(Entity, &mut Roll, &mut LinearVelocity, Option<&MoveTo>, Has<Tucked>)>,
+    untuck: Query<Entity, (With<Tucked>, Without<Roll>)>,
 ) {
-    for (e, mut roll, mut v, moving) in &mut q {
+    // A roll cut short (or one that just ended) still stands him back up.
+    for e in &untuck {
+        commands.entity(e).remove::<Tucked>().insert(standing_collider());
+    }
+    for (e, mut roll, mut v, moving, tucked) in &mut q {
         roll.t += time.delta_secs();
+        let tuck = ROLL_TUCK.contains(&(roll.t / ROLL_SECS));
+        if tuck && !tucked {
+            commands.entity(e).insert((Tucked, tucked_collider()));
+        } else if !tuck && tucked {
+            commands.entity(e).remove::<Tucked>().insert(standing_collider());
+        }
         if roll.t >= ROLL_SECS {
             v.0 = Vec3::ZERO;
             commands.entity(e).remove::<Roll>();
