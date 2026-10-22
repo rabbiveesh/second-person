@@ -39,7 +39,7 @@ use crate::{
     arena::Layout,
     combat::{self, HitKind},
     round::{self, Online},
-    shooter::{self, Bearings, ControlScheme, ShooterAction, Sidestep, Stagger, Stunned},
+    shooter::{self, Bearings, ControlScheme, Scrambled, ShooterAction, Sidestep, Stagger, Stunned},
 };
 
 pub const TICK_HZ: f64 = 60.0;
@@ -111,6 +111,7 @@ pub fn protocol(app: &mut App) {
     sim_component::<Stagger>(app);
     sim_component::<Stunned>(app);
     sim_component::<Sidestep>(app);
+    sim_component::<Scrambled>(app);
     app.register_message::<NetEvent>().add_direction(NetworkDirection::ServerToClient);
     app.add_channel::<Events>(ChannelSettings {
         mode: ChannelMode::OrderedReliable(ReliableSettings::default()),
@@ -206,6 +207,7 @@ pub trait Simulated:
 impl Simulated for Stagger {}
 impl Simulated for Stunned {}
 impl Simulated for Sidestep {}
+impl Simulated for Scrambled {}
 
 #[derive(SystemSet, Clone, Debug, PartialEq, Eq, Hash)]
 pub struct SimSet;
