@@ -140,17 +140,17 @@ fn firing_spawns_a_bullet_and_a_gunshot() {
 #[test]
 fn shooting_the_target_hurts_and_alerts_him() {
     let mut app = app();
-    // Shooter right behind him: point blank, and out of his view.
-    stage(&mut app, Vec3::new(0.0, 0.9, 6.0), Vec3::new(0.0, 0.9, -10.0));
+    // Shooter side on, close and out of his view.
+    stage(&mut app, Vec3::new(0.0, 0.9, 6.0), Vec3::new(10.0, 0.9, 0.0));
     press(&mut app, KeyCode::Space);
     step(&mut app, 0.5);
 
     assert_eq!(counted::<TargetHit>(&app), 1);
     let target = single::<Target>(&mut app);
-    // From behind, so it lands in the back: well over a seen shot's third of his bar.
+    // An ambush: well over a seen shot's third of his bar, and he's in the fight at once.
     let hp = app.world().get::<Target>(target).unwrap().hp;
-    assert!(hp < TARGET_MAX_HP - 50.0, "a shot in the back hits hard: {hp}");
-    assert!(app.world().get::<Suspicion>(target).unwrap().level > 0.5);
+    assert!(hp > 0.0 && hp < TARGET_MAX_HP - 50.0, "an ambush hits hard: {hp}");
+    assert!(app.world().get::<Suspicion>(target).unwrap().engaged, "being shot engages him");
 }
 
 /// The eyes' local offset angle from rest (the AI only turns the body and head).
@@ -162,7 +162,7 @@ fn flinch_angle(app: &mut App) -> f32 {
 #[test]
 fn getting_shot_jolts_his_view_then_it_settles() {
     let mut app = app();
-    stage(&mut app, Vec3::new(0.0, 0.9, 6.0), Vec3::new(0.0, 0.9, -10.0));
+    stage(&mut app, Vec3::new(0.0, 0.9, 6.0), Vec3::new(10.0, 0.9, 0.0));
     press(&mut app, KeyCode::Space);
     let mut peak: f32 = 0.0;
     for _ in 0..30 {
@@ -1314,6 +1314,7 @@ fn his_scramble_dart_scrambles_a_shooter_who_stands_still() {
     use second_person::shooter::{ControlScheme, Scrambled};
     let mut app = app_with(|app| {
         app.insert_resource(Tuning { stealth: 10, gunfight: 10, assists: 0.0 });
+        app.insert_resource(second_person::experiments::Experiments { scramble_dart: true });
         count::<DartThrown>(app);
         count::<ScrambledHit>(app);
     });
@@ -1372,4 +1373,50 @@ fn his_scramble_dart_scrambles_a_shooter_who_stands_still() {
     assert!(moved > 8.0, "and he keeps moving while it lasts: {moved}m");
     assert!(at > 4.0, "never in the opening seconds: {at}");
     assert!(at < 30.0, "but soon after: {at}");
+}
+
+#[test]
+fn an_ambush_in_the_back_is_lethal() {
+    let mut a = app();
+    let target = single::<Target>(&mut a);
+    shot_damage_from(&mut a, Vec3::new(0.0, 0.9, 4.0), Vec3::new(0.0, 0.9, -10.0));
+    assert_eq!(a.world().get::<Target>(target).unwrap().hp, 0.0, "one shot before he suspects a thing");
+}
+
+#[test]
+fn from_far_off_a_shot_in_the_back_is_only_a_big_hit() {
+    let mut a = app();
+    let target = single::<Target>(&mut a);
+    let hit = shot_damage_from(&mut a, Vec3::new(0.0, 0.9, 14.0), Vec3::new(0.0, 0.9, -10.0));
+    let t = a.world().get::<Target>(target).unwrap();
+    assert!(hit > 0.0 && t.hp > 0.0, "beyond execution range: {hit}");
+}
+
+#[test]
+fn a_side_on_ambush_pays_big_but_only_once() {
+    use second_person::combat::{AMBUSH_BONUS, BLIND_BONUS, BLIND_SPREAD, SEEN_SPREAD, SHOT_DAMAGE};
+    // Side on before he suspects a thing, then again before he can turn round.
+    let from = Vec3::new(0.0, 0.9, 4.0);
+    let side = Vec3::new(10.0, 0.9, 0.0);
+    let mut a = app();
+    let opener = shot_damage_from(&mut a, from, side);
+    let least = SHOT_DAMAGE * BLIND_BONUS * (1.0 - BLIND_SPREAD) * AMBUSH_BONUS;
+    assert!(opener >= least - 0.01, "an ambush hits hard: {opener}");
+    let second = shot_damage_from(&mut a, from, side);
+    assert!(second <= SHOT_DAMAGE * (1.0 + SEEN_SPREAD) + 0.01, "he's braced for the next: {second}");
+}
+
+#[test]
+fn once_he_is_on_to_you_a_flank_swings_the_fight_but_never_ends_it() {
+    use second_person::combat::{SEEN_SPREAD, SHOT_DAMAGE, SURPRISE_CAP};
+    let from = Vec3::new(0.0, 0.9, 4.0);
+    let away = Vec3::new(0.0, 0.9, -10.0);
+    let mut a = app();
+    let target = single::<Target>(&mut a);
+    // Suspicious enough to be warning you, so it's no longer an ambush.
+    a.world_mut().get_mut::<Suspicion>(target).unwrap().level = 0.6;
+    let max_hp = a.world().get::<Target>(target).unwrap().max_hp;
+    let flank = shot_damage_from(&mut a, from, away);
+    assert!(flank > SHOT_DAMAGE * (1.0 + SEEN_SPREAD), "still beats a seen shot: {flank}");
+    assert!(flank <= max_hp * SURPRISE_CAP + 0.01, "but takes at most the cap: {flank}");
 }

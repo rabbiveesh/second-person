@@ -80,6 +80,7 @@ fn main() {
         .insert_resource(TouchControls(false))
         .insert_resource(ArenaMode::Seed(seed))
         .insert_resource(Tuning { stealth: gunfight, gunfight, assists: 0.0 })
+        .insert_resource(second_person::experiments::Experiments { scramble_dart: true })
         .insert_resource(scheme)
         .insert_resource(Bot::new(player, seed))
         .insert_resource(EguiGlobalSettings { auto_create_primary_context: false, ..default() })

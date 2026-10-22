@@ -11,7 +11,7 @@ use crate::{
     Layer,
     arena::Layout,
     radar::{LiveBlip, RADAR_LAYER, RadarContact},
-    round::{Attract, GameState, RoundEntity, SpawnRound},
+    round::{Attract, GameState, Online, RoundEntity, SpawnRound},
     target::MainCamera,
 };
 
@@ -25,6 +25,7 @@ const TURN_SPEED: f32 = 2.4;
 /// How the arrows (or the stick) map to movement. You always drive `Tank`; his scramble dart
 /// flips you into `Mirror` for a while.
 #[derive(Resource, Reflect, Default, Clone, Copy, PartialEq, Eq, Debug)]
+#[derive(serde::Serialize, serde::Deserialize)]
 #[reflect(Resource)]
 pub enum ControlScheme {
     /// Up/down drive along your own facing, left/right turn.
@@ -51,8 +52,8 @@ impl ControlScheme {
         self == Self::Tank
     }
 
-    /// For `Mirror`: the world directions (forward, right) that Up and Right push along,
-    /// on the floor plane, from his view. `None` for `Tank`.
+    /// For `Mirror`: the world directions (forward, right) that Up and Right push along, on the
+    /// floor plane, from his view. `None` for `Tank`.
     pub fn basis(self, eyes: Option<&GlobalTransform>) -> Option<(Vec3, Vec3)> {
         match self {
             Self::Tank => None,
@@ -67,7 +68,8 @@ impl ControlScheme {
 
 /// His scramble dart hit you: until `left` runs out you drive with `into` instead of your own
 /// `ControlScheme` (see `scramble`).
-#[derive(Component, Reflect, Default, Clone, Copy, Debug)]
+#[derive(Component, Reflect, Default, Clone, Copy, PartialEq, Debug)]
+#[derive(serde::Serialize, serde::Deserialize)]
 #[reflect(Component)]
 pub struct Scrambled {
     pub left: f32,
@@ -89,6 +91,7 @@ impl Scrambled {
 const FACE_TURN_SPEED: f32 = 10.0;
 
 #[derive(Actionlike, PartialEq, Eq, Clone, Copy, Hash, Debug, Reflect)]
+#[derive(serde::Serialize, serde::Deserialize)]
 pub enum ShooterAction {
     /// x: turn (right positive), y: throttle (forward positive). Analog, so a touch stick or
     /// gamepad gives partial speed; arrow keys drive it as a d-pad.
@@ -96,10 +99,13 @@ pub enum ShooterAction {
     Drive,
     Fire,
     Whistle,
+    /// Duel only: shut your eyes, which blinds the other player (they see through them).
+    CloseEyes,
 }
 
 #[derive(Component, Reflect)]
 #[reflect(Component)]
+#[require(Stride)]
 pub struct Shooter {
     pub hp: f32,
 }
@@ -125,16 +131,21 @@ pub struct Whistle {
 const WHISTLE_COOLDOWN: f32 = 2.0;
 
 /// While > 0, the shooter is being knocked back by `push` and can't walk (only turn).
-#[derive(Component, Reflect, Default)]
+#[derive(Component, Reflect, Default, Clone, PartialEq, Debug)]
+#[derive(serde::Serialize, serde::Deserialize)]
 #[reflect(Component)]
 pub struct Stagger {
     pub left: f32,
     pub push: Vec3,
+    /// How many times you've walked into something. Counted rather than flagged, so `make_noise`
+    /// thuds once per bump even when the movement is re-run.
+    pub bumps: u32,
 }
 
 /// Caught by his grappling hook: no walking, turning or firing until `left` runs out. While
 /// `pull_to` is set you're being reeled toward that point.
-#[derive(Component, Reflect, Default)]
+#[derive(Component, Reflect, Default, Clone, PartialEq, Debug)]
+#[derive(serde::Serialize, serde::Deserialize)]
 #[reflect(Component)]
 pub struct Stunned {
     pub left: f32,
@@ -145,18 +156,19 @@ const PULL_SPEED: f32 = 14.0;
 
 impl Stagger {
     /// Knocked back at `push` (m/s), easing off over the stagger.
-    pub fn knock(push: Vec3) -> Self {
-        Self { left: STAGGER_SECS, push }
+    pub fn knock(self, push: Vec3) -> Self {
+        Self { left: STAGGER_SECS, push, ..self }
     }
 }
 
 /// Double-tap left or right (arrows, or a double flick of the touch stick) to hop sideways
 /// without turning.
-#[derive(Component, Reflect, Default)]
+#[derive(Component, Reflect, Default, Clone, PartialEq, Debug)]
+#[derive(serde::Serialize, serde::Deserialize)]
 #[reflect(Component)]
 pub struct Sidestep {
-    /// The first tap of a possible double: its side (-1 left, +1 right), when, and the facing
-    /// before it, since a tap on a turn key also turns you a little.
+    /// The first tap of a possible double: its side (-1 left, +1 right), how long ago, and the
+    /// facing before it, since a tap on a turn key also turns you a little.
     first: Option<(f32, f32, Quat)>,
     /// Whether the stick is pushed left/right right now (to catch each fresh push).
     held: f32,
@@ -184,15 +196,48 @@ const BUMP_REACH: f32 = 0.15;
 const KNOCKBACK_SPEED: f32 = 4.0;
 const STAGGER_SECS: f32 = 0.25;
 
+/// The shooter's movement: a pure function of its inputs and movement state, run on the fixed
+/// tick, so it can be re-run (a duel client replays it to predict its own body).
+#[derive(SystemSet, Clone, PartialEq, Eq, Hash, Debug)]
+pub struct Movement;
+
+/// Turns movement into sounds (`Footstep`, `Bump`), after `Movement`.
+#[derive(SystemSet, Clone, PartialEq, Eq, Hash, Debug)]
+pub struct Noise;
+
+/// What `Mirror` steers by: his eyes. Taken before each tick's movement, so `drive` reads
+/// nothing but the shooter itself.
+#[derive(Resource, Default, Clone, Copy)]
+pub struct Bearings {
+    pub eyes: Option<GlobalTransform>,
+}
+
 pub fn plugin(app: &mut App) {
-    app.add_plugins(InputManagerPlugin::<ShooterAction>::default())
+    // A duel server brings its own (server-mode) input plugin.
+    if !app.is_plugin_added::<InputManagerPlugin<ShooterAction>>() {
+        app.add_plugins(InputManagerPlugin::<ShooterAction>::default());
+    }
+    // There's no him to take bearings on in a duel, so its movement never reads the world.
+    if !app.world().contains_resource::<Online>() {
+        app.add_systems(FixedUpdate, take_bearings.before(Movement));
+    }
+    app.init_resource::<Bearings>()
         .add_message::<Footstep>()
         .add_message::<Bump>()
         .add_message::<Whistle>()
         .init_resource::<ControlScheme>()
         .register_type::<ControlScheme>()
-        .add_systems(OnEnter(GameState::Playing), spawn_shooter.in_set(SpawnRound).run_if(|attract: Res<Attract>| !attract.0))
-        .add_systems(Update, ((drive, bump).chain(), whistle).run_if(in_state(GameState::Playing)));
+        .add_systems(OnEnter(GameState::Playing), spawn_shooter.in_set(SpawnRound).run_if(|attract: Res<Attract>| !attract.0).run_if(not(resource_exists::<Online>)))
+        // Movement runs on the fixed tick, so it's the same at any frame rate (and can be re-run).
+        .add_systems(
+            FixedUpdate,
+            (
+                (drive, bump).chain().in_set(Movement),
+                make_noise.in_set(Noise).after(Movement),
+            )
+                .run_if(in_state(GameState::Playing)),
+        )
+        .add_systems(Update, whistle.run_if(in_state(GameState::Playing)));
 }
 
 fn spawn_shooter(
@@ -201,27 +246,54 @@ fn spawn_shooter(
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
 ) {
+    commands.spawn((
+        Name::new("Shooter"),
+        RoundEntity,
+        body(random_start(&mut rand::rng(), &layout)),
+        controls(),
+        looks(&mut meshes, &mut materials),
+    ));
+}
+
+/// What the simulation needs of a shooter: health, movement state and the physics body.
+/// A duel server spawns one per player.
+pub fn body(at: Transform) -> impl Bundle {
+    (
+        Shooter { hp: SHOOTER_MAX_HP },
+        (Stagger::default(), Stunned::default(), Sidestep::default(), Scrambled::default()),
+        physics(),
+        at,
+    )
+}
+
+/// The rigid body alone: a duel client adds this to the body it predicts.
+pub fn physics() -> impl Bundle {
+    (
+        RigidBody::Dynamic,
+        Collider::capsule(RADIUS, 1.0),
+        LockedAxes::ROTATION_LOCKED,
+        Friction::ZERO.with_combine_rule(CoefficientCombine::Min),
+        CollisionLayers::new(Layer::Shooter, [Layer::World, Layer::Target]),
+    )
+}
+
+/// The keyboard bindings (touch writes the same `ActionState`).
+pub fn controls() -> InputMap<ShooterAction> {
+    InputMap::default()
+        .with_dual_axis(ShooterAction::Drive, VirtualDPad::arrow_keys())
+        .with(ShooterAction::Fire, KeyCode::Space)
+        .with(ShooterAction::Whistle, KeyCode::KeyW)
+}
+
+/// How a shooter looks: orange capsule, visor, gun, and its radar marks.
+pub fn looks(meshes: &mut Assets<Mesh>, materials: &mut Assets<StandardMaterial>) -> impl Bundle {
     let blip = materials.add(StandardMaterial {
         base_color: Color::srgb(0.2, 1.0, 0.3),
         unlit: true,
         ..default()
     });
 
-    commands.spawn((
-        Name::new("Shooter"),
-        RoundEntity,
-        Shooter { hp: SHOOTER_MAX_HP },
-        (Stagger::default(), Stunned::default(), Sidestep::default(), Scrambled::default()),
-        InputMap::default()
-            .with_dual_axis(ShooterAction::Drive, VirtualDPad::arrow_keys())
-            .with(ShooterAction::Fire, KeyCode::Space)
-            .with(ShooterAction::Whistle, KeyCode::KeyW),
-        RigidBody::Dynamic,
-        Collider::capsule(RADIUS, 1.0),
-        LockedAxes::ROTATION_LOCKED,
-        Friction::ZERO.with_combine_rule(CoefficientCombine::Min),
-        CollisionLayers::new(Layer::Shooter, [Layer::World, Layer::Target]),
-        random_start(&mut rand::rng(), &layout),
+    (
         Mesh3d(meshes.add(Capsule3d::new(0.35, 1.0))),
         MeshMaterial3d(materials.add(Color::srgb(0.95, 0.5, 0.1))),
         RadarContact(Color::srgb(0.2, 1.0, 0.3)),
@@ -259,7 +331,7 @@ fn spawn_shooter(
                 LiveBlip,
             ),
         ],
-    ));
+    )
 }
 
 /// A random start: clear of cover, away from the target, facing anywhere.
@@ -274,18 +346,21 @@ pub fn random_start(rng: &mut impl Rng, layout: &Layout) -> Transform {
     Transform::from_xyz(p.x, 0.9, p.y).with_rotation(Quat::from_rotation_y(rng.random_range(0.0..TAU)))
 }
 
-/// Moves the shooter by the current `ControlScheme`. Stuns, hops and knock backs override it.
-#[allow(clippy::too_many_arguments)]
+fn take_bearings(mut bearings: ResMut<Bearings>, eyes: Query<&GlobalTransform, With<MainCamera>>) {
+    *bearings = Bearings { eyes: eyes.single().ok().copied() };
+}
+
+/// Moves the shooter by the current `ControlScheme` (or the one a dart scrambled you into).
+/// Stuns, hops and knock backs override it.
+#[allow(clippy::type_complexity)]
 fn drive(
     time: Res<Time>,
     scheme: Res<ControlScheme>,
-    eyes: Query<&GlobalTransform, With<MainCamera>>,
-    mut step: Local<f32>,
-    mut steps: MessageWriter<Footstep>,
+    bearings: Res<Bearings>,
     mut q: Query<
         (
             &ActionState<ShooterAction>,
-            &Transform,
+            &Position,
             &mut Rotation,
             &mut LinearVelocity,
             &mut Stagger,
@@ -296,15 +371,16 @@ fn drive(
         With<Shooter>,
     >,
 ) {
-    let now = time.elapsed_secs();
     let dt = time.delta_secs();
     let chosen = *scheme;
-    let eyes = eyes.single().ok();
-    for (actions, t, mut rot, mut vel, mut stagger, mut stunned, mut side, mut scrambled) in &mut q {
+    for (actions, at, mut rot, mut vel, mut stagger, mut stunned, mut side, mut scrambled) in &mut q {
         let scheme = scrambled.scheme(chosen);
         scrambled.left = (scrambled.left - dt).max(0.0);
         let input = actions.clamped_axis_pair(&ShooterAction::Drive);
         side.cooldown -= dt;
+        if let Some((_, age, _)) = &mut side.first {
+            *age += dt;
+        }
         // A fresh push straight left or right (not a diagonal, which is driving while turning).
         let pushed = if scheme.turns() && input.x.abs() > 0.5 && input.y.abs() < 0.5 { input.x.signum() } else { 0.0 };
         let tap = (pushed != 0.0 && side.held != pushed).then_some(pushed);
@@ -313,7 +389,7 @@ fn drive(
             side.first = None;
         } else if let Some(dir) = tap {
             match side.first {
-                Some((first, at, facing)) if first == dir && now - at <= DOUBLE_TAP_WINDOW && side.cooldown <= 0.0 => {
+                Some((first, age, facing)) if first == dir && age <= DOUBLE_TAP_WINDOW && side.cooldown <= 0.0 => {
                     // Undo the little turn the two taps made, then hop square to the side.
                     rot.0 = facing;
                     side.first = None;
@@ -321,17 +397,16 @@ fn drive(
                     side.cooldown = HOP_COOLDOWN;
                     side.velocity = rot.0 * Vec3::X * dir * HOP_SPEED;
                 }
-                _ => side.first = Some((dir, now, rot.0)),
+                _ => side.first = Some((dir, 0.0, rot.0)),
             }
         }
 
         if stunned.left > 0.0 {
-            stunned.left -= time.delta_secs();
-            let pull = stunned.pull_to.map_or(Vec3::ZERO, |p| (p - t.translation).with_y(0.0).normalize_or_zero() * PULL_SPEED);
+            stunned.left -= dt;
+            let pull = stunned.pull_to.map_or(Vec3::ZERO, |p| (p - at.0).with_y(0.0).normalize_or_zero() * PULL_SPEED);
             vel.0 = Vec3::new(pull.x, vel.0.y, pull.z);
             stagger.left = 0.0;
             side.left = 0.0;
-            *step = 0.0;
             continue;
         }
         // A knock back (his laser, a wall) cuts a hop short.
@@ -341,25 +416,19 @@ fn drive(
         if side.left > 0.0 {
             side.left -= dt;
             vel.0 = Vec3::new(side.velocity.x, vel.0.y, side.velocity.z);
-            if side.left <= 0.0 {
-                // Landing scuffs like a step, so he can hear it.
-                steps.write(Footstep { at: t.translation });
-            }
-            *step = 0.0;
             continue;
         }
         if stagger.left > 0.0 {
-            stagger.left -= time.delta_secs();
+            stagger.left -= dt;
             let push = stagger.push * (stagger.left / STAGGER_SECS).max(0.0);
             vel.0 = Vec3::new(push.x, vel.0.y, push.z);
             if scheme.turns() {
                 rot.0 = Quat::from_rotation_y(-input.x * TURN_SPEED * dt) * rot.0;
             }
-            *step = 0.0;
             continue;
         }
 
-        let planar = match scheme.basis(eyes) {
+        let planar = match scheme.basis(bearings.eyes.as_ref()) {
             Some((f, r)) => {
                 let want = (f * input.y + r * input.x).clamp_length_max(1.0);
                 face(&mut rot, want, want.length(), dt);
@@ -371,15 +440,44 @@ fn drive(
             }
         };
         vel.0 = Vec3::new(planar.x, vel.0.y, planar.z);
+    }
+}
 
-        if planar.length() > 0.5 {
-            *step -= time.delta_secs();
-            if *step <= 0.0 {
-                *step = STEP_INTERVAL;
-                steps.write(Footstep { at: t.translation });
-            }
-        } else {
-            *step = 0.0;
+/// Footstep timing and what's already been heard. Not simulation state: re-running the
+/// movement never touches it, so nothing sounds twice.
+#[derive(Component, Default)]
+pub struct Stride {
+    next: f32,
+    hopping: bool,
+    bumps: u32,
+}
+
+/// Steps while walking, a scuff on landing a hop, a thud on each bump.
+fn make_noise(
+    time: Res<Time>,
+    mut steps: MessageWriter<Footstep>,
+    mut bumps: MessageWriter<Bump>,
+    mut q: Query<(&Position, &LinearVelocity, &Stagger, &Stunned, &Sidestep, &mut Stride)>,
+) {
+    for (at, vel, stagger, stunned, side, mut stride) in &mut q {
+        if stagger.bumps > stride.bumps {
+            // The knock back points away from what you walked into.
+            bumps.write(Bump { at: at.0 - stagger.push.normalize_or_zero() * RADIUS });
+        }
+        stride.bumps = stagger.bumps;
+        let hopping = side.left > 0.0;
+        if stride.hopping && !hopping && stagger.left <= 0.0 && stunned.left <= 0.0 {
+            steps.write(Footstep { at: at.0 });
+        }
+        stride.hopping = hopping;
+        if hopping || stagger.left > 0.0 || stunned.left > 0.0 || vel.0.with_y(0.0).length() <= 0.5 {
+            stride.next = 0.0;
+            continue;
+        }
+        stride.next -= time.delta_secs();
+        if stride.next <= 0.0 {
+            stride.next = STEP_INTERVAL;
+            steps.write(Footstep { at: at.0 });
         }
     }
 }
@@ -389,9 +487,7 @@ fn face(rot: &mut Rotation, dir: Vec3, push: f32, dt: f32) {
     if push < 0.1 {
         return;
     }
-    let Ok(dir) = Dir3::new(dir.with_y(0.0)) else {
-        return;
-    };
+    let Ok(dir) = Dir3::new(dir.with_y(0.0)) else { return };
     let goal = Quat::from_rotation_y(f32::atan2(-dir.x, -dir.z));
     let angle = rot.0.angle_between(goal);
     if angle > 1e-4 {
@@ -402,18 +498,15 @@ fn face(rot: &mut Rotation, dir: Vec3, push: f32, dt: f32) {
 /// Walking into something solid: thud and get knocked back, so you notice you're stuck.
 fn bump(
     spatial: SpatialQuery,
-    mut bumps: MessageWriter<Bump>,
-    mut q: Query<(&Transform, &mut LinearVelocity, &mut Stagger, &Stunned, &mut Sidestep), With<Shooter>>,
+    mut q: Query<(&Position, &mut LinearVelocity, &mut Stagger, &Stunned, &mut Sidestep), With<Shooter>>,
 ) {
-    for (t, mut vel, mut stagger, stunned, mut side) in &mut q {
+    for (at, mut vel, mut stagger, stunned, mut side) in &mut q {
         if stagger.left > 0.0 || stunned.left > 0.0 {
             continue;
         }
-        let Ok(dir) = Dir3::new(Vec3::new(vel.0.x, 0.0, vel.0.z)) else {
-            continue;
-        };
+        let Ok(dir) = Dir3::new(Vec3::new(vel.0.x, 0.0, vel.0.z)) else { continue };
         let Some(hit) = spatial.cast_ray(
-            t.translation,
+            at.0,
             dir,
             RADIUS + BUMP_REACH,
             true,
@@ -422,9 +515,8 @@ fn bump(
             continue;
         };
         let normal = Vec3::new(hit.normal.x, 0.0, hit.normal.z).normalize_or(-dir.as_vec3());
-        bumps.write(Bump { at: t.translation + dir * hit.distance });
         side.left = 0.0;
-        *stagger = Stagger::knock(normal * KNOCKBACK_SPEED);
+        *stagger = Stagger { bumps: stagger.bumps + 1, ..stagger.clone().knock(normal * KNOCKBACK_SPEED) };
         vel.0 = Vec3::new(stagger.push.x, vel.0.y, stagger.push.z);
     }
 }

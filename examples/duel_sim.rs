@@ -20,6 +20,7 @@ use second_person::{
     arena::ArenaMode,
     difficulty::Tuning,
     round::GameState,
+    experiments::Experiments,
     scramble::Armed,
     shooter::{ControlScheme, Scrambled, Shooter},
     target::{Suspicion, Target},
@@ -156,6 +157,7 @@ fn main() {
     .insert_resource(a.tuning)
     .insert_resource(a.scheme)
     .insert_resource(Armed(a.dart))
+    .insert_resource(Experiments { scramble_dart: true })
     .insert_resource(Bot::new(a.player, a.seed))
     .add_plugins(bot::plugin);
     app.finish();

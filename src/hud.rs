@@ -7,9 +7,10 @@ use rand::seq::IndexedRandom;
 use crate::{
     arena::Layout,
     combat::{HitKind, ShooterHit, TargetHit},
+    experiments::Experiments,
     layout::ScreenLayout,
     radar::{RadarCamera, RadarMode},
-    round::{GameState, TargetMobile},
+    round::{GameState, Online, TargetMobile},
     scramble::Charging,
     shooter::{ControlScheme, SHOOTER_MAX_HP, Scrambled, Shooter, Stunned},
     start::Started,
@@ -30,9 +31,15 @@ struct Flashes {
     ghost: f32,
     ghost_hold: f32,
     ended: f32,
+    /// Whether the last hit on him was an execution, for the end banner.
+    executed: bool,
     /// End-of-round headline, picked when the round ends.
     banner: &'static str,
 }
+
+/// Lines another mode adds under the bars (a duel says whose eyes are shut).
+#[derive(Resource, Default)]
+pub struct Notes(pub Vec<String>);
 
 /// Hold the end banner back so you can watch him (or yourself) go down.
 const BANNER_DELAY: f32 = 1.2;
@@ -63,6 +70,17 @@ const WIN_BANNERS: &[&str] = &[
     "YEEEEEEHAWWW!",
 ];
 
+/// Killed him with one shot in the back before he knew you were there. Beats flawless.
+const EXECUTION_BANNERS: &[&str] = &[
+    "EXECUTED",
+    "He never saw it coming.",
+    "Nothing personal.",
+    "Requiescat in pace.",
+    "One shot. One kill.",
+    "Silent but deadly.",
+    "Didn't even turn around.",
+];
+
 /// Won without taking a scratch.
 const FLAWLESS_BANNER: &str = "FLAWLESS VICTORY";
 
@@ -71,6 +89,7 @@ const SCRAMBLE_VIOLET: egui::Color32 = egui::Color32::from_rgb(196, 107, 255);
 
 pub fn plugin(app: &mut App) {
     app.init_resource::<Flashes>()
+        .init_resource::<Notes>()
         .add_systems(Startup, spawn_hud_camera)
         .add_systems(Update, track_flashes)
         .add_systems(EguiPrimaryContextPass, draw_hud);
@@ -101,27 +120,30 @@ fn track_flashes(
     target: Option<Single<&Target>>,
 ) {
     let decay = time.delta_secs() * 2.5;
+    flashes.hit = (flashes.hit - decay).max(0.0);
+    // Before the banner: the killing hit can arrive on the frame the round ends.
+    if let Some(h) = hit.read().last() {
+        flashes.hit = if h.kind == HitKind::Seen { 0.7 } else { 1.0 };
+        flashes.hit_kind = Some(h.kind);
+        flashes.executed = h.execution;
+        flashes.ghost_hold = 0.45;
+    }
     if flashes.ended == 0.0 && *state.get() != GameState::Playing {
         let flawless = shooter.is_some_and(|s| s.hp >= SHOOTER_MAX_HP);
         flashes.banner = match state.get() {
+            GameState::Won if flashes.executed => EXECUTION_BANNERS.choose(&mut rand::rng()).unwrap(),
             GameState::Won if flawless => FLAWLESS_BANNER,
             GameState::Won => WIN_BANNERS.choose(&mut rand::rng()).unwrap(),
             _ => DEATH_BANNERS.choose(&mut rand::rng()).unwrap(),
         };
     }
     flashes.hurt = (flashes.hurt - decay).max(0.0);
-    flashes.hit = (flashes.hit - decay).max(0.0);
     flashes.ended = match state.get() {
         GameState::Playing => 0.0,
         _ => flashes.ended + time.delta_secs(),
     };
     if hurt.read().count() > 0 {
         flashes.hurt = 0.6;
-    }
-    if let Some(h) = hit.read().last() {
-        flashes.hit = if h.kind == HitKind::Seen { 0.7 } else { 1.0 };
-        flashes.hit_kind = Some(h.kind);
-        flashes.ghost_hold = 0.45;
     }
     let now = target.map_or(1.0, |t| t.hp / t.max_hp.max(1.0));
     flashes.ghost_hold -= time.delta_secs();
@@ -149,7 +171,14 @@ fn draw_hud(
     shooter: Option<Single<(&Shooter, &Stunned, &Scrambled)>>,
     target: Option<Single<(&Target, &Suspicion, Option<&Activity>, Option<&Charging>)>>,
     radar_camera: Option<Single<&Camera, With<RadarCamera>>>,
+    (online, notes, mut experiments, mut secret): (
+        Option<Res<Online>>,
+        Res<Notes>,
+        ResMut<Experiments>,
+        Local<SecretPanel>,
+    ),
 ) -> Result {
+    let online = online.is_some();
     let ctx = contexts.ctx_mut()?;
     let screen = ctx.content_rect();
     let view = rect(layout.view);
@@ -208,10 +237,19 @@ fn draw_hud(
                     );
                 }
                 if let Some(target) = &target {
-                    let (target, suspicion, activity, _) = **target;
+                    let (target, ..) = **target;
                     ui.add_space(6.0);
-                    ui.label("TARGET");
+                    let label = egui::Label::new(if online { "THEM" } else { "TARGET" }).sense(egui::Sense::click());
+                    if ui.add(label).clicked() {
+                        secret.tap(ui.input(|i| i.time));
+                    }
                     health_bar(ui, target.hp / target.max_hp.max(1.0), flashes.ghost);
+                }
+                for note in &notes.0 {
+                    ui.colored_label(egui::Color32::from_rgb(255, 200, 80), note);
+                }
+                if let Some(target) = target.as_ref().filter(|_| !online) {
+                    let (_, suspicion, activity, _) = **target;
                     let colour = if suspicion.engaged {
                         egui::Color32::from_rgb(220, 50, 40)
                     } else {
@@ -243,7 +281,7 @@ fn draw_hud(
                         if ui.button(format!("radar: {:?}", *radar_mode)).clicked() {
                             *radar_mode = radar_mode.next();
                         }
-                        if ui.button(format!("he walks: {}", if mobile.0 { "on" } else { "off" })).clicked() {
+                        if !online && ui.button(format!("he walks: {}", if mobile.0 { "on" } else { "off" })).clicked() {
                             mobile.0 = !mobile.0;
                         }
                     });
@@ -284,21 +322,37 @@ fn draw_hud(
         whistle.button = Rect::default();
     }
 
+    if secret.open {
+        experiments_panel(ctx, &mut experiments, &mut secret);
+    }
+
     // Key hints, only in keyboard mode. Skip the area entirely in touch mode: drawn empty, egui
     // remembers it as zero-width and the hints wrap into a one-letter column when they come back.
     if !touch.0 {
         egui::Area::new("help".into())
             .anchor(egui::Align2::LEFT_BOTTOM, [16.0, -16.0])
             .show(ctx, |ui| {
+                // A dart's scramble shows its own hint while it lasts.
+                let controls = shooter.as_ref().map_or(*controls, |s| s.2.scheme(*controls));
+                let hints = if online {
+                    format!(
+                        "{}   Space fire   W whistle   Shift close your eyes   Tab radar: {:?}   arena: {}",
+                        controls.hint(),
+                        *radar_mode,
+                        arena.name,
+                    )
+                } else {
+                    format!(
+                        "{}   Space fire   W whistle   M target walks: {}   Tab radar: {:?}   L arena: {}   F1 inspector",
+                        controls.hint(),
+                        if mobile.0 { "on" } else { "off" },
+                        *radar_mode,
+                        arena.name,
+                    )
+                };
                 ui.add(
                     egui::Label::new(
-                        egui::RichText::new(format!(
-                            "{}   Space fire   W whistle   M target walks: {}   Tab radar: {:?}   L arena: {}   F1 inspector",
-                            shooter.as_ref().map_or(*controls, |s| s.2.scheme(*controls)).hint(),
-                            if mobile.0 { "on" } else { "off" },
-                            *radar_mode,
-                            arena.name,
-                        ))
+                        egui::RichText::new(hints)
                         .color(egui::Color32::WHITE)
                         .background_color(egui::Color32::from_black_alpha(140)),
                     )
@@ -380,7 +434,9 @@ fn draw_hud(
                 egui::Frame::popup(ui.style()).show(ui, |ui| {
                     ui.vertical_centered(|ui| {
                         ui.label(egui::RichText::new(text).size(size).color(colour).strong());
-                        if touch.0 {
+                        if online {
+                            ui.label(egui::RichText::new("next round coming up").size(18.0));
+                        } else if touch.0 {
                             if ui.button(egui::RichText::new("go again").size(22.0)).clicked() {
                                 next.set(GameState::Playing);
                             }
@@ -510,5 +566,48 @@ mod tests {
         assert_eq!(hp_label(0.0), "0 HP");
         assert_eq!(hp_label(99.2), "100 HP");
         assert_eq!(hp_label(100.0), "100 HP");
+    }
+}
+
+/// The experiments panel's hidden handle: five quick taps on the TARGET label open it.
+#[derive(Default)]
+struct SecretPanel {
+    taps: Vec<f64>,
+    open: bool,
+}
+
+const SECRET_TAPS: usize = 5;
+const SECRET_WITHIN: f64 = 2.5;
+
+impl SecretPanel {
+    fn tap(&mut self, now: f64) {
+        self.taps.retain(|t| now - t <= SECRET_WITHIN);
+        self.taps.push(now);
+        if self.taps.len() >= SECRET_TAPS {
+            self.taps.clear();
+            self.open = !self.open;
+        }
+    }
+}
+
+/// A checkbox per experiment (see `experiments`); only writes the resource when something
+/// changed, so it's saved once per flip.
+fn experiments_panel(ctx: &egui::Context, experiments: &mut ResMut<Experiments>, secret: &mut SecretPanel) {
+    let mut edited = **experiments;
+    egui::Window::new("experiments")
+        .collapsible(false)
+        .resizable(false)
+        .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
+        .show(ctx, |ui| {
+            crate::experiments::each(&mut edited, |name, on| {
+                ui.checkbox(on, egui::RichText::new(name).size(18.0));
+            });
+            ui.add_space(8.0);
+            if ui.button(egui::RichText::new("close").size(18.0)).clicked() {
+                secret.open = false;
+            }
+        });
+    if edited != **experiments {
+        **experiments = edited;
     }
 }

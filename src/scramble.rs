@@ -79,7 +79,8 @@ struct DartLook {
     material: Handle<StandardMaterial>,
 }
 
-/// Whether he carries the dart at all (on by default; off for A/B runs of the simulator).
+/// Whether he carries the dart at all, once `Experiments::scramble_dart` is on (off for A/B runs
+/// of the simulator).
 #[derive(Resource, Reflect, Clone, Copy, Debug)]
 #[reflect(Resource)]
 pub struct Armed(pub bool);
@@ -136,6 +137,7 @@ fn charge(
     tuning: Res<Tuning>,
     layout: Res<Layout>,
     armed: Res<Armed>,
+    experiments: Res<crate::experiments::Experiments>,
     look: Res<DartLook>,
     eyes: Single<&GlobalTransform, With<MainCamera>>,
     target: Single<
@@ -149,7 +151,7 @@ fn charge(
 ) {
     let dt = time.delta_secs();
     cooldown.0 -= dt;
-    let Some(levers) = tuning.him().scramble.filter(|_| armed.0) else {
+    let Some(levers) = tuning.him().scramble.filter(|_| armed.0 && experiments.scramble_dart) else {
         return;
     };
     let (e, t, suspicion, activity, charging, grappling, rolling) = target.into_inner();

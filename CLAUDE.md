@@ -55,6 +55,7 @@ controlling the **shooter** hunting him. A corner radar shows the whole arena.
 | earcut 0.4 | triangulates arena floor polygons (already in the tree via vleue_navigator) |
 | virtual_joystick 2.8 | on-screen touch stick (bevy_ui) |
 | vleue_navigator 0.16 (`avian3d`) | navmesh pathfinding (polyanya), built from avian colliders, WASM-safe |
+| lightyear 0.30 (`websocket`, `leafwing`, `avian3d`; `server` native only) | the online duel: authoritative server, own-body prediction + rollback, interpolation, lag compensation. WebSockets so the browser build can play |
 
 Dev builds: `dev` feature = `bevy/dynamic_linking` + `inspector`; mold via `.cargo/config.toml`; deps at opt-level 3.
 Machine-local cargo settings (e.g. `rustc-wrapper = "kache"`, a shared build cache across worktrees) go in the
@@ -112,7 +113,7 @@ Fyrox (small ecosystem), macroquad/three-d (too thin, would mean rolling our own
   you can watch him take. At the top bands he holds a ready dart (`hold`) until your hop is spent, the dart homes (`homing`),
   and he may grapple you while you're scrambled (`combo`). He stays out peeking through a wind-up. Every knob is
   `difficulty::ScrambleLevers` (Gunfight band: unlock, wind-up, speed, lead, duration, cooldown, hold, homing, combo).
-  `Armed(false)` takes it away (A/B runs).
+  `Armed(false)` takes it away (A/B runs); it only runs with `Experiments::scramble_dart` on.
 - `examples/duel_sim.rs`: bot rounds on the real gameplay plugins, for balancing his moves. The bot writes the
   shooter's `ActionState` (like `touch`), knows where he is, walks the navmesh to a clear shot, aims with an error and
   fires; it reads the dart's wind-up and sidesteps after a reaction time, and when scrambled drives with the wrong
@@ -161,6 +162,11 @@ Fyrox (small ecosystem), macroquad/three-d (too thin, would mean rolling our own
   His hit points are a bar (`TARGET_MAX_HP` at band 5), not a count. Each hit is a `HitKind`: `Seen` does about a
   third (`SHOT_DAMAGE`), `Blind` (out of his view) and `Behind` hit harder, and every hit varies (`SEEN_SPREAD`,
   `BLIND_SPREAD`) so the bar never shows a fixed number of shots and the bands can move his HP unnoticed.
+  A surprise hit (`Blind`/`Behind`) leaves him braced for `BRACED_SECS` (hits count as `Seen`): one bonus per
+  surprise, not per bullet. Before he suspects anything it's an ambush: lethal in the back from within `EXECUTION_RANGE`, else `AMBUSH_BONUS` (uncapped,
+  often most of his bar) from the side; once he's on to you it takes at most `SURPRISE_CAP` of his bar, so a mid-fight flank swings the fight.
+  A hit he survives always engages him, so he breaks for cover instead of walking over to look.
+  An execution sets `TargetHit::execution`, and the HUD picks an execution banner over the flawless one.
 - `layout.rs` (presentation): `ScreenLayout` (view, deck, radar rects) refit from the window every frame, so
   rotation and resizes just work. Landscape: full-window view, radar in the corner over it. Portrait (h ≥ 1.3w): a
   deck below the view holds the radar and whistle, and the left thumb drives from it. FOV is Hor+ with a floor:
@@ -188,7 +194,10 @@ Fyrox (small ecosystem), macroquad/three-d (too thin, would mean rolling our own
   grapple/roll, HP) and `AssistLevers` (from the dial: magnetism, sonar pace, damage taken). Band 5 and the baseline dial
   are exactly the hand-tuned constants, which stay in `target`/`combat`/`radar` (a test pins this). `AdaptiveDifficulty`
   is only inserted by `main.rs`, so headless tests and staged examples keep the fixed tuning. Never shown to the player.
-  The 1v1 duel will have no assists.
+  The duel keeps the baseline assists (magnetism included).
+- `experiments.rs`: unfinished features ship dark behind `Experiments` (one `bool` per experiment, off by default). Tapping
+  the TARGET label 5 times quickly opens a hidden panel listing every field as a checkbox (reflected, so adding a field is
+  all it takes); web keeps the choice in localStorage. The scramble dart is the first. Tests and sims insert it on.
 - `debug.rs` (presentation): F9 or a three-finger tap writes a plain-text dump (web: downloads it): build info, the adaptive state and round
   history (`difficulty::debug_text`), every reflected `second_person::` resource, the target's and shooter's components,
   and the last 300 gameplay messages. New reflected resources show up for free; log a new message with `log_messages`.
@@ -217,6 +226,23 @@ Fyrox (small ecosystem), macroquad/three-d (too thin, would mean rolling our own
   `R` scripted round from `music::script`) and a mixer (meters, mute/solo). Views: Score (per-cue step grid,
   chord lane, stem fader rules), Patches (sliders, envelope plot, audition), Text (the file; saving from it keeps
   comments). Every edit that compiles goes straight into the playing engine.
+- `duel/` (hidden: nothing in the game points to it yet): the online 1v1. Each player is a `Shooter` and sees through
+  the other's eyes, so the client dresses the opponent as him (`Target`, `target::looks`, the `MainCamera`) and every
+  presentation plugin works unchanged. `duel::gameplay` is the game minus single player (`round::Online`, inserted
+  before the plugins, turns off his spawn, `take_bearings` and the local round keys; `ControlScheme::Tank` is pinned).
+  The server (`cargo run --bin duel -- server`, `DUEL_BIND`, `MATCH_*_S` liveness limits) owns bodies, bullets
+  (`magnetised` at the victim as the shooter saw them: `History` rewound by the client's interpolation delay) and hits,
+  and sends `NetEvent`s that clients turn into the game's own messages. Clients predict their body by re-running
+  `shooter::Movement`; `make_noise` (`shooter::Noise`) is skipped during rollback. Join with `--duel <host:port|ws(s)://url>`
+  natively or `?duel=` in the page URL; `cargo run --bin duel -- bot` adds a headless bot.
+  Hosting: `deploy/duel/` (Fly, one Machine, one match, started by hand); the **Duel server** workflow deploys or
+  starts it (`FLY_API_TOKEN` secret). Players connect to `wss://<app>.fly.dev`; Fly's proxy terminates TLS.
+  **The simulation contract** (`duel/mod.rs`): predicted state (`sim_component`, plus avian's via lightyear) is
+  advanced only in `SimSet` (FixedUpdate, re-run on rollback), which reads only predicted state, inputs and round
+  constants (`Layout`, `ControlScheme`, `Bearings`); `AuthoritySet` is server-only; round constants change only in
+  state transitions, `AuthoritySet` or `FollowServerSet`. `duel::arch` tests walk every system's access and fail on a
+  breach (blind spot: `Commands` and observers). lightyear syncs physics to transforms one way only, so
+  `place_by_transform` seeds a new body's `Position` from its `Transform`.
 - `hud.rs`: egui on a dedicated `Camera2d` overlay (`PrimaryEguiContext`; auto-context disabled
   because game cameras respawn each round). Bars, activity, flashes, hit marker,
   wound vignette, radar frame, end banner (held back `BANNER_DELAY` so the deaths play out).

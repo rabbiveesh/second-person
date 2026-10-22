@@ -26,7 +26,7 @@ use crate::{
     arena::{Cover, Layout},
     nav::{Evade, MoveTo, Route},
     radar::{LiveBlip, RADAR_LAYER, RadarContact},
-    round::{Attract, GameState, RoundEntity, SpawnRound, TargetMobile},
+    round::{Attract, GameState, Online, RoundEntity, SpawnRound, TargetMobile},
     shooter::{Scrambled, Shooter},
 };
 
@@ -63,6 +63,8 @@ pub struct Target {
     pub hp: f32,
     /// Hit points he started the round with (the Gunfight band sets it).
     pub max_hp: f32,
+    /// Until when (`Time::elapsed_secs`) he's braced after a surprise hit (`combat::BRACED_SECS`).
+    pub braced_until: f32,
 }
 
 /// Pitch node between the body (yaw) and the camera.
@@ -160,7 +162,7 @@ struct Fighting {
 pub struct Relocate(pub Vec2);
 
 pub fn plugin(app: &mut App) {
-    app.add_systems(OnEnter(GameState::Playing), spawn_target.in_set(SpawnRound))
+    app.add_systems(OnEnter(GameState::Playing), spawn_target.in_set(SpawnRound).run_if(not(resource_exists::<Online>)))
         .add_systems(
             Update,
             (perceive, gaze, walk, roll).chain().run_if(in_state(GameState::Playing)),
@@ -175,6 +177,31 @@ fn spawn_target(
     tuning: Res<Tuning>,
 ) {
     let him = tuning.him();
+    commands.spawn((
+        Name::new("Target"),
+        RoundEntity,
+        Target { hp: him.hp, max_hp: him.hp, braced_until: 0.0 },
+        Suspicion::default(),
+        LookGoal {
+            point: Vec3::new(0.0, BODY_CENTER + EYE_OFFSET, -10.0),
+            turn_speed: 1.0,
+        },
+        RigidBody::Kinematic,
+        standing_collider(),
+        CollisionLayers::new(Layer::Target, [Layer::World, Layer::Shooter, Layer::Bullet]),
+        Transform::from_xyz(0.0, BODY_CENTER, 0.0),
+        BehaviorTree::from_node(behaviour(), &mut trees),
+        looks(&mut meshes, &mut materials, him.view_half_angle),
+    ));
+}
+
+/// His body, his eyes (the `MainCamera` in his `TargetHead`) and his radar marks. A duel puts these
+/// on the opponent, so the view, HUD and radar work as they do against him.
+pub fn looks(
+    meshes: &mut Assets<Mesh>,
+    materials: &mut Assets<StandardMaterial>,
+    view_half_angle: f32,
+) -> impl Bundle {
     let blip = materials.add(StandardMaterial {
         base_color: Color::srgb(1.0, 0.2, 0.2),
         unlit: true,
@@ -194,22 +221,9 @@ fn spawn_target(
         ..default()
     });
 
-    commands.spawn((
-        Name::new("Target"),
-        RoundEntity,
-        Target { hp: him.hp, max_hp: him.hp },
-        Suspicion::default(),
+    (
         RadarContact(Color::srgb(1.0, 0.2, 0.2)),
-        LookGoal {
-            point: Vec3::new(0.0, BODY_CENTER + EYE_OFFSET, -10.0),
-            turn_speed: 1.0,
-        },
-        RigidBody::Kinematic,
-        standing_collider(),
-        CollisionLayers::new(Layer::Target, [Layer::World, Layer::Shooter, Layer::Bullet]),
-        Transform::from_xyz(0.0, BODY_CENTER, 0.0),
         Visibility::default(),
-        BehaviorTree::from_node(behaviour(), &mut trees),
         children![
             (
                 Name::new("Torso"),
@@ -271,14 +285,14 @@ fn spawn_target(
             (
                 Name::new("Radar view cone"),
                 // Sector points +Y in its own plane; lay it flat, pointing forward (-Z).
-                Mesh3d(meshes.add(CircularSector::new(VIEW_RANGE * 0.5, him.view_half_angle))),
+                Mesh3d(meshes.add(CircularSector::new(VIEW_RANGE * 0.5, view_half_angle))),
                 MeshMaterial3d(cone),
                 Transform::from_xyz(0.0, 3.0, 0.0).with_rotation(Quat::from_rotation_x(-PI / 2.0)),
                 RenderLayers::layer(RADAR_LAYER),
                 LiveBlip,
             ),
         ],
-    ));
+    )
 }
 
 // ---------------------------------------------------------------------------

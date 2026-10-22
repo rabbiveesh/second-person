@@ -10,6 +10,8 @@ pub mod audio;
 pub mod combat;
 pub mod debug;
 pub mod difficulty;
+pub mod duel;
+pub mod experiments;
 pub mod fx;
 pub mod hud;
 pub mod intro;
@@ -53,6 +55,7 @@ pub fn gameplay(app: &mut App) {
         combat::plugin,
         scramble::plugin,
         difficulty::plugin,
+        experiments::plugin,
     ));
 }
 

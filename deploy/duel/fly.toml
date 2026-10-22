@@ -1,0 +1,28 @@
+# The duel server on Fly: one Machine, one match. Started by hand (the Duel server workflow), never
+# woken by traffic. The server exits when the match is over, and "never" restarts it, so the Machine
+# stops and stops billing.
+app = "him-duel-spike"
+primary_region = "fra"
+
+[build]
+  dockerfile = "Dockerfile"
+
+[env]
+  DUEL_BIND = "0.0.0.0:8080"
+  # Starting it and sharing the link takes a while, so wait longer than the default 2 min.
+  MATCH_WAIT_S = "600"
+
+# Fly's proxy terminates TLS, so players connect to wss://<app>.fly.dev and the server speaks plain ws.
+[http_service]
+  internal_port = 8080
+  force_https = true
+  auto_start_machines = false
+  auto_stop_machines = "off"
+  min_machines_running = 0
+
+[[restart]]
+  policy = "never"
+
+# One match is about 16% of a core, steadily: more than a shared CPU's baseline.
+[[vm]]
+  size = "performance-1x"
