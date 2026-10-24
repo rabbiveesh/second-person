@@ -17,6 +17,11 @@ jobs:
         run: rustup toolchain install
       # .cargo/config.toml links with clang + mold.
       - uses: rui314/setup-mold@v1
+      # Shared with the duel server deploy, which builds the same profile and features. Only main
+      # saves: PR caches would each eat into the repo's 10 GB, and PRs restore main's anyway.
       - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: native-ci
+          save-if: ${{ github.ref == 'refs/heads/main' }}
       - name: Headless gameplay tests
-        run: cargo test
+        run: cargo test --no-default-features --features ci

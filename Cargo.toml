@@ -35,6 +35,9 @@ bevy_replicon = { version = "0.44.3", default-features = false }
 default = ["dev"]
 # Fast iteration: dynamically link bevy. Disable for release builds (`--no-default-features`).
 dev = ["bevy/dynamic_linking", "inspector", "brp", "editor"]
+# Everything `dev` has but dynamic linking: what CI tests and the duel server ship with. One feature
+# set for both, so the server deploy reuses the test job's build cache and only links.
+ci = ["inspector", "brp", "editor"]
 # F1 world inspector. Off in release/web builds unless asked for.
 inspector = ["dep:bevy-inspector-egui"]
 # Bevy Remote Protocol on :15702 (+ extras: screenshots, key input) so tools/agents can

@@ -58,6 +58,9 @@ controlling the **shooter** hunting him. A corner radar shows the whole arena.
 | lightyear 0.30 (`websocket`, `leafwing`, `avian3d`; `server` native only) | the online duel: authoritative server, own-body prediction + rollback, interpolation, lag compensation. WebSockets so the browser build can play |
 
 Dev builds: `dev` feature = `bevy/dynamic_linking` + `inspector`; mold via `.cargo/config.toml`; deps at opt-level 3.
+CI tests with `--no-default-features --features ci` (`dev` minus dynamic linking), and the **Duel server** deploy builds
+the same profile and features under the same `rust-cache` key, so it reuses the test job's cache and mostly links.
+Only main saves caches (the repo gets 10 GB).
 Machine-local cargo settings (e.g. `rustc-wrapper = "kache"`, a shared build cache across worktrees) go in the
 gitignored `.cargo/config.local.toml`, which `.cargo/config.toml` includes if present.
 Web/Pages: `trunk build --release` uses the `wasm-release` profile, which uses **fat LTO on purpose**.
