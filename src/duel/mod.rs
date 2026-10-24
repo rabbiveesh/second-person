@@ -45,6 +45,16 @@ use crate::{
 pub const TICK_HZ: f64 = 60.0;
 pub const PORT: u16 = 5888;
 const PROTOCOL_ID: u64 = 0x4849_4D31;
+
+/// The netcode protocol id both sides use: `PROTOCOL_ID` mixed with replicon's hash of everything
+/// registered (replicated components, messages, their order). A client and server built from
+/// different protocols then can't connect at all, instead of connecting and failing to decode each
+/// other's updates. Available once the app is finished, so from `Startup` on.
+pub fn protocol_id(hash: &bevy_replicon::shared::protocol::ProtocolHash) -> u64 {
+    // The hash's value is private; its Debug form ("ProtocolHash(<u64>)") carries it. FNV-1a, so
+    // native and wasm agree.
+    format!("{hash:?}").bytes().fold(0xcbf2_9ce4_8422_2325 ^ PROTOCOL_ID, |h, b| (h ^ b as u64).wrapping_mul(0x100_0000_01b3))
+}
 /// Not a secret: it only keeps strays from other netcode games out. Matchmaking will issue real
 /// connect tokens.
 const KEY: [u8; 32] = [7; 32];

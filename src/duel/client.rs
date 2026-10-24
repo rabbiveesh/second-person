@@ -16,7 +16,7 @@ use lightyear::{
 use rand::Rng;
 
 use super::{
-    ArenaSeed, Eyelids, FollowServerSet, Health, KEY, NetEvent, PROTOCOL_ID, PlayerId, conditioner, muzzle,
+    ArenaSeed, Eyelids, FollowServerSet, Health, KEY, NetEvent, PlayerId, conditioner, muzzle, protocol_id,
 };
 use crate::{
     arena::{ArenaMode, Layout},
@@ -41,6 +41,8 @@ pub struct Options {
 /// A render layer nothing is on: what you see with the other player's eyes shut.
 const BLIND_LAYER: usize = 7;
 const COSMETIC_LIFE: f32 = 1.5;
+/// Seconds without a connection before saying so.
+const NO_SERVER_AFTER: f32 = 5.0;
 
 /// A bullet drawn here; the server's own decides what it hits.
 #[derive(Component)]
@@ -60,11 +62,11 @@ pub fn plugin(app: &mut App, opts: Options) {
             .add_systems(FixedPreUpdate, bot.in_set(InputSystems::WriteClientInputs));
     }
     let Options { id, url, lag, .. } = opts;
-    app.add_systems(Startup, move |mut commands: Commands| {
+    app.add_systems(Startup, move |mut commands: Commands, protocol: Res<bevy_replicon::shared::protocol::ProtocolHash>| {
         // The WebSocket URL says where the server is; the server doesn't check the token's address
         // (behind a proxy it can't know its public one), so any address will do here.
         let nowhere = SocketAddr::from(([127, 0, 0, 1], super::PORT));
-        let auth = Authentication::Manual { server_addr: nowhere, client_id: id, private_key: KEY, protocol_id: PROTOCOL_ID };
+        let auth = Authentication::Manual { server_addr: nowhere, client_id: id, private_key: KEY, protocol_id: protocol_id(&protocol) };
         #[cfg(not(target_family = "wasm"))]
         let config = ClientConfig::builder().with_native_certs();
         #[cfg(target_family = "wasm")]
@@ -300,6 +302,7 @@ fn blindness(
     mut radar: Query<(Entity, &mut Camera), With<RadarCamera>>,
     mut radar_clear: Local<Option<ClearColorConfig>>,
     mut notes: ResMut<Notes>,
+    (link, time): (Query<Has<Connected>, With<Client>>, Res<Time<Real>>),
 ) {
     let blind = them.single().is_ok_and(|l| l.closed);
     for (e, mut camera) in &mut eyes {
@@ -312,6 +315,11 @@ fn blindness(
         camera.clear_color = if blind { ClearColorConfig::Custom(Color::BLACK) } else { normal };
     }
     let mut lines = vec![];
+    // A server built from another version of the game drops our connect requests (see
+    // `protocol_id`), which looks just like an unreachable one.
+    if time.elapsed_secs() > NO_SERVER_AFTER && link.single().is_ok_and(|connected| !connected) {
+        lines.push("Can't join: the duel server is down, or on a different version of the game".to_string());
+    }
     if blind {
         lines.push("THEY'VE SHUT THEIR EYES: you're blind".to_string());
     }
