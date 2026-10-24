@@ -95,12 +95,17 @@ impl Default for Armed {
 #[derive(Resource, Default)]
 struct Cooldown(f32);
 
-pub fn plugin(app: &mut App) {
+/// The dart's messages, which presentation reads: the duel registers these without the dart.
+pub fn messages(app: &mut App) {
     app.add_message::<DartCharging>()
         .add_message::<DartThrown>()
         .add_message::<ScrambledHit>()
-        .add_message::<DartMissed>()
-        .init_resource::<Cooldown>()
+        .add_message::<DartMissed>();
+}
+
+pub fn plugin(app: &mut App) {
+    messages(app);
+    app.init_resource::<Cooldown>()
         .init_resource::<Armed>()
         .add_systems(Startup, load)
         .add_systems(OnEnter(GameState::Playing), |mut c: ResMut<Cooldown>| c.0 = FIRST_DART_AFTER)
