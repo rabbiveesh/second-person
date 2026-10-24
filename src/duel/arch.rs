@@ -226,7 +226,19 @@ fn catches_known_mispredictions() {
 /// here as single player only. Adding to gameplay means deciding which side it goes on.
 #[test]
 fn client_has_what_presentation_reads() {
-    const SINGLE_PLAYER_ONLY: &[&str] = &[];
+    // Matched as substrings of the type name.
+    const SINGLE_PLAYER_ONLY: &[&str] = &[
+        // Physics features the duel turns off: lightyear owns sleeping and interpolation.
+        "avian3d::dynamics::solver::islands",
+        "avian3d::dynamics::rigid_body::sleeping",
+        "bevy_transform_interpolation::",
+        // His AI: behaviour tree and navmesh.
+        "bevior_tree::",
+        "vleue_navigator::",
+        // His dart, thrown only in single player. Its messages are shared (`scramble::messages`).
+        "second_person::scramble::Armed",
+        "second_person::scramble::Cooldown",
+    ];
     let names = |app: &App| -> HashSet<String> {
         app.world().iter_resources().map(|(info, _)| info.name().to_string()).collect()
     };
@@ -238,7 +250,7 @@ fn client_has_what_presentation_reads() {
     duel.finish();
     let mut missing: Vec<_> = names(&single)
         .difference(&names(&duel))
-        .filter(|n| !SINGLE_PLAYER_ONLY.contains(&n.as_str()))
+        .filter(|n| !SINGLE_PLAYER_ONLY.iter().any(|only| n.contains(only)))
         .cloned()
         .collect();
     missing.sort();
