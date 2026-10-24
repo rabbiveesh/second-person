@@ -219,3 +219,40 @@ fn catches_known_mispredictions() {
     assert!(hit("moves_walls") && hit("Layout"), "{v:#?}");
     assert!(hit("decides_hits") && hit("server-only"), "{v:#?}");
 }
+
+/// Presentation runs on the duel client too, and a system reading a message or resource nobody
+/// registered panics on its first frame (the browser build just dies). So the client must have
+/// every resource single player's gameplay registers, messages included, except the ones listed
+/// here as single player only. Adding to gameplay means deciding which side it goes on.
+#[test]
+fn client_has_what_presentation_reads() {
+    // Matched as substrings of the type name.
+    const SINGLE_PLAYER_ONLY: &[&str] = &[
+        // Physics features the duel turns off: lightyear owns sleeping and interpolation.
+        "avian3d::dynamics::solver::islands",
+        "avian3d::dynamics::rigid_body::sleeping",
+        "bevy_transform_interpolation::",
+        // His AI: behaviour tree and navmesh.
+        "bevior_tree::",
+        "vleue_navigator::",
+        // His dart, thrown only in single player. Its messages are shared (`scramble::messages`).
+        "second_person::scramble::Armed",
+        "second_person::scramble::Cooldown",
+    ];
+    let names = |app: &App| -> HashSet<String> {
+        app.world().iter_resources().map(|(info, _)| info.name().to_string()).collect()
+    };
+    let mut single = App::new();
+    headless(&mut single, tick());
+    crate::gameplay(&mut single);
+    single.finish();
+    let mut duel = client_app();
+    duel.finish();
+    let mut missing: Vec<_> = names(&single)
+        .difference(&names(&duel))
+        .filter(|n| !SINGLE_PLAYER_ONLY.iter().any(|only| n.contains(only)))
+        .cloned()
+        .collect();
+    missing.sort();
+    assert!(missing.is_empty(), "the duel client lacks:\n  {}", missing.join("\n  "));
+}

@@ -145,6 +145,8 @@ pub fn gameplay(app: &mut App) {
             shooter::plugin,
             crate::difficulty::plugin,
             combat::common,
+            crate::scramble::messages,
+            crate::experiments::plugin,
         ))
         .add_observer(place_by_transform)
         .configure_sets(FixedUpdate, shooter::Movement.in_set(SimSet));
