@@ -1,7 +1,13 @@
-# Deploy or start the duel's match server on Fly (deploy/duel/). Deploying also starts it.
+# Deploy or start the duel's match server on Fly (deploy/duel/). Every green Test run on main
+# deploys, so the server always speaks the same protocol as the Pages build. Deploying updates a
+# running server in place and leaves a stopped one stopped; `start` wakes it.
 name: Duel server
 
 on:
+  workflow_run:
+    workflows: [Test]
+    types: [completed]
+    branches: [main]
   workflow_dispatch:
     inputs:
       action:
@@ -15,10 +21,16 @@ concurrency:
 
 jobs:
   deploy:
-    if: inputs.action == 'deploy'
+    if: >-
+      (github.event_name == 'workflow_dispatch' && inputs.action == 'deploy') ||
+      (github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'success'
+        && github.event.workflow_run.event == 'push')
     runs-on: ubuntu-latest
     steps:
+      # The commit Test just passed, not whatever main is now.
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
       - name: System deps
         run: sudo apt-get update && sudo apt-get install -y libudev-dev libasound2-dev libwayland-dev libxkbcommon-dev
       # Installs exactly what rust-toolchain.toml pins (rustup no longer auto-installs).
@@ -26,11 +38,18 @@ jobs:
         run: rustup toolchain install
       # .cargo/config.toml links with clang + mold.
       - uses: rui314/setup-mold@v1
+      # The test job's cache: same profile and features (`ci`), so `cargo test` on main has already
+      # built this binary and the step below mostly just links. Dev profile, but dependencies are
+      # at opt-level 3 (Cargo.toml), which is where a match server spends its time.
       - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: native-ci
+          save-if: false
       - name: Build the server
         run: |
-          cargo build --release --no-default-features --bin duel
-          cp target/release/duel deploy/duel/
+          cargo build --no-default-features --features ci --bin duel
+          cp target/debug/duel deploy/duel/
+          strip deploy/duel/duel
       - uses: superfly/flyctl-actions/setup-flyctl@master
       - name: Deploy
         working-directory: deploy/duel
@@ -39,7 +58,7 @@ jobs:
           FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
 
   start:
-    if: inputs.action == 'start'
+    if: github.event_name == 'workflow_dispatch' && inputs.action == 'start'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4

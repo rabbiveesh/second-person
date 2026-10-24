@@ -28,11 +28,16 @@ cpal = { version = "0.18", optional = true }
 # The online 1v1 duel: authoritative server, client prediction, lag compensation, over WebSockets
 # (the browser build plays too). Native builds add the server side below.
 lightyear = { version = "0.30.1", default-features = false, features = ["std", "client", "netcode", "websocket", "prediction", "interpolation", "replication", "leafwing", "avian3d"] }
+# Only for its ProtocolHash, which keys the duel's netcode protocol id (lightyear doesn't re-export it).
+bevy_replicon = { version = "0.44.3", default-features = false }
 
 [features]
 default = ["dev"]
 # Fast iteration: dynamically link bevy. Disable for release builds (`--no-default-features`).
 dev = ["bevy/dynamic_linking", "inspector", "brp", "editor"]
+# Everything `dev` has but dynamic linking: what CI tests and the duel server ship with. One feature
+# set for both, so the server deploy reuses the test job's build cache and only links.
+ci = ["inspector", "brp", "editor"]
 # F1 world inspector. Off in release/web builds unless asked for.
 inspector = ["dep:bevy-inspector-egui"]
 # Bevy Remote Protocol on :15702 (+ extras: screenshots, key input) so tools/agents can

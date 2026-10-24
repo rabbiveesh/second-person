@@ -256,3 +256,25 @@ fn client_has_what_presentation_reads() {
     missing.sort();
     assert!(missing.is_empty(), "the duel client lacks:\n  {}", missing.join("\n  "));
 }
+
+fn finished_protocol_id(mut app: App) -> u64 {
+    app.finish();
+    protocol_id(app.world().resource::<bevy_replicon::shared::protocol::ProtocolHash>())
+}
+
+/// Client and server key netcode with the same protocol id, or nobody could ever join.
+#[test]
+fn client_and_server_agree_on_the_protocol() {
+    assert_eq!(finished_protocol_id(client_app()), finished_protocol_id(server_app(0)));
+}
+
+/// Changing what's replicated changes the protocol id, so an out of date server turns a client
+/// away at the door instead of sending updates it can't decode.
+#[test]
+fn a_protocol_change_changes_the_protocol_id() {
+    #[derive(Component, Clone, PartialEq, Debug, serde::Serialize, serde::Deserialize)]
+    struct Extra;
+    let mut changed = client_app();
+    changed.component::<Extra>().replicate();
+    assert_ne!(finished_protocol_id(client_app()), finished_protocol_id(changed));
+}

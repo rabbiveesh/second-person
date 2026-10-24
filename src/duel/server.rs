@@ -15,7 +15,7 @@ use lightyear::{
 use rand::Rng;
 
 use super::{
-    ArenaSeed, AuthoritySet, Eyelids, Events, Health, KEY, NetEvent, PORT, PROTOCOL_ID, PlayerId, Score,
+    ArenaSeed, AuthoritySet, Eyelids, Events, Health, KEY, NetEvent, PORT, PlayerId, Score,
     conditioner, muzzle,
 };
 use crate::{
@@ -69,14 +69,14 @@ pub fn plugin(app: &mut App, lag: u64) {
     app.insert_resource(ArenaMode::Seed(seed))
         .init_resource::<Break>()
         .init_resource::<Liveness>()
-        .add_systems(Startup, move |mut commands: Commands| {
+        .add_systems(Startup, move |mut commands: Commands, protocol: Res<bevy_replicon::shared::protocol::ProtocolHash>| {
             commands.spawn((ArenaSeed(seed), Replicate::to_clients(NetworkTarget::All)));
             let server = commands
                 .spawn((
                     Name::new("Server"),
                     Server::new(conditioner(lag)),
                     NetcodeServer::new(lightyear::netcode::server_plugin::NetcodeConfig {
-                        protocol_id: PROTOCOL_ID,
+                        protocol_id: super::protocol_id(&protocol),
                         private_key: KEY,
                         // Behind a proxy (Fly) we bind a private address while clients' tokens
                         // name the public one, so the address check would turn everyone away.

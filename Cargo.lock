@@ -7922,6 +7922,7 @@ dependencies = [
  "bevy_egui",
  "bevy_firework",
  "bevy_kira_audio",
+ "bevy_replicon",
  "cpal",
  "earcut",
  "fundsp",

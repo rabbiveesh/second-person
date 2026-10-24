@@ -58,6 +58,9 @@ controlling the **shooter** hunting him. A corner radar shows the whole arena.
 | lightyear 0.30 (`websocket`, `leafwing`, `avian3d`; `server` native only) | the online duel: authoritative server, own-body prediction + rollback, interpolation, lag compensation. WebSockets so the browser build can play |
 
 Dev builds: `dev` feature = `bevy/dynamic_linking` + `inspector`; mold via `.cargo/config.toml`; deps at opt-level 3.
+CI tests with `--no-default-features --features ci` (`dev` minus dynamic linking), and the **Duel server** deploy builds
+the same profile and features under the same `rust-cache` key, so it reuses the test job's cache and mostly links.
+Only main saves caches (the repo gets 10 GB).
 Machine-local cargo settings (e.g. `rustc-wrapper = "kache"`, a shared build cache across worktrees) go in the
 gitignored `.cargo/config.local.toml`, which `.cargo/config.toml` includes if present.
 Web/Pages: `trunk build --release` uses the `wasm-release` profile, which uses **fat LTO on purpose**.
@@ -235,8 +238,8 @@ Fyrox (small ecosystem), macroquad/three-d (too thin, would mean rolling our own
   and sends `NetEvent`s that clients turn into the game's own messages. Clients predict their body by re-running
   `shooter::Movement`; `make_noise` (`shooter::Noise`) is skipped during rollback. Join with `--duel <host:port|ws(s)://url>`
   natively or `?duel=` in the page URL; `cargo run --bin duel -- bot` adds a headless bot.
-  Hosting: `deploy/duel/` (Fly, one Machine, one match, started by hand); the **Duel server** workflow deploys or
-  starts it (`FLY_API_TOKEN` secret). Players connect to `wss://<app>.fly.dev`; Fly's proxy terminates TLS.
+  Hosting: `deploy/duel/` (Fly, one Machine, one match, started by hand); the **Duel server** workflow deploys after
+  every green Test run on main (a stopped server stays stopped) and starts it by hand (`FLY_API_TOKEN` secret). Players connect to `wss://<app>.fly.dev`; Fly's proxy terminates TLS.
   **The simulation contract** (`duel/mod.rs`): predicted state (`sim_component`, plus avian's via lightyear) is
   advanced only in `SimSet` (FixedUpdate, re-run on rollback), which reads only predicted state, inputs and round
   constants (`Layout`, `ControlScheme`, `Bearings`); `AuthoritySet` is server-only; round constants change only in
