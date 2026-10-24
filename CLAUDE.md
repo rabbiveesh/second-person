@@ -238,8 +238,8 @@ Fyrox (small ecosystem), macroquad/three-d (too thin, would mean rolling our own
   and sends `NetEvent`s that clients turn into the game's own messages. Clients predict their body by re-running
   `shooter::Movement`; `make_noise` (`shooter::Noise`) is skipped during rollback. Join with `--duel <host:port|ws(s)://url>`
   natively or `?duel=` in the page URL; `cargo run --bin duel -- bot` adds a headless bot.
-  Hosting: `deploy/duel/` (Fly, one Machine, one match, started by hand); the **Duel server** workflow deploys or
-  starts it (`FLY_API_TOKEN` secret). Players connect to `wss://<app>.fly.dev`; Fly's proxy terminates TLS.
+  Hosting: `deploy/duel/` (Fly, one Machine, one match, started by hand); the **Duel server** workflow deploys after
+  every green Test run on main (a stopped server stays stopped) and starts it by hand (`FLY_API_TOKEN` secret). Players connect to `wss://<app>.fly.dev`; Fly's proxy terminates TLS.
   **The simulation contract** (`duel/mod.rs`): predicted state (`sim_component`, plus avian's via lightyear) is
   advanced only in `SimSet` (FixedUpdate, re-run on rollback), which reads only predicted state, inputs and round
   constants (`Layout`, `ControlScheme`, `Bearings`); `AuthoritySet` is server-only; round constants change only in
